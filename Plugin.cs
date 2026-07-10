@@ -9,6 +9,8 @@ using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using Lumina.Excel.Sheets;
 using LuminaSupplemental.Excel.Model;
 using LuminaSupplemental.Excel.Services;
+using Penumbra.Api.Enums;
+using Penumbra.Api.IpcSubscribers;
 
 namespace ActorMorpher;
 
@@ -27,6 +29,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
     private readonly MainWindow mainWindow;
     private readonly WindowSystem windowSystem = new("ActorMorpher");
+    private readonly RedrawObject penumbraRedraw;
     private IReadOnlyList<ModelSearchEntry>? modelSearchCache;
 
     public Configuration Configuration { get; }
@@ -44,6 +47,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
     public Plugin()
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+        penumbraRedraw = new RedrawObject(PluginInterface);
 
         mainWindow = new MainWindow(this);
         windowSystem.AddWindow(mainWindow);
@@ -117,7 +121,7 @@ public sealed unsafe class Plugin : IDalamudPlugin
         return modelSearchCache;
     }
 
-    public bool TryApplyModelToLocalPlayer(uint modelId, out string message)
+    public bool TryApplyModelToLocalPlayer(ModelSearchEntry model, out string message)
     {
         var localPlayer = ObjectTable.LocalPlayer;
         if (localPlayer is null || localPlayer.Address == nint.Zero)
@@ -129,27 +133,29 @@ public sealed unsafe class Plugin : IDalamudPlugin
         try
         {
             var character = (Character*)localPlayer.Address;
-            character->ModelContainer.ModelCharaId = checked((int)modelId);
+            character->ModelContainer.ModelCharaId = checked((int)model.ModelId);
 
-            var originalKind = character->GameObject.ObjectKind;
-            character->GameObject.DisableDraw();
-            try
+            if (model.HumanAppearance is { } appearance)
             {
-                character->GameObject.ObjectKind = FFXIVClientStructs.FFXIV.Client.Game.Object.ObjectKind.BattleNpc;
-                character->GameObject.EnableDraw();
-            }
-            finally
-            {
-                character->GameObject.ObjectKind = originalKind;
+                for (var i = 0; i < appearance.Customize.Length; ++i)
+                    character->DrawData.CustomizeData.Data[i] = appearance.Customize[i];
+                for (var i = 0; i < appearance.Equipment.Length; ++i)
+                    character->DrawData.EquipmentModelIds[i].Value = appearance.Equipment[i];
+
+                character->DrawData.WeaponData[0].ModelId.Value = appearance.Mainhand;
+                character->DrawData.WeaponData[1].ModelId.Value = appearance.Offhand;
+                character->DrawData.IsVisorToggled = appearance.VisorToggled;
             }
 
-            message = $"Applied Model ID {modelId} to yourself.";
+            penumbraRedraw.Invoke(0, RedrawType.Redraw);
+
+            message = $"Applied {model.Name} (Model ID {model.ModelId}) to yourself.";
             return true;
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Failed to apply Model ID {ModelId} to the local player.", modelId);
-            message = $"Failed to apply Model ID {modelId}. See /xllog for details.";
+            Log.Error(ex, "Failed to apply Model ID {ModelId} to the local player.", model.ModelId);
+            message = $"Failed to apply Model ID {model.ModelId}. Penumbra is required; see /xllog for details.";
             return false;
         }
     }
@@ -157,7 +163,6 @@ public sealed unsafe class Plugin : IDalamudPlugin
     private IReadOnlyList<ModelSearchEntry> BuildModelSearchEntries()
     {
         var modelChara = DataManager.GetExcelSheet<ModelChara>()
-            .Where(static row => row.RowId != 0)
             .ToDictionary(static row => row.RowId);
         var eNpcResidents = DataManager.GetExcelSheet<ENpcResident>();
         var bNpcNames = DataManager.GetExcelSheet<BNpcName>();
@@ -167,14 +172,19 @@ public sealed unsafe class Plugin : IDalamudPlugin
         foreach (var row in DataManager.GetExcelSheet<ENpcBase>())
         {
             var modelId = row.ModelChara.RowId;
-            if (modelId == 0 || !modelChara.TryGetValue(modelId, out var model))
+            if (!modelChara.TryGetValue(modelId, out var model))
                 continue;
 
             var name = eNpcResidents.TryGetRow(row.RowId, out var resident)
                 ? resident.Singular.ToString()
-                : $"Event NPC {row.RowId}";
+                : string.Empty;
             if (string.IsNullOrWhiteSpace(name))
-                name = $"Event NPC {row.RowId}";
+                continue;
+
+            var appearance = model.Type == 1 ? CreateHumanAppearance(row) : null;
+            if (model.Type == 1 && appearance is null)
+                continue;
+
             entries.Add(CreateSearchEntry(
                 model,
                 ModelSource.EventNpc,
@@ -182,13 +192,14 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 name,
                 (uint)row.Race.RowId,
                 (byte)row.Gender,
-                row.BodyType));
+                row.BodyType,
+                appearance));
         }
 
         foreach (var row in DataManager.GetExcelSheet<BNpcBase>())
         {
             var modelId = row.ModelChara.RowId;
-            if (modelId == 0 || !modelChara.TryGetValue(modelId, out var model))
+            if (!modelChara.TryGetValue(modelId, out var model))
                 continue;
 
             var customize = row.BNpcCustomize.ValueNullable;
@@ -200,6 +211,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     .Distinct(StringComparer.CurrentCulture)
                     .ToArray()
                 : Array.Empty<string>();
+
+            var appearance = model.Type == 1 && customize is { } humanCustomize
+                ? CreateHumanAppearance(humanCustomize, row.NpcEquip.Value)
+                : null;
+            if (model.Type == 1 && (appearance is null || names.Length == 0))
+                continue;
 
             if (names.Length == 0)
                 names = [CreateBattleNpcFallbackName(row.RowId, gender, bodyType)];
@@ -213,12 +230,16 @@ public sealed unsafe class Plugin : IDalamudPlugin
                     name,
                     customize?.Race.RowId ?? 0,
                     gender,
-                    bodyType));
+                    bodyType,
+                    appearance));
             }
         }
 
         foreach (var model in modelChara.Values)
         {
+            if (model.Type == 1 || model.RowId == 0)
+                continue;
+
             if (entries.Any(entry => entry.ModelId == model.RowId))
                 continue;
 
@@ -233,6 +254,9 @@ public sealed unsafe class Plugin : IDalamudPlugin
         }
 
         return entries
+            .DistinctBy(static entry => entry.HumanAppearance is { } appearance
+                ? $"{entry.Name}\u001f{appearance.Signature}"
+                : $"{entry.Name}\u001f{entry.ModelId}\u001f{entry.Source}\u001f{entry.SourceId}")
             .OrderBy(static row => row.Category)
             .ThenBy(static row => row.Name)
             .ThenBy(static row => row.ModelId)
@@ -246,7 +270,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
         string name,
         uint race,
         byte gender,
-        byte bodyType)
+        byte bodyType,
+        HumanAppearance? humanAppearance = null)
     {
         return new ModelSearchEntry(
             model.RowId,
@@ -266,8 +291,110 @@ public sealed unsafe class Plugin : IDalamudPlugin
             model.Variant,
             race,
             gender,
-            bodyType);
+            bodyType,
+            humanAppearance);
     }
+
+    private static HumanAppearance? CreateHumanAppearance(ENpcBase row)
+    {
+        var customize = new byte[]
+        {
+            (byte)row.Race.RowId, (byte)row.Gender, row.BodyType, row.Height, (byte)row.Tribe.RowId,
+            row.Face, row.HairStyle, row.HairHighlight, row.SkinColor, row.EyeHeterochromia,
+            row.HairColor, row.HairHighlightColor, row.FacialFeature, row.FacialFeatureColor,
+            row.Eyebrows, row.EyeColor, row.EyeShape, row.Nose, row.Jaw, row.Mouth,
+            row.LipColor, row.BustOrTone1, row.ExtraFeature1, row.ExtraFeature2OrBust,
+            row.FacePaint, row.FacePaintColor,
+        };
+        if (!IsValidHumanCustomize(customize))
+            return null;
+
+        var equipment = row.NpcEquip.RowId is not 0
+            && row.NpcEquip.Value is { } npcEquip
+            && row is { ModelBody: 0, ModelLegs: 0 }
+                ? CreateEquipment(npcEquip)
+                : CreateEquipment(row);
+        var mainhand = row.NpcEquip.RowId is not 0
+            && row.NpcEquip.Value is { } weaponEquip
+            && row is { ModelBody: 0, ModelLegs: 0 }
+                ? PackWeapon(weaponEquip.ModelMainHand, weaponEquip.DyeMainHand.RowId, weaponEquip.Dye2MainHand.RowId)
+                : PackWeapon(row.ModelMainHand, row.DyeMainHand.RowId, row.Dye2MainHand.RowId);
+        var offhand = row.NpcEquip.RowId is not 0
+            && row.NpcEquip.Value is { } offhandEquip
+            && row is { ModelBody: 0, ModelLegs: 0 }
+                ? PackWeapon(offhandEquip.ModelOffHand, offhandEquip.DyeOffHand.RowId, offhandEquip.Dye2OffHand.RowId)
+                : PackWeapon(row.ModelOffHand, row.DyeOffHand.RowId, row.Dye2OffHand.RowId);
+
+        return new HumanAppearance(customize, equipment, mainhand, offhand, row.Visor);
+    }
+
+    private static HumanAppearance? CreateHumanAppearance(BNpcCustomize row, NpcEquip equip)
+    {
+        var customize = new byte[]
+        {
+            (byte)row.Race.RowId, (byte)row.Gender, row.BodyType, row.Height, (byte)row.Tribe.RowId,
+            row.Face, row.HairStyle, row.HairHighlight, row.SkinColor, row.EyeHeterochromia,
+            row.HairColor, row.HairHighlightColor, row.FacialFeature, row.FacialFeatureColor,
+            row.Eyebrows, row.EyeColor, row.EyeShape, row.Nose, row.Jaw, row.Mouth,
+            row.LipColor, row.BustOrTone1, row.ExtraFeature1, row.ExtraFeature2OrBust,
+            row.FacePaint, row.FacePaintColor,
+        };
+        if (!IsValidHumanCustomize(customize))
+            return null;
+
+        return new HumanAppearance(
+            customize,
+            CreateEquipment(equip),
+            PackWeapon(equip.ModelMainHand, equip.DyeMainHand.RowId, equip.Dye2MainHand.RowId),
+            PackWeapon(equip.ModelOffHand, equip.DyeOffHand.RowId, equip.Dye2OffHand.RowId),
+            equip.Visor);
+    }
+
+    private static bool IsValidHumanCustomize(IReadOnlyList<byte> customize)
+    {
+        var race = customize[0];
+        var gender = customize[1];
+        var tribe = customize[4];
+        return race is >= 1 and <= 8
+            && gender is 0 or 1
+            && tribe is >= 1 and <= 16;
+    }
+
+    private static ulong[] CreateEquipment(ENpcBase row)
+        =>
+        [
+            PackArmor(row.ModelHead, row.DyeHead.RowId, row.Dye2Head.RowId),
+            PackArmor(row.ModelBody, row.DyeBody.RowId, row.Dye2Body.RowId),
+            PackArmor(row.ModelHands, row.DyeHands.RowId, row.Dye2Hands.RowId),
+            PackArmor(row.ModelLegs, row.DyeLegs.RowId, row.Dye2Legs.RowId),
+            PackArmor(row.ModelFeet, row.DyeFeet.RowId, row.Dye2Feet.RowId),
+            PackArmor(row.ModelEars, row.DyeEars.RowId, row.Dye2Ears.RowId),
+            PackArmor(row.ModelNeck, row.DyeNeck.RowId, row.Dye2Neck.RowId),
+            PackArmor(row.ModelWrists, row.DyeWrists.RowId, row.Dye2Wrists.RowId),
+            PackArmor(row.ModelRightRing, row.DyeRightRing.RowId, row.Dye2RightRing.RowId),
+            PackArmor(row.ModelLeftRing, row.DyeLeftRing.RowId, row.Dye2LeftRing.RowId),
+        ];
+
+    private static ulong[] CreateEquipment(NpcEquip row)
+        =>
+        [
+            PackArmor(row.ModelHead, row.DyeHead.RowId, row.Dye2Head.RowId),
+            PackArmor(row.ModelBody, row.DyeBody.RowId, row.Dye2Body.RowId),
+            PackArmor(row.ModelHands, row.DyeHands.RowId, row.Dye2Hands.RowId),
+            PackArmor(row.ModelLegs, row.DyeLegs.RowId, row.Dye2Legs.RowId),
+            PackArmor(row.ModelFeet, row.DyeFeet.RowId, row.Dye2Feet.RowId),
+            PackArmor(row.ModelEars, row.DyeEars.RowId, row.Dye2Ears.RowId),
+            PackArmor(row.ModelNeck, row.DyeNeck.RowId, row.Dye2Neck.RowId),
+            PackArmor(row.ModelWrists, row.DyeWrists.RowId, row.Dye2Wrists.RowId),
+            PackArmor(row.ModelRightRing, row.DyeRightRing.RowId, row.Dye2RightRing.RowId),
+            PackArmor(row.ModelLeftRing, row.DyeLeftRing.RowId, row.Dye2LeftRing.RowId),
+        ];
+
+    private static ulong PackArmor(ulong model, uint stain1, uint stain2)
+        => model | ((ulong)stain1 << 24) | ((ulong)stain2 << 32);
+
+    private static ulong PackWeapon(ulong model, uint stain1, uint stain2)
+        => model | ((ulong)stain1 << 48) | ((ulong)stain2 << 56);
 
     private static string CreateBattleNpcFallbackName(uint rowId, byte gender, byte bodyType)
     {
@@ -349,6 +476,22 @@ public enum ModelSource
     BattleNpc,
 }
 
+public sealed record HumanAppearance(
+    byte[] Customize,
+    ulong[] Equipment,
+    ulong Mainhand,
+    ulong Offhand,
+    bool VisorToggled)
+{
+    public string Signature { get; } = string.Join(
+        ':',
+        Convert.ToHexString(Customize),
+        string.Join(',', Equipment.Select(static value => value.ToString("X16"))),
+        Mainhand.ToString("X16"),
+        Offhand.ToString("X16"),
+        VisorToggled ? "1" : "0");
+}
+
 public sealed record ModelSearchEntry(
     uint RowId,
     ModelCategory Category,
@@ -361,7 +504,8 @@ public sealed record ModelSearchEntry(
     byte Variant,
     uint Race,
     byte Gender,
-    byte BodyType)
+    byte BodyType,
+    HumanAppearance? HumanAppearance)
 {
     public uint ModelId => RowId;
 

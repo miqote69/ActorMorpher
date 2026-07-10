@@ -189,7 +189,7 @@ public sealed class MainWindow : Window, IDisposable
 
             ImGui.Spacing();
             if (ImGui.Button("Apply to Yourself"))
-                applySucceeded = plugin.TryApplyModelToLocalPlayer(model.ModelId, out applyStatus);
+                applySucceeded = plugin.TryApplyModelToLocalPlayer(model, out applyStatus);
 
             if (!string.IsNullOrWhiteSpace(applyStatus))
             {

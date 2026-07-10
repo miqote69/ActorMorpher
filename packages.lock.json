@@ -25,6 +25,12 @@
           "Sylvan.Data.Csv": "1.4.3"
         }
       },
+      "Penumbra.Api": {
+        "type": "Direct",
+        "requested": "[5.15.1, )",
+        "resolved": "5.15.1",
+        "contentHash": "3ikk0zIOaLm2n3nZRQpW3xaRQ2cq/TOOEApNUjYXolqbyvCrZVGXhdQulcssNUbo0AMQ81l+cf7OfqRceeRBcg=="
+      },
       "CSVFile": {
         "type": "Transitive",
         "resolved": "3.2.1",
