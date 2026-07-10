@@ -1,0 +1,13 @@
+{
+  "Author": "miqote69",
+  "Name": "Actor Morpher",
+  "Punchline": "Locally changes visible actor forms.",
+  "Description": "Prototype for locally changing visible actors into selected NPC, demihuman, or monster forms. Use /actormorpher to open the window.",
+  "ApplicableVersion": "any",
+  "RepoUrl": "https://github.com/miqote69/ActorMorpher",
+  "Tags": [
+    "actor",
+    "model",
+    "cosmetic"
+  ]
+}
