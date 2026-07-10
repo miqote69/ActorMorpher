@@ -124,36 +124,86 @@ public sealed class MainWindow : Window, IDisposable
     {
         ImGui.TextUnformatted($"Results ({models.Count})");
 
-        if (ImGui.BeginTable("##model-results", 5, ImGuiTableFlags.RowBg | ImGuiTableFlags.Borders | ImGuiTableFlags.ScrollY, Vector2.Zero))
+        if (ImGui.BeginTable("##model-results", 2, ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.Resizable, Vector2.Zero))
         {
-            ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthStretch);
-            ImGui.TableSetupColumn("Model ID", ImGuiTableColumnFlags.WidthFixed, 80.0f);
-            ImGui.TableSetupColumn("Category", ImGuiTableColumnFlags.WidthFixed, 92.0f);
-            ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthFixed, 86.0f);
+            ImGui.TableSetupColumn("Characters", ImGuiTableColumnFlags.WidthFixed, 280.0f);
             ImGui.TableSetupColumn("Details", ImGuiTableColumnFlags.WidthStretch);
-            ImGui.TableHeadersRow();
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
 
-            foreach (var model in models)
+            if (ImGui.BeginChild("##model-name-list", Vector2.Zero, true))
             {
-                var selected = selectedModel?.RowId == model.RowId;
-                ImGui.TableNextRow();
-
-                ImGui.TableNextColumn();
-                if (ImGui.Selectable($"{model.Name}##model-{model.RowId}-{model.Source}-{model.SourceId}", selected, ImGuiSelectableFlags.SpanAllColumns))
-                    selectedModel = model;
-
-                ImGui.TableNextColumn();
-                ImGui.TextUnformatted(model.ModelId.ToString());
-                ImGui.TableNextColumn();
-                ImGui.TextUnformatted(model.Category.ToString());
-                ImGui.TableNextColumn();
-                ImGui.TextUnformatted($"{model.Source} #{model.SourceId}");
-                ImGui.TableNextColumn();
-                ImGui.TextUnformatted(FormatModelDetails(model));
+                foreach (var model in models)
+                {
+                    var selected = IsSelectedModel(model);
+                    if (ImGui.Selectable($"{model.Name}##model-{model.RowId}-{model.Source}-{model.SourceId}", selected))
+                        selectedModel = model;
+                }
             }
 
+            ImGui.EndChild();
+            ImGui.TableNextColumn();
+            DrawModelDetails();
             ImGui.EndTable();
         }
+    }
+
+    private void DrawModelDetails()
+    {
+        if (ImGui.BeginChild("##model-details", Vector2.Zero, true))
+        {
+            if (selectedModel is not { } model)
+            {
+                ImGui.TextDisabled("Select a character from the list.");
+                ImGui.EndChild();
+                return;
+            }
+
+            ImGui.TextUnformatted(model.Name);
+            ImGui.Separator();
+
+            if (ImGui.BeginTable("##model-detail-fields", 2, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
+            {
+                ImGui.TableSetupColumn("Field", ImGuiTableColumnFlags.WidthFixed, 110.0f);
+                ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                DrawDetailRow("Model ID", model.ModelId.ToString());
+                DrawDetailRow("Category", model.Category.ToString());
+                DrawDetailRow("Source", $"{model.Source} #{model.SourceId}");
+                DrawDetailRow("Type", model.Type.ToString());
+                DrawDetailRow("Model", model.Model.ToString());
+                DrawDetailRow("Base", model.Base.ToString());
+                DrawDetailRow("Variant", model.Variant.ToString());
+
+                if (model.Category == ModelCategory.Human)
+                {
+                    DrawDetailRow("Race", GetRaceName(model.Race));
+                    DrawDetailRow("Gender", GetGenderName(model.Gender));
+                    DrawDetailRow("Age", GetAgeName(model.BodyType));
+                    DrawDetailRow("Body Type", model.BodyType.ToString());
+                }
+
+                ImGui.EndTable();
+            }
+        }
+
+        ImGui.EndChild();
+    }
+
+    private static void DrawDetailRow(string field, string value)
+    {
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.TextDisabled(field);
+        ImGui.TableNextColumn();
+        ImGui.TextUnformatted(value);
+    }
+
+    private bool IsSelectedModel(ModelSearchEntry model)
+    {
+        return selectedModel is { } selected
+            && selected.RowId == model.RowId
+            && selected.Source == model.Source
+            && selected.SourceId == model.SourceId;
     }
 
     private void DrawModelSearchControls()
@@ -277,12 +327,31 @@ public sealed class MainWindow : Window, IDisposable
             || (includeYoungNpc && model.IsYoungNpc);
     }
 
-    private static string FormatModelDetails(ModelSearchEntry model)
+    private static string GetRaceName(uint race)
     {
-        var text = $"Type {model.Type}, Model {model.Model}, Base {model.Base}, Variant {model.Variant}";
-        if (model.Category != ModelCategory.Human)
-            return text;
+        return HumanRaces.FirstOrDefault(entry => entry.Id == race) is var entry && entry.Name is not null
+            ? entry.Name.Replace("Any race", "Unknown")
+            : $"Unknown ({race})";
+    }
 
-        return $"{text}, Race {model.Race}, Gender {model.Gender}, BodyType {model.BodyType}";
+    private static string GetGenderName(byte gender)
+    {
+        return gender switch
+        {
+            0 => "Male",
+            1 => "Female",
+            _ => $"Unknown ({gender})",
+        };
+    }
+
+    private static string GetAgeName(byte bodyType)
+    {
+        return bodyType switch
+        {
+            (byte)NpcAge.Normal => "Adult",
+            (byte)NpcAge.Old => "Old",
+            (byte)NpcAge.Young => "Young",
+            _ => $"Unknown ({bodyType})",
+        };
     }
 }
