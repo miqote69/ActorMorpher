@@ -1,0 +1,27 @@
+[
+  {
+    "Author": "miqote69",
+    "Name": "Actor Morpher",
+    "Description": "Locally changes visible actors into selected NPC, demihuman, or monster forms. Use /actormorpher to open the window.",
+    "InternalName": "ActorMorpher",
+    "AssemblyVersion": "0.0.0.1",
+    "TestingAssemblyVersion": null,
+    "RepoUrl": "https://github.com/miqote69/ActorMorpher",
+    "ApplicableVersion": "any",
+    "DalamudApiLevel": 15,
+    "Punchline": "Locally changes visible actor forms.",
+    "Tags": [
+      "actor",
+      "model",
+      "cosmetic"
+    ],
+    "MinimumDalamudVersion": "15.0.0.0",
+    "IsHide": false,
+    "IsTestingExclusive": false,
+    "DownloadLinkInstall": "https://github.com/miqote69/ActorMorpher/releases/download/v0.0.0.1/ActorMorpher.zip",
+    "DownloadLinkTesting": "https://github.com/miqote69/ActorMorpher/releases/download/v0.0.0.1/ActorMorpher.zip",
+    "DownloadLinkUpdate": "https://github.com/miqote69/ActorMorpher/releases/download/v0.0.0.1/ActorMorpher.zip",
+    "DownloadCount": 0,
+    "LastUpdate": 1783702800
+  }
+]

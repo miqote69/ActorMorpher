@@ -2,6 +2,14 @@
 
 Dalamud plugin prototype for locally changing visible actors into selected NPC, demihuman, or monster forms.
 
+## Install
+
+Add this URL to Dalamud's custom plugin repositories:
+
+```text
+https://raw.githubusercontent.com/miqote69/ActorMorpher/main/repo.json
+```
+
 ## Use
 
 - Command: `/actormorpher`

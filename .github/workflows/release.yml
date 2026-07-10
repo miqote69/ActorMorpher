@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore ActorMorpher.csproj --configfile NuGet.Config
+
+      - name: Download Dalamud
+        shell: pwsh
+        run: |
+          $dalamudRoot = Join-Path $env:RUNNER_TEMP "dalamud"
+          $zipPath = Join-Path $env:RUNNER_TEMP "dalamud.zip"
+          New-Item -ItemType Directory -Force -Path $dalamudRoot | Out-Null
+          Invoke-WebRequest -Uri "https://goatcorp.github.io/dalamud-distrib/latest.zip" -OutFile $zipPath
+          Expand-Archive -LiteralPath $zipPath -DestinationPath $dalamudRoot -Force
+          $devPath = Get-ChildItem -Path $dalamudRoot -Directory -Recurse |
+            Where-Object { $_.FullName -match "[\\/]Hooks[\\/]dev$" } |
+            Select-Object -First 1
+          if (-not $devPath) {
+            $devPath = Get-Item $dalamudRoot
+          }
+          "DALAMUD_HOME=$($devPath.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build
+        run: dotnet build ActorMorpher.csproj -c Release --no-restore
+
+      - name: Package plugin
+        shell: pwsh
+        run: |
+          $pluginDll = Get-ChildItem -Path bin -Filter "ActorMorpher.dll" -Recurse |
+            Where-Object { $_.FullName -match "[\\/]Release[\\/]" } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $pluginDll) {
+            throw "ActorMorpher.dll was not found in the Release output."
+          }
+
+          $releaseDir = $pluginDll.Directory
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          $packagedZip = Get-ChildItem -Path $releaseDir.FullName -Filter "*.zip" -Recurse |
+            Select-Object -First 1
+          if ($packagedZip) {
+            Copy-Item $packagedZip.FullName artifacts/ActorMorpher.zip -Force
+          } else {
+            Compress-Archive -Path "$($releaseDir.FullName)/*" -DestinationPath artifacts/ActorMorpher.zip -Force
+          }
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/ActorMorpher.zip
+          generate_release_notes: true
