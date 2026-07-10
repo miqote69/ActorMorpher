@@ -188,18 +188,8 @@ public sealed class MainWindow : Window, IDisposable
             }
 
             ImGui.Spacing();
-            var humanApplyDisabled = model.Category == ModelCategory.Human;
-            if (humanApplyDisabled)
-                ImGui.BeginDisabled();
-
             if (ImGui.Button("Apply to Yourself"))
                 applySucceeded = plugin.TryApplyModelToLocalPlayer(model, out applyStatus);
-
-            if (humanApplyDisabled)
-            {
-                ImGui.EndDisabled();
-                ImGui.TextWrapped("Human apply is temporarily disabled to prevent crashes while Glamourer-compatible application is implemented.");
-            }
 
             if (!string.IsNullOrWhiteSpace(applyStatus))
             {

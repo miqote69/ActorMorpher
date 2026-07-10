@@ -6,11 +6,15 @@ using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
+using Glamourer.Api.Enums;
+using Glamourer.Api.IpcSubscribers;
 using Lumina.Excel.Sheets;
 using LuminaSupplemental.Excel.Model;
 using LuminaSupplemental.Excel.Services;
 using Penumbra.Api.Enums;
 using Penumbra.Api.IpcSubscribers;
+using Newtonsoft.Json.Linq;
+using PenumbraRedrawObject = Penumbra.Api.IpcSubscribers.RedrawObject;
 
 namespace ActorMorpher;
 
@@ -29,7 +33,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
     private readonly MainWindow mainWindow;
     private readonly WindowSystem windowSystem = new("ActorMorpher");
-    private readonly RedrawObject penumbraRedraw;
+    private readonly PenumbraRedrawObject penumbraRedraw;
+    private readonly ApplyState glamourerApplyState;
     private IReadOnlyList<ModelSearchEntry>? modelSearchCache;
 
     public Configuration Configuration { get; }
@@ -47,7 +52,8 @@ public sealed unsafe class Plugin : IDalamudPlugin
     public Plugin()
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
-        penumbraRedraw = new RedrawObject(PluginInterface);
+        penumbraRedraw = new PenumbraRedrawObject(PluginInterface);
+        glamourerApplyState = new ApplyState(PluginInterface);
 
         mainWindow = new MainWindow(this);
         windowSystem.AddWindow(mainWindow);
@@ -125,8 +131,34 @@ public sealed unsafe class Plugin : IDalamudPlugin
     {
         if (model.Category == ModelCategory.Human)
         {
-            message = "Human apply is disabled until Glamourer-compatible state application is available.";
-            return false;
+            if (model.HumanAppearance is not { } appearance)
+            {
+                message = "The selected Human NPC does not have complete appearance data.";
+                return false;
+            }
+
+            try
+            {
+                var result = glamourerApplyState.Invoke(
+                    CreateGlamourerState(appearance),
+                    0,
+                    0,
+                    ApplyFlag.Once | ApplyFlag.Equipment | ApplyFlag.Customization);
+                if (result is not GlamourerApiEc.Success and not GlamourerApiEc.NothingDone)
+                {
+                    message = $"Glamourer rejected the NPC appearance: {result}.";
+                    return false;
+                }
+
+                message = $"Applied {model.Name} through Glamourer.";
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to apply Human NPC {Name} through Glamourer.", model.Name);
+                message = "Human apply requires Glamourer to be installed and enabled.";
+                return false;
+            }
         }
 
         var localPlayer = ObjectTable.LocalPlayer;
@@ -319,6 +351,120 @@ public sealed unsafe class Plugin : IDalamudPlugin
                 : PackWeapon(row.ModelOffHand, row.DyeOffHand.RowId, row.Dye2OffHand.RowId);
 
         return new HumanAppearance(customize, equipment, mainhand, offhand, row.Visor);
+    }
+
+    private static JObject CreateGlamourerState(HumanAppearance appearance)
+    {
+        var equipment = new JObject();
+        var slotNames = new[] { "Head", "Body", "Hands", "Legs", "Feet", "Ears", "Neck", "Wrists", "RFinger", "LFinger" };
+        var equipTypes = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 9 };
+        for (var i = 0; i < appearance.Equipment.Length; ++i)
+        {
+            var armor = appearance.Equipment[i];
+            equipment[slotNames[i]] = CreateEquipmentToken(
+                CreateCustomItemId((ushort)armor, 0, (byte)(armor >> 16), equipTypes[i]),
+                (byte)(armor >> 24),
+                (byte)(armor >> 32));
+        }
+
+        equipment["MainHand"] = CreateWeaponToken(appearance.Mainhand);
+        equipment["OffHand"] = CreateWeaponToken(appearance.Offhand);
+        equipment["Hat"] = CreateToggleToken(true, "Show");
+        equipment["VieraEars"] = CreateToggleToken(true, "Show");
+        equipment["Weapon"] = CreateToggleToken(true, "Show");
+        equipment["Visor"] = CreateToggleToken(appearance.VisorToggled, "IsToggled");
+
+        var customize = new JObject
+        {
+            ["ModelId"] = 0,
+            ["Wetness"] = CreateToggleToken(false, "Value"),
+        };
+        var values = EnumerateCustomizeValues(appearance.Customize);
+        foreach (var (name, value) in values)
+        {
+            customize[name] = new JObject
+            {
+                ["Value"] = value,
+                ["Apply"] = true,
+            };
+        }
+
+        return new JObject
+        {
+            ["FileVersion"] = 1,
+            ["Equipment"] = equipment,
+            ["Bonus"] = new JObject(),
+            ["Customize"] = customize,
+            ["Parameters"] = new JObject(),
+            ["Materials"] = new JObject(),
+        };
+    }
+
+    private static JObject CreateEquipmentToken(ulong itemId, byte stain1, byte stain2)
+        => new()
+        {
+            ["ItemId"] = itemId,
+            ["Crest"] = false,
+            ["Apply"] = true,
+            ["ApplyStain"] = true,
+            ["ApplyCrest"] = false,
+            ["Stain"] = stain1,
+            ["Stain2"] = stain2,
+        };
+
+    private static JObject CreateWeaponToken(ulong weapon)
+        => CreateEquipmentToken(
+            CreateCustomItemId((ushort)weapon, (ushort)(weapon >> 16), (byte)(weapon >> 32), 0),
+            (byte)(weapon >> 48),
+            (byte)(weapon >> 56));
+
+    private static JObject CreateToggleToken(bool value, string valueName)
+        => new()
+        {
+            [valueName] = value,
+            ["Apply"] = true,
+        };
+
+    private static ulong CreateCustomItemId(ushort primary, ushort secondary, byte variant, byte equipType)
+        => primary
+            | ((ulong)secondary << 16)
+            | ((ulong)variant << 32)
+            | ((ulong)equipType << 40)
+            | (1UL << 48);
+
+    private static IEnumerable<(string Name, byte Value)> EnumerateCustomizeValues(byte[] data)
+    {
+        yield return ("Race", data[0]);
+        yield return ("Gender", data[1]);
+        yield return ("BodyType", data[2]);
+        yield return ("Height", data[3]);
+        yield return ("Clan", data[4]);
+        yield return ("Face", data[5]);
+        yield return ("Hairstyle", data[6]);
+        yield return ("Highlights", (byte)(data[7] >> 7));
+        yield return ("SkinColor", data[8]);
+        yield return ("EyeColorRight", data[9]);
+        yield return ("HairColor", data[10]);
+        yield return ("HighlightsColor", data[11]);
+        for (var i = 0; i < 7; ++i)
+            yield return ($"FacialFeature{i + 1}", (byte)((data[12] >> i) & 1));
+        yield return ("LegacyTattoo", (byte)(data[12] >> 7));
+        yield return ("TattooColor", data[13]);
+        yield return ("Eyebrows", data[14]);
+        yield return ("EyeColorLeft", data[15]);
+        yield return ("EyeShape", (byte)(data[16] & 0x7F));
+        yield return ("SmallIris", (byte)(data[16] >> 7));
+        yield return ("Nose", data[17]);
+        yield return ("Jaw", data[18]);
+        yield return ("Mouth", (byte)(data[19] & 0x7F));
+        yield return ("Lipstick", (byte)(data[19] >> 7));
+        yield return ("LipColor", data[20]);
+        yield return ("MuscleMass", data[21]);
+        yield return ("TailShape", data[22]);
+        yield return ("BustSize", data[23]);
+        yield return ("FacePaint", (byte)(data[24] & 0x7F));
+        yield return ("FacePaintReversed", (byte)(data[24] >> 7));
+        yield return ("FacePaintColor", data[25]);
     }
 
     private static HumanAppearance? CreateHumanAppearance(BNpcCustomize row, NpcEquip equip)

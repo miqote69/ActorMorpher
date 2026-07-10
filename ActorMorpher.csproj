@@ -1,13 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
-    <Version>0.0.0.6</Version>
+    <Version>0.0.0.7</Version>
     <PackageProjectUrl>https://github.com/miqote69/ActorMorpher</PackageProjectUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <IsPackable>false</IsPackable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Glamourer.Api" Version="2.8.2" />
     <PackageReference Include="LuminaSupplemental.Excel" Version="4.3.7" />
     <PackageReference Include="Penumbra.Api" Version="5.15.1" />
   </ItemGroup>
