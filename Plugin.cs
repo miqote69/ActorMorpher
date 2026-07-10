@@ -86,10 +86,12 @@ public sealed class Plugin : IDalamudPlugin
 
     public IReadOnlyList<ActorEntry> GetVisibleActors()
     {
+        var localPlayerId = ObjectTable.LocalPlayer?.GameObjectId;
         return ObjectTable.CharacterManagerObjects
             .Where(static obj => obj.Address != nint.Zero && obj.IsValid())
-            .Select(CreateActorEntry)
-            .OrderBy(static actor => actor.Kind)
+            .Select(obj => CreateActorEntry(obj, localPlayerId))
+            .OrderByDescending(static actor => actor.IsLocalPlayer)
+            .ThenBy(static actor => actor.Kind)
             .ThenBy(static actor => actor.Name)
             .ToArray();
     }
@@ -147,16 +149,18 @@ public sealed class Plugin : IDalamudPlugin
             if (modelId == 0 || !modelChara.TryGetValue(modelId, out var model))
                 continue;
 
-            var name = $"Battle NPC {row.RowId}";
             var customize = row.BNpcCustomize.ValueNullable;
+            var gender = (byte)(customize?.Gender ?? 0);
+            var bodyType = customize?.BodyType ?? 0;
+            var name = CreateBattleNpcFallbackName(row.RowId, gender, bodyType);
             entries.Add(CreateSearchEntry(
                 model,
                 ModelSource.BattleNpc,
                 row.RowId,
                 name,
                 customize?.Race.RowId ?? 0,
-                (byte)(customize?.Gender ?? 0),
-                customize?.BodyType ?? 0));
+                gender,
+                bodyType));
         }
 
         foreach (var model in modelChara.Values)
@@ -211,7 +215,21 @@ public sealed class Plugin : IDalamudPlugin
             bodyType);
     }
 
-    private static ActorEntry CreateActorEntry(IGameObject obj)
+    private static string CreateBattleNpcFallbackName(uint rowId, byte gender, byte bodyType)
+    {
+        var description = (bodyType, gender) switch
+        {
+            ((byte)NpcAge.Young, 0) => "少年 / Young Boy",
+            ((byte)NpcAge.Young, 1) => "少女 / Young Girl",
+            ((byte)NpcAge.Old, 0) => "老人 / Old Man",
+            ((byte)NpcAge.Old, 1) => "老婆 / Old Woman",
+            _ => "Battle NPC",
+        };
+
+        return $"{description} {rowId}";
+    }
+
+    private static ActorEntry CreateActorEntry(IGameObject obj, ulong? localPlayerId)
     {
         var name = obj.Name.ToString();
         if (string.IsNullOrWhiteSpace(name))
@@ -223,7 +241,8 @@ public sealed class Plugin : IDalamudPlugin
             obj.BaseId,
             obj.ObjectKind,
             name,
-            obj.IsTargetable);
+            obj.IsTargetable,
+            obj.GameObjectId == localPlayerId);
     }
 }
 
@@ -233,7 +252,15 @@ public sealed record ActorEntry(
     uint BaseId,
     ObjectKind Kind,
     string Name,
-    bool IsTargetable);
+    bool IsTargetable,
+    bool IsLocalPlayer);
+
+public enum NpcAge : byte
+{
+    Normal = 1,
+    Old = 3,
+    Young = 4,
+}
 
 public enum ModelCategory
 {
@@ -266,5 +293,5 @@ public sealed record ModelSearchEntry(
 {
     public uint ModelId => RowId;
 
-    public bool IsYoungNpc => Category == ModelCategory.Human && BodyType is not 0 and not 1;
+    public bool IsYoungNpc => Category == ModelCategory.Human && BodyType == (byte)NpcAge.Young;
 }

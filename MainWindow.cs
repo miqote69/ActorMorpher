@@ -107,7 +107,8 @@ public sealed class MainWindow : Window, IDisposable
             foreach (var actor in actors)
             {
                 var selected = selectedActor?.GameObjectId == actor.GameObjectId;
-                var label = $"{actor.Name} [{actor.Kind}]##actor-{actor.GameObjectId}";
+                var localPlayerLabel = actor.IsLocalPlayer ? " (You)" : string.Empty;
+                var label = $"{actor.Name}{localPlayerLabel} [{actor.Kind}]##actor-{actor.GameObjectId}";
                 if (ImGui.Selectable(label, selected))
                     selectedActor = actor;
 
