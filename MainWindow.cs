@@ -17,6 +17,8 @@ public sealed class MainWindow : Window, IDisposable
     private bool includeYoungNpc = true;
     private ActorEntry? selectedActor;
     private ModelSearchEntry? selectedModel;
+    private string applyStatus = string.Empty;
+    private bool applySucceeded;
 
     private static readonly string[] CategoryNames =
     [
@@ -183,6 +185,18 @@ public sealed class MainWindow : Window, IDisposable
                 }
 
                 ImGui.EndTable();
+            }
+
+            ImGui.Spacing();
+            if (ImGui.Button("Apply to Yourself"))
+                applySucceeded = plugin.TryApplyModelToLocalPlayer(model.ModelId, out applyStatus);
+
+            if (!string.IsNullOrWhiteSpace(applyStatus))
+            {
+                var color = applySucceeded
+                    ? new Vector4(0.35f, 0.85f, 0.45f, 1.0f)
+                    : new Vector4(0.95f, 0.35f, 0.35f, 1.0f);
+                ImGui.TextColored(color, applyStatus);
             }
         }
 

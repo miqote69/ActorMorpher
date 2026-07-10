@@ -5,11 +5,14 @@ using Dalamud.IoC;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
+using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using Lumina.Excel.Sheets;
+using LuminaSupplemental.Excel.Model;
+using LuminaSupplemental.Excel.Services;
 
 namespace ActorMorpher;
 
-public sealed class Plugin : IDalamudPlugin
+public sealed unsafe class Plugin : IDalamudPlugin
 {
     public const string DisplayName = "Actor Morpher";
 
@@ -114,12 +117,51 @@ public sealed class Plugin : IDalamudPlugin
         return modelSearchCache;
     }
 
+    public bool TryApplyModelToLocalPlayer(uint modelId, out string message)
+    {
+        var localPlayer = ObjectTable.LocalPlayer;
+        if (localPlayer is null || localPlayer.Address == nint.Zero)
+        {
+            message = "Local player is not available.";
+            return false;
+        }
+
+        try
+        {
+            var character = (Character*)localPlayer.Address;
+            character->ModelContainer.ModelCharaId = checked((int)modelId);
+
+            var originalKind = character->GameObject.ObjectKind;
+            character->GameObject.DisableDraw();
+            try
+            {
+                character->GameObject.ObjectKind = FFXIVClientStructs.FFXIV.Client.Game.Object.ObjectKind.BattleNpc;
+                character->GameObject.EnableDraw();
+            }
+            finally
+            {
+                character->GameObject.ObjectKind = originalKind;
+            }
+
+            message = $"Applied Model ID {modelId} to yourself.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to apply Model ID {ModelId} to the local player.", modelId);
+            message = $"Failed to apply Model ID {modelId}. See /xllog for details.";
+            return false;
+        }
+    }
+
     private IReadOnlyList<ModelSearchEntry> BuildModelSearchEntries()
     {
         var modelChara = DataManager.GetExcelSheet<ModelChara>()
             .Where(static row => row.RowId != 0)
             .ToDictionary(static row => row.RowId);
         var eNpcResidents = DataManager.GetExcelSheet<ENpcResident>();
+        var bNpcNames = DataManager.GetExcelSheet<BNpcName>();
+        var bNpcNameLinks = LoadBattleNpcNameLinks();
         var entries = new List<ModelSearchEntry>(modelChara.Count);
 
         foreach (var row in DataManager.GetExcelSheet<ENpcBase>())
@@ -152,15 +194,27 @@ public sealed class Plugin : IDalamudPlugin
             var customize = row.BNpcCustomize.ValueNullable;
             var gender = (byte)(customize?.Gender ?? 0);
             var bodyType = customize?.BodyType ?? 0;
-            var name = CreateBattleNpcFallbackName(row.RowId, gender, bodyType);
-            entries.Add(CreateSearchEntry(
-                model,
-                ModelSource.BattleNpc,
-                row.RowId,
-                name,
-                customize?.Race.RowId ?? 0,
-                gender,
-                bodyType));
+            var names = bNpcNameLinks.TryGetValue(row.RowId, out var nameIds)
+                ? nameIds.Select(id => bNpcNames.TryGetRow(id, out var nameRow) ? nameRow.Singular.ToString() : string.Empty)
+                    .Where(static name => !string.IsNullOrWhiteSpace(name))
+                    .Distinct(StringComparer.CurrentCulture)
+                    .ToArray()
+                : Array.Empty<string>();
+
+            if (names.Length == 0)
+                names = [CreateBattleNpcFallbackName(row.RowId, gender, bodyType)];
+
+            foreach (var name in names)
+            {
+                entries.Add(CreateSearchEntry(
+                    model,
+                    ModelSource.BattleNpc,
+                    row.RowId,
+                    name,
+                    customize?.Race.RowId ?? 0,
+                    gender,
+                    bodyType));
+            }
         }
 
         foreach (var model in modelChara.Values)
@@ -227,6 +281,24 @@ public sealed class Plugin : IDalamudPlugin
         };
 
         return $"{description} {rowId}";
+    }
+
+    private static IReadOnlyDictionary<uint, uint[]> LoadBattleNpcNameLinks()
+    {
+        var links = CsvLoader.LoadResource<BNpcLink>(
+            CsvLoader.BNpcLinkResourceName,
+            true,
+            out var failedLines,
+            out var exceptions);
+
+        if (failedLines.Count > 0 || exceptions.Count > 0)
+            Log.Warning("Failed to read {FailedCount} battle NPC name links.", failedLines.Count);
+
+        return links
+            .GroupBy(static link => link.BNpcBaseId)
+            .ToDictionary(
+                static group => group.Key,
+                static group => group.Select(static link => link.BNpcNameId).Distinct().ToArray());
     }
 
     private static ActorEntry CreateActorEntry(IGameObject obj, ulong? localPlayerId)
