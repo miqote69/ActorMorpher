@@ -24,7 +24,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private readonly MainWindow mainWindow;
     private readonly WindowSystem windowSystem = new("ActorMorpher");
-    private IReadOnlyList<ModelCharaEntry>? modelCharaCache;
+    private IReadOnlyList<ModelSearchEntry>? modelSearchCache;
 
     public Configuration Configuration { get; }
 
@@ -94,32 +94,121 @@ public sealed class Plugin : IDalamudPlugin
             .ToArray();
     }
 
-    public IReadOnlyList<ModelCharaEntry> GetModelCharaEntries()
+    public IReadOnlyList<ModelSearchEntry> GetModelSearchEntries()
     {
-        if (modelCharaCache is { } cache)
+        if (modelSearchCache is { } cache)
             return cache;
 
         try
         {
-            modelCharaCache = DataManager.GetExcelSheet<ModelChara>()
-                .Where(static row => row.RowId != 0)
-                .Select(static row => new ModelCharaEntry(
-                    row.RowId,
-                    row.Type,
-                    row.Model,
-                    row.Base,
-                    row.Variant))
-                .OrderBy(static row => row.Type)
-                .ThenBy(static row => row.RowId)
-                .ToArray();
+            modelSearchCache = BuildModelSearchEntries();
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Failed to load ModelChara sheet.");
-            modelCharaCache = Array.Empty<ModelCharaEntry>();
+            Log.Error(ex, "Failed to load model search data.");
+            modelSearchCache = Array.Empty<ModelSearchEntry>();
         }
 
-        return modelCharaCache;
+        return modelSearchCache;
+    }
+
+    private IReadOnlyList<ModelSearchEntry> BuildModelSearchEntries()
+    {
+        var modelChara = DataManager.GetExcelSheet<ModelChara>()
+            .Where(static row => row.RowId != 0)
+            .ToDictionary(static row => row.RowId);
+        var eNpcResidents = DataManager.GetExcelSheet<ENpcResident>();
+        var entries = new List<ModelSearchEntry>(modelChara.Count);
+
+        foreach (var row in DataManager.GetExcelSheet<ENpcBase>())
+        {
+            var modelId = row.ModelChara.RowId;
+            if (modelId == 0 || !modelChara.TryGetValue(modelId, out var model))
+                continue;
+
+            var name = eNpcResidents.TryGetRow(row.RowId, out var resident)
+                ? resident.Singular.ToString()
+                : $"Event NPC {row.RowId}";
+            if (string.IsNullOrWhiteSpace(name))
+                name = $"Event NPC {row.RowId}";
+            entries.Add(CreateSearchEntry(
+                model,
+                ModelSource.EventNpc,
+                row.RowId,
+                name,
+                (uint)row.Race.RowId,
+                (byte)row.Gender,
+                row.BodyType));
+        }
+
+        foreach (var row in DataManager.GetExcelSheet<BNpcBase>())
+        {
+            var modelId = row.ModelChara.RowId;
+            if (modelId == 0 || !modelChara.TryGetValue(modelId, out var model))
+                continue;
+
+            var name = $"Battle NPC {row.RowId}";
+            var customize = row.BNpcCustomize.ValueNullable;
+            entries.Add(CreateSearchEntry(
+                model,
+                ModelSource.BattleNpc,
+                row.RowId,
+                name,
+                customize?.Race.RowId ?? 0,
+                (byte)(customize?.Gender ?? 0),
+                customize?.BodyType ?? 0));
+        }
+
+        foreach (var model in modelChara.Values)
+        {
+            if (entries.Any(entry => entry.ModelId == model.RowId))
+                continue;
+
+            entries.Add(CreateSearchEntry(
+                model,
+                ModelSource.ModelChara,
+                model.RowId,
+                $"ModelChara {model.RowId}",
+                0,
+                0,
+                0));
+        }
+
+        return entries
+            .OrderBy(static row => row.Category)
+            .ThenBy(static row => row.Name)
+            .ThenBy(static row => row.ModelId)
+            .ToArray();
+    }
+
+    private static ModelSearchEntry CreateSearchEntry(
+        ModelChara model,
+        ModelSource source,
+        uint sourceId,
+        string name,
+        uint race,
+        byte gender,
+        byte bodyType)
+    {
+        return new ModelSearchEntry(
+            model.RowId,
+            model.Type switch
+            {
+                1 => ModelCategory.Human,
+                2 => ModelCategory.Demihuman,
+                3 => ModelCategory.Monster,
+                _ => ModelCategory.Other,
+            },
+            source,
+            sourceId,
+            name,
+            model.Type,
+            model.Model,
+            model.Base,
+            model.Variant,
+            race,
+            gender,
+            bodyType);
     }
 
     private static ActorEntry CreateActorEntry(IGameObject obj)
@@ -146,9 +235,36 @@ public sealed record ActorEntry(
     string Name,
     bool IsTargetable);
 
-public sealed record ModelCharaEntry(
+public enum ModelCategory
+{
+    Human,
+    Demihuman,
+    Monster,
+    Other,
+}
+
+public enum ModelSource
+{
+    ModelChara,
+    EventNpc,
+    BattleNpc,
+}
+
+public sealed record ModelSearchEntry(
     uint RowId,
+    ModelCategory Category,
+    ModelSource Source,
+    uint SourceId,
+    string Name,
     byte Type,
     ushort Model,
     ushort Base,
-    byte Variant);
+    byte Variant,
+    uint Race,
+    byte Gender,
+    byte BodyType)
+{
+    public uint ModelId => RowId;
+
+    public bool IsYoungNpc => Category == ModelCategory.Human && BodyType is not 0 and not 1;
+}
