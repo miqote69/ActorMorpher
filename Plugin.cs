@@ -123,6 +123,12 @@ public sealed unsafe class Plugin : IDalamudPlugin
 
     public bool TryApplyModelToLocalPlayer(ModelSearchEntry model, out string message)
     {
+        if (model.Category == ModelCategory.Human)
+        {
+            message = "Human apply is disabled until Glamourer-compatible state application is available.";
+            return false;
+        }
+
         var localPlayer = ObjectTable.LocalPlayer;
         if (localPlayer is null || localPlayer.Address == nint.Zero)
         {
@@ -134,19 +140,6 @@ public sealed unsafe class Plugin : IDalamudPlugin
         {
             var character = (Character*)localPlayer.Address;
             character->ModelContainer.ModelCharaId = checked((int)model.ModelId);
-
-            if (model.HumanAppearance is { } appearance)
-            {
-                for (var i = 0; i < appearance.Customize.Length; ++i)
-                    character->DrawData.CustomizeData.Data[i] = appearance.Customize[i];
-                for (var i = 0; i < appearance.Equipment.Length; ++i)
-                    character->DrawData.EquipmentModelIds[i].Value = appearance.Equipment[i];
-
-                character->DrawData.WeaponData[0].ModelId.Value = appearance.Mainhand;
-                character->DrawData.WeaponData[1].ModelId.Value = appearance.Offhand;
-                character->DrawData.IsVisorToggled = appearance.VisorToggled;
-            }
-
             penumbraRedraw.Invoke(0, RedrawType.Redraw);
 
             message = $"Applied {model.Name} (Model ID {model.ModelId}) to yourself.";
