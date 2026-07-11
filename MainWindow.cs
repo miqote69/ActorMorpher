@@ -272,6 +272,7 @@ public sealed class MainWindow : Window, IDisposable
                 DrawDetailRow("Model", model.Model.ToString());
                 DrawDetailRow("Base", model.Base.ToString());
                 DrawDetailRow("Variant", model.Variant.ToString());
+                DrawDetailRow("Data", model.Completeness.ToString());
 
                 if (model.Category == ModelCategory.Human)
                 {

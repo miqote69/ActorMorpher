@@ -130,14 +130,16 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     public static string GetApplyUnavailableReason(ModelSearchEntry model)
-        => model.Category switch
+        => model.Completeness switch
         {
-            ModelCategory.Human when model.HumanAppearance is null
+            AppearanceCompleteness.Unsupported
+                => "This model does not have a supported standalone appearance representation.",
+            AppearanceCompleteness.ModelOnly when model.Category == ModelCategory.Monster
+                => "Only the Monster model ID is available; the required redraw behavior has not been verified.",
+            AppearanceCompleteness.ModelOnly when model.Category == ModelCategory.Demihuman
+                => "This Demihuman is missing complete customize or equipment part data.",
+            _ when model.Category == ModelCategory.Human && model.HumanAppearance is null
                 => "This Human NPC does not have complete appearance data.",
-            ModelCategory.Demihuman
-                => "Demihuman apply is unavailable until complete equipment and part data can be verified.",
-            ModelCategory.Monster
-                => "Monster apply is unavailable until the standalone redraw path is ready.",
             _ => "Standalone appearance apply is not available in this build.",
         };
 
@@ -273,7 +275,14 @@ public sealed class Plugin : IDalamudPlugin
             race,
             gender,
             bodyType,
-            humanAppearance);
+            humanAppearance,
+            model.Type switch
+            {
+                1 when humanAppearance is not null => AppearanceCompleteness.Complete,
+                1 => AppearanceCompleteness.Unsupported,
+                2 or 3 => AppearanceCompleteness.ModelOnly,
+                _ => AppearanceCompleteness.Unsupported,
+            });
     }
 
     private static HumanAppearance? CreateHumanAppearance(ENpcBase row)
@@ -462,7 +471,8 @@ public sealed record ModelSearchEntry(
     uint Race,
     byte Gender,
     byte BodyType,
-    HumanAppearance? HumanAppearance)
+    HumanAppearance? HumanAppearance,
+    AppearanceCompleteness Completeness)
 {
     public uint ModelId => RowId;
 
