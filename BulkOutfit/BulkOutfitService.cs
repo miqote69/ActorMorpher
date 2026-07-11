@@ -94,6 +94,15 @@ public sealed class BulkOutfitService : IDisposable
     public bool StartRestore(out string message)
         => Start(BulkOperationType.Restore, store.States.Keys.ToArray(), null, out message);
 
+    public bool StartRestore(LogicalActorKey actor, out string message)
+        => Start(BulkOperationType.Restore, [actor], null, out message);
+
+    public void ForgetOverride(LogicalActorKey actor)
+    {
+        pendingReapply.Remove(actor);
+        store.CompleteRestore(actor);
+    }
+
     public void Cancel()
     {
         operation?.RequestCancel();

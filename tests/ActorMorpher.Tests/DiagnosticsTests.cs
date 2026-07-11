@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using ActorMorpher;
 using ActorMorpher.Actors;
 using ActorMorpher.Diagnostics;
+using ActorMorpher.Localization;
 using Dalamud.Game.ClientState.Objects.Enums;
 using Xunit;
 
@@ -23,6 +24,8 @@ public sealed class DiagnosticsTests
         var configuration = new Configuration
         {
             Version = 2,
+            FileDiagnosticMode = FileDiagnosticMode.ErrorsOnly,
+            IncludeActorNamesInDiagnostics = true,
             DiagnosticRetentionDays = -10,
             DiagnosticMaximumSessions = 1000,
             DiagnosticMaximumFileSizeMb = 0,
@@ -30,6 +33,10 @@ public sealed class DiagnosticsTests
         };
         configuration.MigrateAndValidate(false);
 
+        Assert.Equal(3, configuration.Version);
+        Assert.Equal(UiLanguage.Automatic, configuration.UiLanguage);
+        Assert.Equal(FileDiagnosticMode.ErrorsOnly, configuration.FileDiagnosticMode);
+        Assert.True(configuration.IncludeActorNamesInDiagnostics);
         Assert.Equal(1, configuration.DiagnosticRetentionDays);
         Assert.Equal(100, configuration.DiagnosticMaximumSessions);
         Assert.Equal(1, configuration.DiagnosticMaximumFileSizeMb);

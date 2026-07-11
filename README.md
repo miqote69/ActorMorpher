@@ -146,6 +146,14 @@ Open Actor Morpher with either command:
 
 Actor Morpher currently provides:
 
+Model and NPC names, race names, item names, searching, and sorting follow the active FFXIV client language. The plugin UI can follow the client automatically or be selected independently from English, Japanese, German, and French in Settings. Existing diagnostic configuration is preserved when upgrading.
+
+Human Model Search details include equipment model numbers and localized matching item names. Actor restore now coordinates appearance and Bulk Outfit snapshots so a pre-morph body is not combined with an NPC outfit. Bulk writes skip equipment slots that already match, reducing unnecessary resource reloads and interference with externally modded unequipped appearances.
+
+The Model Search preview surface currently reports an unavailable state instead of allocating a native CharaView unsafely. The current APIs do not expose exclusive CharaView slot ownership or verified native texture lifetime rules. See [preview research](docs/MODEL_PREVIEW_RESEARCH.md) and [preview architecture](docs/MODEL_PREVIEW.md).
+
+Native appearance features use the current Dalamud and FFXIVClientStructs APIs without guessed offsets, signatures, VTable indexes, or ObjectKind writes. These new write paths still require FF14 testing against the current client; enable diagnostics before testing and report any crash pack with the session log.
+
 - Actor listing and filtering
 - Logical actor identity tracking
 - Human model search and application

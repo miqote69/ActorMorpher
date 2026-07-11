@@ -1,4 +1,5 @@
 using Dalamud.Game.ClientState.Objects.Enums;
+using Dalamud.Game;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Game.Command;
 using Dalamud.IoC;
@@ -8,6 +9,8 @@ using Dalamud.Plugin.Services;
 using Lumina.Excel.Sheets;
 using LuminaSupplemental.Excel.Model;
 using LuminaSupplemental.Excel.Services;
+using ActorMorpher.Localization;
+using ActorMorpher.Preview;
 
 namespace ActorMorpher;
 
@@ -39,10 +42,15 @@ public sealed class Plugin : IDalamudPlugin
     private readonly BulkOutfitService bulkOutfitService;
     private readonly IHumanModelClassifier humanModelClassifier;
     private readonly NativeDrawObjectInjector drawObjectInjector;
+    private readonly HashSet<LogicalActorKey> combinedRestorePending = new();
+    private readonly IModelPreviewBackend modelPreview = new UnavailableModelPreviewBackend();
     private readonly BulkOutfitTargetResolver bulkOutfitTargetResolver = new();
-    private IReadOnlyList<ModelSearchEntry>? modelSearchCache;
+    private readonly Dictionary<ClientLanguage, IReadOnlyList<ModelSearchEntry>> modelSearchCaches = new();
+    private readonly Dictionary<ClientLanguage, IReadOnlyDictionary<uint, string>> equipmentNameCaches = new();
 
     public Configuration Configuration { get; }
+    public Localizer Localizer { get; }
+    public ClientLanguage GameLanguage => ClientState.ClientLanguage;
     public DiagnosticController Diagnostics => diagnosticController;
 
     public static string DisplayVersion =>
@@ -61,6 +69,7 @@ public sealed class Plugin : IDalamudPlugin
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? Configuration.Create(isDev);
         Configuration.MigrateAndValidate(isDev);
         PluginInterface.SavePluginConfig(Configuration);
+        Localizer = new Localizer(Configuration, ClientState);
         diagnosticRouter = new DiagnosticLogRouter(
             PluginInterface.ConfigDirectory.FullName,
             Path.GetDirectoryName(typeof(Plugin).Assembly.Location),
@@ -105,8 +114,8 @@ public sealed class Plugin : IDalamudPlugin
             diagnosticRouter);
         gposeCoordinator.MappingsReady += OnRepresentationContextChanged;
         gposeCoordinator.Exited += OnRepresentationContextChanged;
-        appearanceApplyService.AppearanceChanged += OnAppearanceChanged;
-        bulkOutfitTargetResolver = new BulkOutfitTargetResolver(diagnosticRouter);
+        appearanceApplyService.OperationCompleted += OnAppearanceOperationCompleted;
+        bulkOutfitTargetResolver = new BulkOutfitTargetResolver(diagnosticRouter, () => ClientState.ClientLanguage);
         mainWindow = new MainWindow(this);
         windowSystem.AddWindow(mainWindow);
 
@@ -132,9 +141,10 @@ public sealed class Plugin : IDalamudPlugin
 
         windowSystem.RemoveAllWindows();
         mainWindow.Dispose();
+        modelPreview.Dispose();
         gposeCoordinator.MappingsReady -= OnRepresentationContextChanged;
         gposeCoordinator.Exited -= OnRepresentationContextChanged;
-        appearanceApplyService.AppearanceChanged -= OnAppearanceChanged;
+        appearanceApplyService.OperationCompleted -= OnAppearanceOperationCompleted;
         bulkOutfitService.Dispose();
         appearanceApplyService.Dispose();
         gposeCoordinator.Dispose();
@@ -218,7 +228,8 @@ public sealed class Plugin : IDalamudPlugin
 
     public IReadOnlyList<ModelSearchEntry> GetModelSearchEntries()
     {
-        if (modelSearchCache is { } cache)
+        var language = ClientState.ClientLanguage;
+        if (modelSearchCaches.TryGetValue(language, out var cache))
             return cache;
 
         using var operation = diagnosticRouter.BeginOperation(
@@ -228,23 +239,68 @@ public sealed class Plugin : IDalamudPlugin
         try
         {
             operation.SetPhase("LoadSheets");
-            modelSearchCache = BuildModelSearchEntries();
+            cache = BuildModelSearchEntries(language);
+            modelSearchCaches[language] = cache;
             operation.Complete("Success", new Dictionary<string, object?>
             {
-                ["resultCount"] = modelSearchCache.Count,
-                ["humanCount"] = modelSearchCache.Count(entry => entry.Category == ModelCategory.Human),
-                ["demihumanCount"] = modelSearchCache.Count(entry => entry.Category == ModelCategory.Demihuman),
-                ["monsterCount"] = modelSearchCache.Count(entry => entry.Category == ModelCategory.Monster),
+                ["resultCount"] = cache.Count,
+                ["humanCount"] = cache.Count(entry => entry.Category == ModelCategory.Human),
+                ["demihumanCount"] = cache.Count(entry => entry.Category == ModelCategory.Demihuman),
+                ["monsterCount"] = cache.Count(entry => entry.Category == ModelCategory.Monster),
+                ["language"] = language,
             });
         }
         catch (Exception ex)
         {
             operation.Fail(ex, "Model search cache build failed.");
             Log.Error(ex, "Failed to load model search data.");
-            modelSearchCache = Array.Empty<ModelSearchEntry>();
+            cache = Array.Empty<ModelSearchEntry>();
+            modelSearchCaches[language] = cache;
         }
 
-        return modelSearchCache;
+        return cache;
+    }
+
+    public IReadOnlyList<EquipmentDisplayEntry> GetHumanEquipment(ModelSearchEntry model)
+    {
+        if (model.HumanAppearance is not { } appearance)
+            return Array.Empty<EquipmentDisplayEntry>();
+        var names = GetEquipmentNames(ClientState.ClientLanguage);
+        return appearance.Equipment.Select((packed, index) =>
+        {
+            var modelKey = checked((uint)(packed & 0xFFFFFF));
+            var set = checked((ushort)(packed & 0xFFFF));
+            var variant = checked((byte)((packed >> 16) & 0xFF));
+            return new EquipmentDisplayEntry((OutfitSlot)index, set, variant,
+                modelKey == 0 ? string.Empty : names.GetValueOrDefault(modelKey, string.Empty));
+        }).ToArray();
+    }
+
+    public string GetRaceName(uint race)
+    {
+        if (race == 0)
+            return Localizer[TextKey.AnyRace];
+        var sheet = DataManager.GetExcelSheet<Race>(ClientState.ClientLanguage);
+        return sheet.TryGetRow(race, out var row) && !row.Masculine.IsEmpty
+            ? row.Masculine.ToString()
+            : Localizer.Get(TextKey.Unknown, race);
+    }
+
+    public bool ContainsGameText(string value, string search)
+        => GameTextComparison.Contains(value, search, ClientState.ClientLanguage);
+
+    private IReadOnlyDictionary<uint, string> GetEquipmentNames(ClientLanguage language)
+    {
+        if (equipmentNameCaches.TryGetValue(language, out var cache))
+            return cache;
+        cache = DataManager.GetExcelSheet<Item>(language)
+            .Where(static item => !item.Name.IsEmpty && item.ModelMain != 0)
+            .GroupBy(static item => checked((uint)(item.ModelMain & 0xFFFFFF)))
+            .ToDictionary(
+                static group => group.Key,
+                group => string.Join(" / ", group.Select(item => item.Name.ToString()).Distinct(GameTextComparison.GetComparer(language)).Take(3)));
+        equipmentNameCaches[language] = cache;
+        return cache;
     }
 
     public bool TryApplyModelToLocalPlayer(ModelSearchEntry model, out string message)
@@ -263,8 +319,19 @@ public sealed class Plugin : IDalamudPlugin
             ? appearanceApplyService.TryApply(actor, appearance, out message)
             : FailUnsupported(out message);
 
-    public bool TryRestoreAppearance(LogicalActorKey actor, out string message)
-        => appearanceApplyService.TryRestore(actor, out message);
+    public bool TryRestoreActor(LogicalActorKey actor, out string message)
+    {
+        if (appearanceApplyService.Store.TryGet(actor, out _))
+        {
+            combinedRestorePending.Add(actor);
+            if (appearanceApplyService.TryRestore(actor, out message))
+                return true;
+            combinedRestorePending.Remove(actor);
+            return false;
+        }
+
+        return bulkOutfitService.StartRestore(actor, out message);
+    }
 
     public bool HasAppearanceOverride(LogicalActorKey actor)
         => appearanceApplyService.Store.TryGet(actor, out _);
@@ -283,6 +350,8 @@ public sealed class Plugin : IDalamudPlugin
         && appearanceApplyService.IsPending(local.Key);
 
     public string AppearanceStatus => appearanceApplyService.LastStatus;
+    public ModelPreviewSnapshot ModelPreview => modelPreview.Snapshot;
+    public void SelectPreviewModel(ModelSearchEntry? model) => modelPreview.Select(model);
 
     private static bool FailUnsupported(out string message)
     {
@@ -290,14 +359,27 @@ public sealed class Plugin : IDalamudPlugin
         return false;
     }
 
-    private void OnAppearanceChanged(LogicalActorKey actor, uint modelCharaId)
+    private void OnAppearanceOperationCompleted(LogicalActorKey actor, uint modelCharaId, bool isRestore, bool succeeded)
     {
+        if (!succeeded)
+        {
+            combinedRestorePending.Remove(actor);
+            return;
+        }
+        if (isRestore && combinedRestorePending.Remove(actor))
+        {
+            // The appearance base snapshot already contains the true pre-morph equipment.
+            // Applying a Bulk snapshot captured while morphed would mix NPC gear onto that body.
+            bulkOutfitService.ForgetOverride(actor);
+            return;
+        }
         if (humanModelClassifier.IsHuman(modelCharaId))
             bulkOutfitService.Reapply(actor);
     }
 
     private void OnRepresentationContextChanged()
     {
+        combinedRestorePending.Clear();
         var appearanceKeys = appearanceApplyService.Store.States.Keys.ToArray();
         appearanceApplyService.ReapplyAll();
         bulkOutfitService.ReapplyWithoutAppearanceOverrides(appearanceKeys);
@@ -326,16 +408,16 @@ public sealed class Plugin : IDalamudPlugin
             _ => false,
         };
 
-    private IReadOnlyList<ModelSearchEntry> BuildModelSearchEntries()
+    private IReadOnlyList<ModelSearchEntry> BuildModelSearchEntries(ClientLanguage language)
     {
-        var modelChara = DataManager.GetExcelSheet<ModelChara>()
+        var modelChara = DataManager.GetExcelSheet<ModelChara>(language)
             .ToDictionary(static row => row.RowId);
-        var eNpcResidents = DataManager.GetExcelSheet<ENpcResident>();
-        var bNpcNames = DataManager.GetExcelSheet<BNpcName>();
+        var eNpcResidents = DataManager.GetExcelSheet<ENpcResident>(language);
+        var bNpcNames = DataManager.GetExcelSheet<BNpcName>(language);
         var bNpcNameLinks = LoadBattleNpcNameLinks();
         var entries = new List<ModelSearchEntry>(modelChara.Count);
 
-        foreach (var row in DataManager.GetExcelSheet<ENpcBase>())
+        foreach (var row in DataManager.GetExcelSheet<ENpcBase>(language))
         {
             var modelId = row.ModelChara.RowId;
             if (!modelChara.TryGetValue(modelId, out var model))
@@ -370,7 +452,7 @@ public sealed class Plugin : IDalamudPlugin
                 modelAppearance));
         }
 
-        foreach (var row in DataManager.GetExcelSheet<BNpcBase>())
+        foreach (var row in DataManager.GetExcelSheet<BNpcBase>(language))
         {
             var modelId = row.ModelChara.RowId;
             if (!modelChara.TryGetValue(modelId, out var model))
@@ -382,7 +464,7 @@ public sealed class Plugin : IDalamudPlugin
             var names = bNpcNameLinks.TryGetValue(row.RowId, out var nameIds)
                 ? nameIds.Select(id => bNpcNames.TryGetRow(id, out var nameRow) ? nameRow.Singular.ToString() : string.Empty)
                     .Where(static name => !string.IsNullOrWhiteSpace(name))
-                    .Distinct(StringComparer.CurrentCulture)
+                    .Distinct(GameTextComparison.GetComparer(language))
                     .ToArray()
                 : Array.Empty<string>();
 
@@ -447,7 +529,7 @@ public sealed class Plugin : IDalamudPlugin
                 _ => $"{entry.Name}\u001f{entry.ModelId}\u001f{entry.Source}\u001f{entry.SourceId}",
             })
             .OrderBy(static row => row.Category)
-            .ThenBy(static row => row.Name)
+            .ThenBy(static row => row.Name, GameTextComparison.GetComparer(language))
             .ThenBy(static row => row.ModelId)
             .ToArray();
     }

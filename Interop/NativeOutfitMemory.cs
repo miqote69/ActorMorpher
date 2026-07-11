@@ -46,6 +46,12 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
         for (var index = 0; index < outfit.Equipment.Length; ++index)
         {
             var source = outfit.Equipment[index];
+            var current = character->DrawData.EquipmentModelIds[index];
+            if (current.Id == source.Set
+                && current.Variant == source.Variant
+                && current.Stain0 == source.Stain1
+                && current.Stain1 == source.Stain2)
+                continue;
             var model = new EquipmentModelId
             {
                 Id = source.Set,
@@ -55,10 +61,12 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
             };
             character->DrawData.LoadEquipment((DrawDataContainer.EquipmentSlot)index, &model, true);
         }
-        if (outfit.Facewear.IsAvailable)
+        if (outfit.Facewear.IsAvailable && character->DrawData.GlassesIds[0] != outfit.Facewear.ModelId)
             character->DrawData.SetGlasses(0, outfit.Facewear.ModelId);
-        character->DrawData.HideHeadgear(0, !outfit.HatVisible);
-        character->DrawData.SetVisor(outfit.VisorToggled);
+        if (character->DrawData.IsHatHidden == outfit.HatVisible)
+            character->DrawData.HideHeadgear(0, !outfit.HatVisible);
+        if (character->DrawData.IsVisorToggled != outfit.VisorToggled)
+            character->DrawData.SetVisor(outfit.VisorToggled);
         return true;
     }
 

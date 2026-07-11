@@ -50,7 +50,7 @@ public sealed class AppearanceApplyService : IDisposable
 
     public AppearanceOverrideStore Store => store;
     public string LastStatus { get; private set; } = string.Empty;
-    public event Action<LogicalActorKey, uint>? AppearanceChanged;
+    public event Action<LogicalActorKey, uint, bool, bool>? OperationCompleted;
 
     public bool IsPending(LogicalActorKey key)
         => pending.Values.Any(change => change.Actor == key);
@@ -188,7 +188,7 @@ public sealed class AppearanceApplyService : IDisposable
                 change.Actor,
                 operation.Desired.ModelCharaId,
                 operation.OperationId);
-            AppearanceChanged?.Invoke(change.Actor, operation.Desired.ModelCharaId);
+            OperationCompleted?.Invoke(change.Actor, operation.Desired.ModelCharaId, change.IsRestore, true);
             return;
         }
 
@@ -204,6 +204,7 @@ public sealed class AppearanceApplyService : IDisposable
             ActorKey = DiagnosticActorKeys.Format(diagnostics, change.Actor),
             Outcome = operation.Stage.ToString(),
         });
+        OperationCompleted?.Invoke(change.Actor, operation.Desired.ModelCharaId, change.IsRestore, false);
     }
 
     private void OnFrameworkUpdate(IFramework _)

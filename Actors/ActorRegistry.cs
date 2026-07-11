@@ -1,6 +1,7 @@
 using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
+using ActorMorpher.Localization;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 
 namespace ActorMorpher.Actors;
@@ -118,7 +119,7 @@ public sealed unsafe class ActorRegistry : IDisposable
                 group.OrderBy(static representation => representation.RepresentationKey.IsGPoseRepresentation).ToArray()))
             .OrderByDescending(static actor => actor.IsLocalPlayer)
             .ThenBy(static actor => actor.Kind)
-            .ThenBy(static actor => actor.Name)
+            .ThenBy(static actor => actor.Name, GameTextComparison.GetComparer(clientState.ClientLanguage))
             .ToArray();
 
         int previousCount;

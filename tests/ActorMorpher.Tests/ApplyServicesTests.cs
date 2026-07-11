@@ -142,6 +142,37 @@ public sealed class ApplyServicesTests
         Assert.Contains("1 failed", service.LastStatus);
     }
 
+    [Fact]
+    public void SingleActorRestoreLeavesOtherOutfitOverridesIntact()
+    {
+        var first = Snapshot(2);
+        var second = Snapshot(3);
+        var firstOriginal = Outfit(20);
+        var secondOriginal = Outfit(30);
+        var desired = Outfit(10);
+        var resolver = new FakeResolver(first, second);
+        var memory = new FakeOutfitMemory(new Dictionary<LogicalActorKey, OutfitData>
+        {
+            [first.LogicalKey] = firstOriginal,
+            [second.LogicalKey] = secondOriginal,
+        });
+        var store = new OutfitOverrideStore();
+        store.SetDesired(first.LogicalKey, firstOriginal, desired);
+        store.SetDesired(second.LogicalKey, secondOriginal, desired);
+        memory.TryApply(first, desired);
+        memory.TryApply(second, desired);
+        using var service = new BulkOutfitService(resolver, memory, new FakeContext(), store, NullDiagnosticLog.Instance);
+
+        Assert.True(service.StartRestore(first.LogicalKey, out _));
+        service.ProcessNextFrame();
+        service.ProcessNextFrame();
+
+        Assert.Same(firstOriginal, memory.Current[first.LogicalKey]);
+        Assert.Same(desired, memory.Current[second.LogicalKey]);
+        Assert.False(store.TryGet(first.LogicalKey, out _));
+        Assert.True(store.TryGet(second.LogicalKey, out _));
+    }
+
     private static void Process(RedrawCoordinator coordinator, int frames)
     {
         for (var frame = 0; frame < frames; ++frame)

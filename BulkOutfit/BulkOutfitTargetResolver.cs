@@ -1,13 +1,19 @@
 using Dalamud.Game.ClientState.Objects.Enums;
+using Dalamud.Game;
+using ActorMorpher.Localization;
 
 namespace ActorMorpher.BulkOutfit;
 
 public sealed class BulkOutfitTargetResolver
 {
     private readonly IDiagnosticLog diagnostics;
+    private readonly Func<ClientLanguage> language;
 
-    public BulkOutfitTargetResolver(IDiagnosticLog? diagnostics = null)
-        => this.diagnostics = diagnostics ?? NullDiagnosticLog.Instance;
+    public BulkOutfitTargetResolver(IDiagnosticLog? diagnostics = null, Func<ClientLanguage>? language = null)
+    {
+        this.diagnostics = diagnostics ?? NullDiagnosticLog.Instance;
+        this.language = language ?? (() => ClientLanguage.English);
+    }
 
     public BulkOutfitPreview Resolve(IReadOnlyList<ActorEntry> actors, BulkOutfitSettings settings)
     {
@@ -27,12 +33,12 @@ public sealed class BulkOutfitTargetResolver
             eligible);
     }
 
-    private static bool Matches(ActorEntry actor, BulkOutfitSettings settings)
+    private bool Matches(ActorEntry actor, BulkOutfitSettings settings)
     {
         if (!settings.IncludeYourself && actor.IsLocalPlayer)
             return false;
         if (!string.IsNullOrWhiteSpace(settings.Name)
-            && !actor.Name.Contains(settings.Name, StringComparison.CurrentCultureIgnoreCase))
+            && !GameTextComparison.Contains(actor.Name, settings.Name, language()))
             return false;
         if (settings.ActorType == ActorTargetType.Players && actor.Kind != ObjectKind.Pc)
             return false;

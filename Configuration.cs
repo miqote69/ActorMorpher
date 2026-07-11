@@ -1,11 +1,13 @@
 using Dalamud.Configuration;
+using ActorMorpher.Localization;
 
 namespace ActorMorpher;
 
 [Serializable]
 public sealed class Configuration : IPluginConfiguration
 {
-    public int Version { get; set; } = 2;
+    public int Version { get; set; } = 3;
+    public UiLanguage UiLanguage { get; set; } = UiLanguage.Automatic;
     public FileDiagnosticMode FileDiagnosticMode { get; set; }
     public bool IncludeActorNamesInDiagnostics { get; set; }
     public bool IncludeRawAddressesInDiagnostics { get; set; }
@@ -30,7 +32,14 @@ public sealed class Configuration : IPluginConfiguration
             MirrorDiagnosticsBesidePluginAssembly = isDev;
             Version = 2;
         }
+        if (Version < 3)
+        {
+            UiLanguage = UiLanguage.Automatic;
+            Version = 3;
+        }
 
+        if (!Enum.IsDefined(UiLanguage))
+            UiLanguage = UiLanguage.Automatic;
         if (!Enum.IsDefined(FileDiagnosticMode))
             FileDiagnosticMode = FileDiagnosticMode.Off;
         DiagnosticRetentionDays = Math.Clamp(DiagnosticRetentionDays, 1, 365);

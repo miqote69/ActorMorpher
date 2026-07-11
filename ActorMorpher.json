@@ -5,6 +5,7 @@
   "Description": "Standalone Human, Demihuman, and Monster morphing with actor restore and bulk outfits. Use /actormorpher to open the window.",
   "ApplicableVersion": "any",
   "RepoUrl": "https://github.com/miqote69/ActorMorpher",
+  "IconUrl": "https://raw.githubusercontent.com/miqote69/ActorMorpher/main/images/icon.png",
   "Tags": [
     "actor",
     "model",
