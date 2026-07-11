@@ -22,7 +22,6 @@ public sealed unsafe class ActorRegistry : IDisposable
         this.clientState = clientState;
         this.framework = framework;
         framework.Update += OnFrameworkUpdate;
-        Refresh();
     }
 
     public IReadOnlyList<ActorEntry> Entries
