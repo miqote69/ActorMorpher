@@ -194,7 +194,11 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     public bool StartBulkOutfit(BulkOutfitPreview preview, out string message)
-        => bulkOutfitService.StartApply(preview.EligibleTargets, out message);
+    {
+        if (!RefreshSourceOutfit(out message))
+            return false;
+        return bulkOutfitService.StartApply(preview.EligibleTargets, out message);
+    }
 
     public bool StartUnequipAll(BulkOutfitPreview preview, out string message)
         => bulkOutfitService.StartUnequip(preview.EligibleTargets, out message);
@@ -206,8 +210,11 @@ public sealed class Plugin : IDalamudPlugin
         => bulkOutfitService.Cancel();
 
     public OutfitData? SourceOutfit => bulkOutfitService.SourceOutfit;
+    public bool CanUseLocalPlayerAsOutfitSource
+        => actorRegistry.Entries.FirstOrDefault(static actor => actor.IsLocalPlayer)?.Current.Race is not null;
     public BulkOperation? CurrentBulkOperation => bulkOutfitService.CurrentOperation;
     public string BulkOutfitStatus => bulkOutfitService.LastStatus;
+    public int ModifiedOutfitActorCount => bulkOutfitService.ModifiedActorCount;
 
     public IReadOnlyList<ModelSearchEntry> GetModelSearchEntries()
     {

@@ -329,7 +329,9 @@ public sealed class MainWindow : Window, IDisposable
 
         ImGui.Spacing();
         var operationRunning = plugin.CurrentBulkOperation is not null;
-        var canApply = !operationRunning && plugin.SourceOutfit is not null && preview.EligibleHumanActors > 0;
+        var canApply = !operationRunning
+            && plugin.CanUseLocalPlayerAsOutfitSource
+            && preview.EligibleHumanActors > 0;
         if (!canApply)
             ImGui.BeginDisabled();
         if (ImGui.Button("Apply to Matching Actors"))
@@ -345,11 +347,12 @@ public sealed class MainWindow : Window, IDisposable
         if (!canUnequip)
             ImGui.EndDisabled();
         ImGui.SameLine();
-        if (operationRunning)
+        var canRestore = !operationRunning && plugin.ModifiedOutfitActorCount > 0;
+        if (!canRestore)
             ImGui.BeginDisabled();
         if (ImGui.Button("Restore Modified Actors"))
             plugin.StartRestoreModifiedActors(out bulkActionStatus);
-        if (operationRunning)
+        if (!canRestore)
             ImGui.EndDisabled();
         ImGui.SameLine();
         if (!operationRunning)

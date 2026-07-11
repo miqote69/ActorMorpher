@@ -104,6 +104,44 @@ public sealed class ApplyServicesTests
         Assert.Empty(store.States);
     }
 
+    [Fact]
+    public void BulkApplyRollsBackFailedActorAndContinuesBatch()
+    {
+        var sourceActor = Snapshot(1);
+        var failedActor = Snapshot(2);
+        var successfulActor = Snapshot(3);
+        var source = Outfit(10);
+        var failedOriginal = Outfit(20);
+        var successfulOriginal = Outfit(30);
+        var resolver = new FakeResolver(sourceActor, failedActor, successfulActor);
+        var memory = new FakeOutfitMemory(new Dictionary<LogicalActorKey, OutfitData>
+        {
+            [sourceActor.LogicalKey] = source,
+            [failedActor.LogicalKey] = failedOriginal,
+            [successfulActor.LogicalKey] = successfulOriginal,
+        })
+        {
+            ThrowActor = failedActor.LogicalKey,
+            ThrowOutfit = source,
+        };
+        var store = new OutfitOverrideStore();
+        using var service = new BulkOutfitService(resolver, memory, new FakeContext(), store, NullDiagnosticLog.Instance);
+
+        Assert.True(service.RefreshSource(sourceActor.LogicalKey, out _));
+        Assert.True(service.StartApply([failedActor.LogicalKey, successfulActor.LogicalKey], out _));
+        service.ProcessNextFrame();
+        service.ProcessNextFrame();
+        service.ProcessNextFrame();
+        service.ProcessNextFrame();
+
+        Assert.Same(failedOriginal, memory.Current[failedActor.LogicalKey]);
+        Assert.Same(source, memory.Current[successfulActor.LogicalKey]);
+        Assert.False(store.TryGet(failedActor.LogicalKey, out _));
+        Assert.True(store.TryGet(successfulActor.LogicalKey, out _));
+        Assert.Contains("1 succeeded", service.LastStatus);
+        Assert.Contains("1 failed", service.LastStatus);
+    }
+
     private static void Process(RedrawCoordinator coordinator, int frames)
     {
         for (var frame = 0; frame < frames; ++frame)
@@ -182,12 +220,16 @@ public sealed class ApplyServicesTests
     private sealed class FakeOutfitMemory(Dictionary<LogicalActorKey, OutfitData> current) : IOutfitMemory
     {
         public Dictionary<LogicalActorKey, OutfitData> Current { get; } = current;
+        public LogicalActorKey? ThrowActor { get; init; }
+        public OutfitData? ThrowOutfit { get; init; }
 
         public bool TryCapture(ActorSnapshot actor, out OutfitData outfit)
             => Current.TryGetValue(actor.LogicalKey, out outfit!);
 
         public bool TryApply(ActorSnapshot actor, OutfitData outfit)
         {
+            if (actor.LogicalKey == ThrowActor && ReferenceEquals(outfit, ThrowOutfit))
+                throw new InvalidOperationException("Simulated actor-local outfit failure.");
             Current[actor.LogicalKey] = outfit;
             return true;
         }

@@ -49,6 +49,7 @@ public sealed class BulkOutfitService : IDisposable
     public OutfitData? SourceOutfit { get; private set; }
     public BulkOperation? CurrentOperation => operation;
     public OutfitOverrideStore Store => store;
+    public int ModifiedActorCount => store.States.Count;
     public string LastStatus { get; private set; } = string.Empty;
 
     public bool RefreshSource(LogicalActorKey localPlayer, out string message)
@@ -60,6 +61,7 @@ public sealed class BulkOutfitService : IDisposable
         }
         if (!resolver.TryResolve(localPlayer, out var actor) || !memory.TryCapture(actor, out var outfit))
         {
+            SourceOutfit = null;
             message = "The current local player Human outfit is unavailable.";
             return false;
         }
@@ -199,64 +201,109 @@ public sealed class BulkOutfitService : IDisposable
             return;
         }
 
-        var key = operation.Targets[operation.CurrentIndex];
-        if (!resolver.TryResolve(key, out var actor) || !memory.TryCapture(actor, out var current))
+        var activeOperation = operation;
+        var key = activeOperation.Targets[activeOperation.CurrentIndex];
+        ActorSnapshot? actor = null;
+        OutfitData? current = null;
+        store.TryGet(key, out var storeBeforeOperation);
+        try
         {
-            operation.RecordSkip();
-            WriteActorLog(DiagnosticEventIds.OutfitSkipped, "Actor outfit could not be captured.", key, "Skipped");
-            return;
+            if (!resolver.TryResolve(key, out actor) || !memory.TryCapture(actor, out current))
+            {
+                activeOperation.RecordSkip();
+                WriteActorLog(DiagnosticEventIds.OutfitSkipped, "Actor outfit could not be captured.", key, "Skipped");
+                return;
+            }
+            ProcessActor(activeOperation, key, actor, current);
         }
+        catch (Exception exception)
+        {
+            var rolledBack = TryRollback(actor, current);
+            store.RestoreState(key, storeBeforeOperation);
+            if (activeOperation.CurrentIndex < activeOperation.Targets.Count
+                && activeOperation.Targets[activeOperation.CurrentIndex] == key)
+                activeOperation.RecordFailure();
+            diagnostics.Write(new DiagnosticLogEntry
+            {
+                Level = DiagnosticLogLevel.Error,
+                EventId = DiagnosticEventIds.BulkActorFailed,
+                Category = DiagnosticCategory.BulkOutfit,
+                Message = "Bulk Outfit actor processing threw an exception.",
+                OperationId = $"bulk-{activeOperation.OperationId:N}",
+                ActorKey = DiagnosticActorKeys.Format(diagnostics, key),
+                Outcome = rolledBack ? "RolledBack" : "RollbackFailed",
+                Exception = DiagnosticExceptionInfo.FromException(exception),
+            });
+        }
+    }
+
+    private void ProcessActor(BulkOperation activeOperation, LogicalActorKey key, ActorSnapshot actor, OutfitData current)
+    {
         WriteActorLog(DiagnosticEventIds.OutfitSnapshotCaptured, "Actor outfit snapshot captured.", key, "Captured");
 
-        if (operation.Type == BulkOperationType.Restore)
+        if (activeOperation.Type == BulkOperationType.Restore)
         {
             if (!store.TryGet(key, out var state))
             {
-                operation.RecordSkip();
+                activeOperation.RecordSkip();
                 return;
             }
             if (memory.TryApply(actor, state.Original) && memory.IsApplied(actor, state.Original))
             {
                 store.CompleteRestore(key);
-                operation.RecordSuccess();
+                activeOperation.RecordSuccess();
                 WriteActorLog(DiagnosticEventIds.OutfitApplied, "Original actor outfit restored.", key, "Restored");
             }
             else
             {
-                memory.TryApply(actor, current);
-                operation.RecordFailure();
-                WriteActorLog(DiagnosticEventIds.OutfitRolledBack, "Outfit restore failed and the current outfit was reapplied.", key, "Failed");
+                var rolledBack = TryRollback(actor, current);
+                activeOperation.RecordFailure();
+                WriteActorLog(DiagnosticEventIds.OutfitRolledBack, "Outfit restore failed and the current outfit was reapplied.", key, rolledBack ? "RolledBack" : "RollbackFailed");
             }
             return;
         }
 
         OutfitData? desired = operationOutfit;
-        if (operation.Type == BulkOperationType.UnequipAll
+        if (activeOperation.Type == BulkOperationType.UnequipAll
             && !unequipBuilder.TryCreate(current, unequipProvider, out desired, out _))
         {
-            operation.RecordFailure();
+            activeOperation.RecordFailure();
             return;
         }
         if (desired is null && store.TryGet(key, out var stored))
             desired = stored.Desired;
         if (desired is null)
         {
-            operation.RecordSkip();
+            activeOperation.RecordSkip();
             return;
         }
         store.TryGet(key, out var previous);
         store.SetDesired(key, current, desired);
         if (memory.TryApply(actor, desired) && memory.IsApplied(actor, desired))
         {
-            operation.RecordSuccess();
+            activeOperation.RecordSuccess();
             WriteActorLog(DiagnosticEventIds.OutfitApplied, "Desired actor outfit applied.", key, "Success");
         }
         else
         {
-            memory.TryApply(actor, current);
+            var rolledBack = TryRollback(actor, current);
             store.RestoreState(key, previous);
-            operation.RecordFailure();
-            WriteActorLog(DiagnosticEventIds.OutfitRolledBack, "Outfit apply failed and was rolled back.", key, "Failed");
+            activeOperation.RecordFailure();
+            WriteActorLog(DiagnosticEventIds.OutfitRolledBack, "Outfit apply failed and was rolled back.", key, rolledBack ? "RolledBack" : "RollbackFailed");
+        }
+    }
+
+    private bool TryRollback(ActorSnapshot? actor, OutfitData? outfit)
+    {
+        if (actor is null || outfit is null)
+            return false;
+        try
+        {
+            return memory.TryApply(actor, outfit) && memory.IsApplied(actor, outfit);
+        }
+        catch
+        {
+            return false;
         }
     }
 

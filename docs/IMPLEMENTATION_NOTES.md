@@ -49,6 +49,8 @@ Unequip planning requires verified slot-specific Nothing data and a verified no-
 
 Bulk writes use `LoadEquipment` for exactly ten slots, `SetGlasses` for Facewear, `HideHeadgear` for hat visibility, and `SetVisor` for visor state. The outfit type contains no weapons, class/job, customize, or ModelChara fields. Batches process one logical actor per Framework Update and continue after an actor-local rollback.
 
+Apply captures the local player's current Human outfit again when the batch starts, so the operation never relies on a stale preview. Managed failures are isolated per actor: the pre-operation outfit and override-store state are restored, the failure is logged, and the batch advances to the next logical actor. Restore enumerates the store rather than the current UI filter.
+
 ## Reference audit and licenses
 
 Glamourer state, GPose, NPC-data, and apply designs were reviewed as behavioral references. Its repository contains an Apache-2.0 license. Penumbra redraw behavior was reviewed as a behavioral reference; the checked-out top-level repository did not contain a license file. No Glamourer or Penumbra source file, class, volatile offset, signature, VTable index, or IPC implementation was copied into Actor Morpher.
