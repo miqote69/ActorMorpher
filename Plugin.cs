@@ -167,6 +167,7 @@ public sealed class Plugin : IDalamudPlugin
             var appearance = model.Type == 1 ? CreateHumanAppearance(row) : null;
             if (model.Type == 1 && appearance is null)
                 continue;
+            var modelAppearance = model.Type == 2 ? CreateDemihumanAppearance(row) : null;
 
             entries.Add(CreateSearchEntry(
                 model,
@@ -176,7 +177,8 @@ public sealed class Plugin : IDalamudPlugin
                 (uint)row.Race.RowId,
                 (byte)row.Gender,
                 row.BodyType,
-                appearance));
+                appearance,
+                modelAppearance));
         }
 
         foreach (var row in DataManager.GetExcelSheet<BNpcBase>())
@@ -195,8 +197,12 @@ public sealed class Plugin : IDalamudPlugin
                     .ToArray()
                 : Array.Empty<string>();
 
-            var appearance = model.Type == 1 && customize is { } humanCustomize
-                ? CreateHumanAppearance(humanCustomize, row.NpcEquip.Value)
+            var npcEquip = row.NpcEquip.ValueNullable;
+            var appearance = model.Type == 1 && customize is { } humanCustomize && npcEquip is { } humanEquip
+                ? CreateHumanAppearance(humanCustomize, humanEquip)
+                : null;
+            var modelAppearance = model.Type == 2 && customize is { } demihumanCustomize && npcEquip is { } demihumanEquip
+                ? CreateDemihumanAppearance(row.RowId, modelId, demihumanCustomize, demihumanEquip)
                 : null;
             if (model.Type == 1 && (appearance is null || names.Length == 0))
                 continue;
@@ -214,16 +220,18 @@ public sealed class Plugin : IDalamudPlugin
                     customize?.Race.RowId ?? 0,
                     gender,
                     bodyType,
-                    appearance));
+                    appearance,
+                    modelAppearance));
             }
         }
 
+        var referencedModelIds = entries.Select(static entry => entry.ModelId).ToHashSet();
         foreach (var model in modelChara.Values)
         {
             if (model.Type == 1 || model.RowId == 0)
                 continue;
 
-            if (entries.Any(entry => entry.ModelId == model.RowId))
+            if (!referencedModelIds.Add(model.RowId))
                 continue;
 
             entries.Add(CreateSearchEntry(
@@ -254,7 +262,8 @@ public sealed class Plugin : IDalamudPlugin
         uint race,
         byte gender,
         byte bodyType,
-        HumanAppearance? humanAppearance = null)
+        HumanAppearance? humanAppearance = null,
+        AppearanceData? modelAppearance = null)
     {
         return new ModelSearchEntry(
             model.RowId,
@@ -280,9 +289,11 @@ public sealed class Plugin : IDalamudPlugin
             {
                 1 when humanAppearance is not null => AppearanceCompleteness.Complete,
                 1 => AppearanceCompleteness.Unsupported,
+                2 when modelAppearance is not null => AppearanceCompleteness.Complete,
                 2 or 3 => AppearanceCompleteness.ModelOnly,
                 _ => AppearanceCompleteness.Unsupported,
-            });
+            },
+            modelAppearance);
     }
 
     private static HumanAppearance? CreateHumanAppearance(ENpcBase row)
@@ -300,22 +311,74 @@ public sealed class Plugin : IDalamudPlugin
             return null;
 
         var equipment = row.NpcEquip.RowId is not 0
-            && row.NpcEquip.Value is { } npcEquip
+            && row.NpcEquip.ValueNullable is { } npcEquip
             && row is { ModelBody: 0, ModelLegs: 0 }
                 ? CreateEquipment(npcEquip)
                 : CreateEquipment(row);
         var mainhand = row.NpcEquip.RowId is not 0
-            && row.NpcEquip.Value is { } weaponEquip
+            && row.NpcEquip.ValueNullable is { } weaponEquip
             && row is { ModelBody: 0, ModelLegs: 0 }
                 ? PackWeapon(weaponEquip.ModelMainHand, weaponEquip.DyeMainHand.RowId, weaponEquip.Dye2MainHand.RowId)
                 : PackWeapon(row.ModelMainHand, row.DyeMainHand.RowId, row.Dye2MainHand.RowId);
         var offhand = row.NpcEquip.RowId is not 0
-            && row.NpcEquip.Value is { } offhandEquip
+            && row.NpcEquip.ValueNullable is { } offhandEquip
             && row is { ModelBody: 0, ModelLegs: 0 }
                 ? PackWeapon(offhandEquip.ModelOffHand, offhandEquip.DyeOffHand.RowId, offhandEquip.Dye2OffHand.RowId)
                 : PackWeapon(row.ModelOffHand, row.DyeOffHand.RowId, row.Dye2OffHand.RowId);
 
         return new HumanAppearance(customize, equipment, mainhand, offhand, row.Visor);
+    }
+
+    private static AppearanceData CreateDemihumanAppearance(ENpcBase row)
+    {
+        var customize = new byte[]
+        {
+            (byte)row.Race.RowId, (byte)row.Gender, row.BodyType, row.Height, (byte)row.Tribe.RowId,
+            row.Face, row.HairStyle, row.HairHighlight, row.SkinColor, row.EyeHeterochromia,
+            row.HairColor, row.HairHighlightColor, row.FacialFeature, row.FacialFeatureColor,
+            row.Eyebrows, row.EyeColor, row.EyeShape, row.Nose, row.Jaw, row.Mouth,
+            row.LipColor, row.BustOrTone1, row.ExtraFeature1, row.ExtraFeature2OrBust,
+            row.FacePaint, row.FacePaintColor,
+        };
+        var equipment = row.NpcEquip.RowId is not 0
+            && row.NpcEquip.ValueNullable is { } npcEquip
+            && row is { ModelBody: 0, ModelLegs: 0 }
+                ? CreateEquipment(npcEquip)
+                : CreateEquipment(row);
+
+        return AppearanceData.Create(
+            row.ModelChara.RowId,
+            ModelCategory.Demihuman,
+            row.RowId,
+            AppearanceCompleteness.Complete,
+            customize,
+            equipment);
+    }
+
+    private static AppearanceData CreateDemihumanAppearance(
+        uint sourceRowId,
+        uint modelCharaId,
+        BNpcCustomize customizeRow,
+        NpcEquip equip)
+    {
+        var customize = new byte[]
+        {
+            (byte)customizeRow.Race.RowId, (byte)customizeRow.Gender, customizeRow.BodyType, customizeRow.Height,
+            (byte)customizeRow.Tribe.RowId, customizeRow.Face, customizeRow.HairStyle, customizeRow.HairHighlight,
+            customizeRow.SkinColor, customizeRow.EyeHeterochromia, customizeRow.HairColor, customizeRow.HairHighlightColor,
+            customizeRow.FacialFeature, customizeRow.FacialFeatureColor, customizeRow.Eyebrows, customizeRow.EyeColor,
+            customizeRow.EyeShape, customizeRow.Nose, customizeRow.Jaw, customizeRow.Mouth, customizeRow.LipColor,
+            customizeRow.BustOrTone1, customizeRow.ExtraFeature1, customizeRow.ExtraFeature2OrBust,
+            customizeRow.FacePaint, customizeRow.FacePaintColor,
+        };
+
+        return AppearanceData.Create(
+            modelCharaId,
+            ModelCategory.Demihuman,
+            sourceRowId,
+            AppearanceCompleteness.Complete,
+            customize,
+            CreateEquipment(equip));
     }
 
     private static HumanAppearance? CreateHumanAppearance(BNpcCustomize row, NpcEquip equip)
@@ -472,7 +535,8 @@ public sealed record ModelSearchEntry(
     byte Gender,
     byte BodyType,
     HumanAppearance? HumanAppearance,
-    AppearanceCompleteness Completeness)
+    AppearanceCompleteness Completeness,
+    AppearanceData? ModelAppearance)
 {
     public uint ModelId => RowId;
 
