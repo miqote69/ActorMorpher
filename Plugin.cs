@@ -28,6 +28,8 @@ public sealed class Plugin : IDalamudPlugin
 
     private readonly MainWindow mainWindow;
     private readonly WindowSystem windowSystem = new("ActorMorpher");
+    private readonly DiagnosticLogRouter diagnosticRouter;
+    private readonly DiagnosticController diagnosticController;
     private readonly ActorRegistry actorRegistry;
     private readonly ActorIdentityService actorIdentity = new();
     private readonly RedrawCoordinator redrawCoordinator;
@@ -36,6 +38,7 @@ public sealed class Plugin : IDalamudPlugin
     private IReadOnlyList<ModelSearchEntry>? modelSearchCache;
 
     public Configuration Configuration { get; }
+    public DiagnosticController Diagnostics => diagnosticController;
 
     public static string DisplayVersion =>
         typeof(Plugin).Assembly
@@ -49,15 +52,33 @@ public sealed class Plugin : IDalamudPlugin
 
     public Plugin()
     {
-        Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
-        actorRegistry = new ActorRegistry(ObjectTable, ClientState, Framework);
+        var isDev = PluginInterface.IsDev;
+        Configuration = PluginInterface.GetPluginConfig() as Configuration ?? Configuration.Create(isDev);
+        Configuration.MigrateAndValidate(isDev);
+        PluginInterface.SavePluginConfig(Configuration);
+        diagnosticRouter = new DiagnosticLogRouter(
+            PluginInterface.ConfigDirectory.FullName,
+            Path.GetDirectoryName(typeof(Plugin).Assembly.Location),
+            Log);
+        diagnosticController = new DiagnosticController(
+            diagnosticRouter,
+            Configuration,
+            () => PluginInterface.SavePluginConfig(Configuration),
+            Log,
+            ClientState,
+            isDev);
+        diagnosticController.Start();
+        actorRegistry = new ActorRegistry(ObjectTable, ClientState, Framework, diagnosticRouter);
+        actorIdentity = new ActorIdentityService(diagnosticRouter);
         redrawCoordinator = new RedrawCoordinator(
             Framework,
             new RegistryActorResolver(actorRegistry),
             new UnavailableAppearanceMemory(),
             new NativeRedrawBackend(ObjectTable),
-            new DalamudClientContext(ClientState));
-        gposeCoordinator = new GPoseCoordinator(Framework, ClientState, actorRegistry);
+            new DalamudClientContext(ClientState),
+            diagnosticRouter);
+        gposeCoordinator = new GPoseCoordinator(Framework, ClientState, actorRegistry, diagnosticRouter);
+        bulkOutfitTargetResolver = new BulkOutfitTargetResolver(diagnosticRouter);
         mainWindow = new MainWindow(this);
         windowSystem.AddWindow(mainWindow);
 
@@ -86,16 +107,31 @@ public sealed class Plugin : IDalamudPlugin
         gposeCoordinator.Dispose();
         redrawCoordinator.Dispose();
         actorRegistry.Dispose();
+        diagnosticController.Dispose();
     }
 
     public void Save()
     {
+        Configuration.MigrateAndValidate(PluginInterface.IsDev);
         PluginInterface.SavePluginConfig(Configuration);
+        diagnosticRouter.Write(new DiagnosticLogEntry
+        {
+            EventId = DiagnosticEventIds.ConfigurationSaved,
+            Category = DiagnosticCategory.Configuration,
+            Message = "Configuration saved.",
+        });
     }
 
     public void ToggleMainUi()
     {
         mainWindow.Toggle();
+        diagnosticRouter.Write(new DiagnosticLogEntry
+        {
+            EventId = DiagnosticEventIds.UserActionRequested,
+            Category = DiagnosticCategory.UserAction,
+            Message = "Actor Morpher UI toggled.",
+            Properties = new Dictionary<string, object?> { ["isOpen"] = mainWindow.IsOpen },
+        });
     }
 
     private void OnCommand(string command, string args)
@@ -117,12 +153,25 @@ public sealed class Plugin : IDalamudPlugin
         if (modelSearchCache is { } cache)
             return cache;
 
+        using var operation = diagnosticRouter.BeginOperation(
+            DiagnosticCategory.ModelSearch,
+            DiagnosticEventIds.UserActionRequested,
+            "BuildModelSearchCache");
         try
         {
+            operation.SetPhase("LoadSheets");
             modelSearchCache = BuildModelSearchEntries();
+            operation.Complete("Success", new Dictionary<string, object?>
+            {
+                ["resultCount"] = modelSearchCache.Count,
+                ["humanCount"] = modelSearchCache.Count(entry => entry.Category == ModelCategory.Human),
+                ["demihumanCount"] = modelSearchCache.Count(entry => entry.Category == ModelCategory.Demihuman),
+                ["monsterCount"] = modelSearchCache.Count(entry => entry.Category == ModelCategory.Monster),
+            });
         }
         catch (Exception ex)
         {
+            operation.Fail(ex, "Model search cache build failed.");
             Log.Error(ex, "Failed to load model search data.");
             modelSearchCache = Array.Empty<ModelSearchEntry>();
         }
@@ -133,6 +182,20 @@ public sealed class Plugin : IDalamudPlugin
     public bool TryApplyModelToLocalPlayer(ModelSearchEntry model, out string message)
     {
         message = GetApplyUnavailableReason(model);
+        diagnosticRouter.Write(new DiagnosticLogEntry
+        {
+            Level = DiagnosticLogLevel.Warning,
+            EventId = DiagnosticEventIds.UserActionRejected,
+            Category = DiagnosticCategory.UserAction,
+            Message = "Apply to yourself was rejected.",
+            Properties = new Dictionary<string, object?>
+            {
+                ["modelCharaId"] = model.ModelId,
+                ["category"] = model.Category,
+                ["completeness"] = model.Completeness,
+                ["reason"] = message,
+            },
+        });
         return false;
     }
 

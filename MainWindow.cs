@@ -27,6 +27,8 @@ public sealed class MainWindow : Window, IDisposable
     private int bulkRace;
     private int bulkGender;
     private bool bulkIncludeYourself;
+    private string diagnosticMarker = string.Empty;
+    private bool diagnosticSettingsDirty;
 
     private static readonly string[] CategoryNames =
     [
@@ -99,9 +101,152 @@ public sealed class MainWindow : Window, IDisposable
                 ImGui.EndTabItem();
             }
 
+            if (ImGui.BeginTabItem("Diagnostics"))
+            {
+                DrawDiagnosticsTab();
+                ImGui.EndTabItem();
+            }
+
             ImGui.EndTabBar();
         }
 
+    }
+
+    private void DrawDiagnosticsTab()
+    {
+        var diagnostics = plugin.Diagnostics;
+        var configuration = plugin.Configuration;
+        var modes = new[] { "Off", "Errors Only", "Full Troubleshooting" };
+        var selectedMode = (int)diagnostics.Log.Mode;
+        ImGui.SetNextItemWidth(220.0f);
+        if (ImGui.Combo("Diagnostic File Logging", ref selectedMode, modes, modes.Length))
+            diagnostics.SetPersistentMode((FileDiagnosticMode)selectedMode);
+
+        if (diagnostics.Log.Mode == FileDiagnosticMode.Off)
+        {
+            ImGui.TextWrapped("No Actor Morpher diagnostic files will be created.");
+            ImGui.TextDisabled("Critical errors may still appear in the standard Dalamud log.");
+        }
+
+        var settingsChanged = false;
+        var includeNames = configuration.IncludeActorNamesInDiagnostics;
+        if (ImGui.Checkbox("Include Actor Names", ref includeNames))
+        {
+            configuration.IncludeActorNamesInDiagnostics = includeNames;
+            settingsChanged = true;
+        }
+        var includeAddresses = configuration.IncludeRawAddressesInDiagnostics;
+        if (ImGui.Checkbox("Include Raw Memory Addresses", ref includeAddresses))
+        {
+            configuration.IncludeRawAddressesInDiagnostics = includeAddresses;
+            settingsChanged = true;
+        }
+        var mirror = configuration.MirrorDiagnosticsBesidePluginAssembly;
+        if (ImGui.Checkbox("Mirror Logs Beside Plugin Assembly", ref mirror))
+        {
+            configuration.MirrorDiagnosticsBesidePluginAssembly = mirror;
+            settingsChanged = true;
+        }
+        var retentionDays = configuration.DiagnosticRetentionDays;
+        if (ImGui.InputInt("Retention Days", ref retentionDays))
+        {
+            configuration.DiagnosticRetentionDays = retentionDays;
+            settingsChanged = true;
+        }
+        var maximumSessions = configuration.DiagnosticMaximumSessions;
+        if (ImGui.InputInt("Maximum Sessions", ref maximumSessions))
+        {
+            configuration.DiagnosticMaximumSessions = maximumSessions;
+            settingsChanged = true;
+        }
+        var maximumFileSize = configuration.DiagnosticMaximumFileSizeMb;
+        if (ImGui.InputInt("Maximum File Size (MB)", ref maximumFileSize))
+        {
+            configuration.DiagnosticMaximumFileSizeMb = maximumFileSize;
+            settingsChanged = true;
+        }
+        var maximumTotalSize = configuration.DiagnosticMaximumTotalSizeMb;
+        if (ImGui.InputInt("Maximum Total Size (MB)", ref maximumTotalSize))
+        {
+            configuration.DiagnosticMaximumTotalSizeMb = maximumTotalSize;
+            settingsChanged = true;
+        }
+        diagnosticSettingsDirty |= settingsChanged;
+        var canApplySettings = diagnosticSettingsDirty;
+        if (!canApplySettings)
+            ImGui.BeginDisabled();
+        if (ImGui.Button("Apply Diagnostic Settings"))
+            diagnosticSettingsDirty = !diagnostics.ApplySettings();
+        if (!canApplySettings)
+            ImGui.EndDisabled();
+
+        ImGui.Separator();
+        var status = diagnostics.Log.Status;
+        DrawDiagnosticStatus("Session ID", diagnostics.SessionId);
+        DrawDiagnosticStatus("Current Mode", diagnostics.Log.Mode.ToString());
+        DrawDiagnosticStatus("Current Log File", status.CurrentLogFile ?? "None");
+        DrawDiagnosticStatus("Standard Log Directory", status.StandardLogDirectory ?? "None");
+        DrawDiagnosticStatus("Mirror Log Directory", status.MirrorLogDirectory ?? "None");
+        DrawDiagnosticStatus("Queued Events", status.QueuedEvents.ToString());
+        DrawDiagnosticStatus("Dropped Events", status.DroppedEvents.ToString());
+        DrawDiagnosticStatus("Current File Size", status.CurrentFileSize.ToString());
+        DrawDiagnosticStatus("Last File Logging Error", status.LastFileLoggingError ?? "None");
+        DrawDiagnosticStatus("Troubleshooting Capture", diagnostics.CaptureActive ? "Active" : "Inactive");
+
+        ImGui.Separator();
+        var enabled = diagnostics.Log.IsEnabled;
+        if (!enabled)
+            ImGui.BeginDisabled();
+        if (ImGui.Button("Open Log Folder"))
+            diagnostics.OpenLogFolder();
+        ImGui.SameLine();
+        if (ImGui.Button("Copy Log Path") && status.CurrentLogFile is not null)
+            ImGui.SetClipboardText(status.CurrentLogFile);
+        if (!enabled)
+            ImGui.EndDisabled();
+
+        ImGui.SetNextItemWidth(360.0f);
+        ImGui.InputTextWithHint("##diagnostic-marker", "Optional marker note", ref diagnosticMarker, 200);
+        if (!enabled)
+            ImGui.BeginDisabled();
+        if (ImGui.Button("Add Diagnostic Marker"))
+        {
+            diagnostics.AddMarker(diagnosticMarker);
+            diagnosticMarker = string.Empty;
+        }
+        if (!enabled)
+            ImGui.EndDisabled();
+
+        if (!diagnostics.CaptureActive)
+        {
+            if (ImGui.Button("Begin Troubleshooting Capture"))
+                diagnostics.BeginCapture();
+        }
+        else if (ImGui.Button("End Troubleshooting Capture"))
+        {
+            diagnostics.EndCapture();
+        }
+
+        ImGui.SameLine();
+        if (!enabled)
+            ImGui.BeginDisabled();
+        if (ImGui.Button("Create Diagnostic Snapshot"))
+            diagnostics.CreateSnapshot();
+        ImGui.SameLine();
+        if (ImGui.Button("Clear Old Logs"))
+            diagnostics.ClearOldLogs();
+        if (!enabled)
+            ImGui.EndDisabled();
+
+        if (diagnostics.LastSnapshotDirectory is { } snapshotDirectory)
+            ImGui.TextWrapped($"Latest Snapshot: {snapshotDirectory}");
+    }
+
+    private static void DrawDiagnosticStatus(string label, string value)
+    {
+        ImGui.TextDisabled(label);
+        ImGui.SameLine(190.0f);
+        ImGui.TextWrapped(value);
     }
 
     private void DrawBulkOutfitTab()
@@ -213,7 +358,17 @@ public sealed class MainWindow : Window, IDisposable
                     var localPlayerLabel = actor.IsLocalPlayer ? " (You)" : string.Empty;
                     var label = $"{actor.Name}{localPlayerLabel}##actor-{actor.Key.GetHashCode()}";
                     if (ImGui.Selectable(label, selected))
+                    {
                         selectedActorKey = actor.Key;
+                        plugin.Diagnostics.Log.Write(new DiagnosticLogEntry
+                        {
+                            EventId = DiagnosticEventIds.UserActionRequested,
+                            Category = DiagnosticCategory.UserAction,
+                            Message = "Actor selected.",
+                            ActorKey = plugin.Diagnostics.FormatActorKey(actor.Key, actor.Name),
+                            Properties = new Dictionary<string, object?> { ["objectKind"] = actor.Kind, ["representationCount"] = actor.Representations.Count },
+                        });
+                    }
                 }
             }
 
@@ -313,7 +468,23 @@ public sealed class MainWindow : Window, IDisposable
                 {
                     var selected = IsSelectedModel(model);
                     if (ImGui.Selectable($"{model.Name}##model-{model.RowId}-{model.Source}-{model.SourceId}", selected))
+                    {
                         selectedModel = model;
+                        plugin.Diagnostics.Log.Write(new DiagnosticLogEntry
+                        {
+                            EventId = DiagnosticEventIds.UserActionRequested,
+                            Category = DiagnosticCategory.UserAction,
+                            Message = "Model selected.",
+                            Properties = new Dictionary<string, object?>
+                            {
+                                ["modelCharaId"] = model.ModelId,
+                                ["category"] = model.Category,
+                                ["completeness"] = model.Completeness,
+                                ["source"] = model.Source,
+                                ["sourceRowId"] = model.SourceId,
+                            },
+                        });
+                    }
                 }
             }
 

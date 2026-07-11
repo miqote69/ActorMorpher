@@ -12,6 +12,7 @@ public sealed class RedrawCoordinator : IDisposable
     private readonly IAppearanceMemory appearanceMemory;
     private readonly IRedrawBackend redrawBackend;
     private readonly IClientContext clientContext;
+    private readonly IDiagnosticLog diagnostics;
     private readonly Queue<RedrawOperation> queue = new();
     private RedrawOperation? current;
     private bool disposed;
@@ -21,8 +22,9 @@ public sealed class RedrawCoordinator : IDisposable
         IActorResolver resolver,
         IAppearanceMemory appearanceMemory,
         IRedrawBackend redrawBackend,
-        IClientContext clientContext)
-        : this(resolver, appearanceMemory, redrawBackend, clientContext)
+        IClientContext clientContext,
+        IDiagnosticLog? diagnostics = null)
+        : this(resolver, appearanceMemory, redrawBackend, clientContext, diagnostics)
     {
         this.framework = framework;
         framework.Update += OnFrameworkUpdate;
@@ -32,12 +34,14 @@ public sealed class RedrawCoordinator : IDisposable
         IActorResolver resolver,
         IAppearanceMemory appearanceMemory,
         IRedrawBackend redrawBackend,
-        IClientContext clientContext)
+        IClientContext clientContext,
+        IDiagnosticLog? diagnostics = null)
     {
         this.resolver = resolver;
         this.appearanceMemory = appearanceMemory;
         this.redrawBackend = redrawBackend;
         this.clientContext = clientContext;
+        this.diagnostics = diagnostics ?? NullDiagnosticLog.Instance;
     }
 
     public RedrawOperation? Current => current;
@@ -49,6 +53,7 @@ public sealed class RedrawCoordinator : IDisposable
             return false;
 
         queue.Enqueue(operation);
+        diagnostics.Write(CreateEntry(operation, DiagnosticEventIds.RedrawOperationStarted, "Redraw operation queued."));
         return true;
     }
 
@@ -56,7 +61,10 @@ public sealed class RedrawCoordinator : IDisposable
     {
         queue.Clear();
         if (current is not null)
+        {
+            diagnostics.Write(CreateEntry(current, DiagnosticEventIds.RedrawCancelled, "Redraw operation cancelled.", DiagnosticLogLevel.Warning, reason));
             Finish(current with { Stage = RedrawStage.Cancelled, Error = reason });
+        }
     }
 
     public void Dispose()
@@ -107,6 +115,7 @@ public sealed class RedrawCoordinator : IDisposable
             return;
         }
 
+        var previousStage = operation.Stage;
         current = operation.Stage switch
         {
             RedrawStage.Pending => operation with { Stage = RedrawStage.Disable },
@@ -121,6 +130,9 @@ public sealed class RedrawCoordinator : IDisposable
             RedrawStage.Rollback or RedrawStage.RollbackEnable => Fail(operation),
             _ => operation,
         };
+        if (current is { } changed && changed.Stage != previousStage)
+            diagnostics.Write(CreateEntry(changed, DiagnosticEventIds.RedrawStateChanged, "Redraw state changed.",
+                properties: new Dictionary<string, object?> { ["previousState"] = previousStage, ["nextState"] = changed.Stage }));
     }
 
     private void OnFrameworkUpdate(IFramework _)
@@ -141,6 +153,38 @@ public sealed class RedrawCoordinator : IDisposable
     private void Finish(RedrawOperation operation)
     {
         LastResult = operation;
+        var eventId = operation.Stage switch
+        {
+            RedrawStage.Completed => DiagnosticEventIds.RedrawCompleted,
+            RedrawStage.Cancelled => DiagnosticEventIds.RedrawCancelled,
+            _ => DiagnosticEventIds.RedrawFailed,
+        };
+        diagnostics.Write(CreateEntry(
+            operation,
+            eventId,
+            $"Redraw operation {operation.Stage}.",
+            operation.Stage is RedrawStage.Failed ? DiagnosticLogLevel.Error : DiagnosticLogLevel.Information,
+            operation.Error));
         current = null;
     }
+
+    private DiagnosticLogEntry CreateEntry(
+        RedrawOperation operation,
+        string eventId,
+        string message,
+        DiagnosticLogLevel level = DiagnosticLogLevel.Information,
+        string? reason = null,
+        IReadOnlyDictionary<string, object?>? properties = null)
+        => new()
+        {
+            Level = level,
+            EventId = eventId,
+            Category = DiagnosticCategory.Redraw,
+            Message = message,
+            OperationId = $"redraw-{operation.OperationId:N}",
+            ActorKey = DiagnosticActorKeys.Format(diagnostics, operation.Actor),
+            Phase = operation.Stage.ToString(),
+            Outcome = operation.Stage.ToString(),
+            Properties = DiagnosticLogService.Merge(properties, ("revision", operation.Revision), ("frameCount", operation.FrameCount), ("reason", reason)),
+        };
 }

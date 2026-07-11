@@ -4,6 +4,11 @@ namespace ActorMorpher.BulkOutfit;
 
 public sealed class BulkOutfitTargetResolver
 {
+    private readonly IDiagnosticLog diagnostics;
+
+    public BulkOutfitTargetResolver(IDiagnosticLog? diagnostics = null)
+        => this.diagnostics = diagnostics ?? NullDiagnosticLog.Instance;
+
     public BulkOutfitPreview Resolve(IReadOnlyList<ActorEntry> actors, BulkOutfitSettings settings)
     {
         var matching = actors.Where(actor => Matches(actor, settings)).ToArray();

@@ -18,5 +18,8 @@
     <Reference Update="Dalamud">
       <Private>true</Private>
     </Reference>
+    <Reference Update="Serilog">
+      <Private>true</Private>
+    </Reference>
   </ItemGroup>
 </Project>

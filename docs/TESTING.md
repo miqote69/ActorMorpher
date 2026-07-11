@@ -19,6 +19,12 @@ The tests cover:
 * batch cancellation state
 * slot-specific Unequip planning and fail-closed behavior
 * redraw success, actor disappearance, and rollback with fake backends
+* diagnostic defaults and configuration bounds
+* Off mode zero-file behavior and runtime mode switching
+* Errors Only filtering and Full JSONL output
+* operation completion, failure, abandonment, and elapsed context
+* session-salted Actor redaction
+* ring buffer ordering, warning suppression, and expanded snapshots
 
 Automated tests do not prove native FF14 memory compatibility or visual correctness.
 

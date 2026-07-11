@@ -18,6 +18,6 @@ The plugin now has standalone actor identity, state stores, staged redraw coordi
 
 Appearance and outfit memory writes remain disabled. Safe standalone writes for Human, Monster, Demihuman, equipment, and Facewear have not yet been verified against the current game client. Buttons that would perform those writes are disabled instead of using guessed offsets or partial model-ID writes.
 
-See [implementation notes](docs/IMPLEMENTATION_NOTES.md), [testing](docs/TESTING.md), and the [manual checklist](docs/MANUAL_TEST_CHECKLIST.md).
+See [implementation notes](docs/IMPLEMENTATION_NOTES.md), [diagnostics](docs/DIAGNOSTICS.md), [testing](docs/TESTING.md), and the [manual checklist](docs/MANUAL_TEST_CHECKLIST.md).
 
 This is a cosmetic client-side plugin. It does not automate gameplay, send network requests, or collect player data.

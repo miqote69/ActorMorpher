@@ -4,7 +4,7 @@
     "Name": "Actor Morpher",
     "Description": "Standalone actor and model browser with safe state and redraw foundations. Appearance writes remain disabled pending current-client verification.",
     "InternalName": "ActorMorpher",
-    "AssemblyVersion": "0.0.0.9",
+    "AssemblyVersion": "0.0.0.10",
     "TestingAssemblyVersion": null,
     "RepoUrl": "https://github.com/miqote69/ActorMorpher",
     "ApplicableVersion": "any",
@@ -18,10 +18,10 @@
     "MinimumDalamudVersion": "15.0.0.0",
     "IsHide": false,
     "IsTestingExclusive": false,
-    "DownloadLinkInstall": "https://github.com/miqote69/ActorMorpher/releases/download/v0.0.0.9/ActorMorpher.zip",
-    "DownloadLinkTesting": "https://github.com/miqote69/ActorMorpher/releases/download/v0.0.0.9/ActorMorpher.zip",
-    "DownloadLinkUpdate": "https://github.com/miqote69/ActorMorpher/releases/download/v0.0.0.9/ActorMorpher.zip",
+    "DownloadLinkInstall": "https://github.com/miqote69/ActorMorpher/releases/download/v0.0.0.10/ActorMorpher.zip",
+    "DownloadLinkTesting": "https://github.com/miqote69/ActorMorpher/releases/download/v0.0.0.10/ActorMorpher.zip",
+    "DownloadLinkUpdate": "https://github.com/miqote69/ActorMorpher/releases/download/v0.0.0.10/ActorMorpher.zip",
     "DownloadCount": 0,
-    "LastUpdate": 1783738900
+    "LastUpdate": 1783754803
   }
 ]

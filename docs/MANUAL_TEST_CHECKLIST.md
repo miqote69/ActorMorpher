@@ -32,4 +32,30 @@ Do not enable appearance-write buttons until the standalone memory implementatio
 - [ ] Unequip All while preserving both weapons, job, customize, and ModelChara ID
 - [ ] repeated Apply/Restore and cancellation stress tests
 
+## Diagnostics
+
+- [ ] Dev Plugin starts with Full diagnostics on a new configuration
+- [ ] Release Plugin starts with diagnostics Off on a new configuration
+- [ ] Off creates no diagnostics directory or file
+- [ ] Errors Only excludes successful operations and records errors
+- [ ] Full creates a session JSONL file and `latest.jsonl`
+- [ ] Dev Mirror creates `ActorMorpherDiagnostics/latest.jsonl`
+- [ ] UI log paths match the actual files
+- [ ] Actor selection and Model selection are recorded once per action
+- [ ] Redraw operations use a shared Operation ID
+- [ ] GPose entry, exit, mapping, and timeout are recorded
+- [ ] Diagnostic Marker is recorded with normalized text
+- [ ] Troubleshooting Capture temporarily changes Off to Full
+- [ ] Ending Capture restores the previous persistent mode
+- [ ] Snapshot creates all five expanded files
+- [ ] Actor names are absent by default
+- [ ] Actor names appear only after enabling the privacy option
+- [ ] Raw addresses are absent by default
+- [ ] A non-writable destination does not crash or disable the plugin
+- [ ] A large event burst does not visibly stall Framework Update
+- [ ] Plugin disable closes diagnostic files
+- [ ] Restart creates a different Session ID
+- [ ] Retention removes old sessions but not the current session
+- [ ] `latest.jsonl` can be read while the plugin is running
+
 Any native crash, T-pose, missing skeleton, or incorrect equipment result is a release blocker. Attach the Dalamud log and crash pack before changing offsets or structures.

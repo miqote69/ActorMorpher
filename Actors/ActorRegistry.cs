@@ -10,17 +10,19 @@ public sealed unsafe class ActorRegistry : IDisposable
     private readonly IObjectTable objectTable;
     private readonly IClientState clientState;
     private readonly IFramework framework;
+    private readonly IDiagnosticLog diagnostics;
     private readonly object syncRoot = new();
     private IReadOnlyList<ActorEntry> entries = Array.Empty<ActorEntry>();
     private IReadOnlyDictionary<ActorRepresentationKey, LogicalActorKey> gposeMappings
         = new Dictionary<ActorRepresentationKey, LogicalActorKey>();
     private uint lastTerritoryId;
 
-    public ActorRegistry(IObjectTable objectTable, IClientState clientState, IFramework framework)
+    public ActorRegistry(IObjectTable objectTable, IClientState clientState, IFramework framework, IDiagnosticLog? diagnostics = null)
     {
         this.objectTable = objectTable;
         this.clientState = clientState;
         this.framework = framework;
+        this.diagnostics = diagnostics ?? NullDiagnosticLog.Instance;
         framework.Update += OnFrameworkUpdate;
     }
 
@@ -61,7 +63,16 @@ public sealed unsafe class ActorRegistry : IDisposable
     {
         var territoryId = clientState.TerritoryType;
         if (lastTerritoryId != 0 && lastTerritoryId != territoryId)
+        {
             ClearGPoseMappings();
+            diagnostics.Write(new DiagnosticLogEntry
+            {
+                EventId = DiagnosticEventIds.ActorRegistryChanged,
+                Category = DiagnosticCategory.ActorRegistry,
+                Message = "Actor registry territory changed.",
+                Properties = new Dictionary<string, object?> { ["previousTerritoryId"] = lastTerritoryId, ["territoryId"] = territoryId },
+            });
+        }
         lastTerritoryId = territoryId;
         var localPlayerId = objectTable.LocalPlayer?.GameObjectId;
         var snapshots = objectTable
@@ -103,8 +114,20 @@ public sealed unsafe class ActorRegistry : IDisposable
             .ThenBy(static actor => actor.Name)
             .ToArray();
 
+        int previousCount;
         lock (syncRoot)
+        {
+            previousCount = entries.Count;
             entries = next;
+        }
+        if (previousCount != next.Length)
+            diagnostics.Write(new DiagnosticLogEntry
+            {
+                EventId = DiagnosticEventIds.ActorRegistryChanged,
+                Category = DiagnosticCategory.ActorRegistry,
+                Message = "Logical actor count changed.",
+                Properties = new Dictionary<string, object?> { ["previousCount"] = previousCount, ["currentCount"] = next.Length },
+            });
     }
 
     private static ActorSnapshot? CreateSnapshot(IGameObject obj, uint territoryId, ulong? localPlayerId)
