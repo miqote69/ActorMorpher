@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using ActorMorpher.Actors;
 using ActorMorpher.Appearance;
 using ActorMorpher.BulkOutfit;
@@ -84,7 +87,7 @@ public sealed class ApplyServicesTests
         service.ProcessNextFrame();
 
         Assert.Same(source, memory.Current[firstActor.LogicalKey]);
-        Assert.Same(firstOriginal, memory.Current[secondActor.LogicalKey]);
+        Assert.Same(secondOriginal, memory.Current[secondActor.LogicalKey]);
 
         service.ProcessNextFrame();
         service.ProcessNextFrame();
