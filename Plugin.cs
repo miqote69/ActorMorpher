@@ -30,6 +30,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly WindowSystem windowSystem = new("ActorMorpher");
     private readonly ActorRegistry actorRegistry;
     private readonly ActorIdentityService actorIdentity = new();
+    private readonly RedrawCoordinator redrawCoordinator;
     private IReadOnlyList<ModelSearchEntry>? modelSearchCache;
 
     public Configuration Configuration { get; }
@@ -48,6 +49,12 @@ public sealed class Plugin : IDalamudPlugin
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         actorRegistry = new ActorRegistry(ObjectTable, ClientState, Framework);
+        redrawCoordinator = new RedrawCoordinator(
+            Framework,
+            new RegistryActorResolver(actorRegistry),
+            new UnavailableAppearanceMemory(),
+            new NativeRedrawBackend(ObjectTable),
+            new DalamudClientContext(ClientState));
         mainWindow = new MainWindow(this);
         windowSystem.AddWindow(mainWindow);
 
@@ -73,6 +80,7 @@ public sealed class Plugin : IDalamudPlugin
 
         windowSystem.RemoveAllWindows();
         mainWindow.Dispose();
+        redrawCoordinator.Dispose();
         actorRegistry.Dispose();
     }
 
