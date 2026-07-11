@@ -44,9 +44,11 @@ public sealed class Plugin : IDalamudPlugin
     private readonly NativeDrawObjectInjector drawObjectInjector;
     private readonly HashSet<LogicalActorKey> combinedRestorePending = new();
     private readonly IModelPreviewBackend modelPreview = new UnavailableModelPreviewBackend();
+    private readonly ModelPreviewAssetResolver modelPreviewAssetResolver;
     private readonly BulkOutfitTargetResolver bulkOutfitTargetResolver = new();
     private readonly Dictionary<ClientLanguage, IReadOnlyList<ModelSearchEntry>> modelSearchCaches = new();
     private readonly Dictionary<ClientLanguage, IReadOnlyDictionary<uint, string>> equipmentNameCaches = new();
+    private readonly Dictionary<(byte Type, ushort Model, ushort Base, byte Variant), ModelPreviewAssetReport> previewAssetCaches = new();
 
     public Configuration Configuration { get; }
     public Localizer Localizer { get; }
@@ -83,6 +85,7 @@ public sealed class Plugin : IDalamudPlugin
             isDev);
         diagnosticController.Start();
         humanModelClassifier = new HumanModelClassifier(DataManager);
+        modelPreviewAssetResolver = new ModelPreviewAssetResolver(DataManager.FileExists);
         actorRegistry = new ActorRegistry(ObjectTable, ClientState, Framework, humanModelClassifier, diagnosticRouter);
         actorIdentity = new ActorIdentityService(diagnosticRouter);
         var clientContext = new DalamudClientContext(ClientState);
@@ -352,6 +355,16 @@ public sealed class Plugin : IDalamudPlugin
     public string AppearanceStatus => appearanceApplyService.LastStatus;
     public ModelPreviewSnapshot ModelPreview => modelPreview.Snapshot;
     public void SelectPreviewModel(ModelSearchEntry? model) => modelPreview.Select(model);
+    public ModelPreviewAssetReport GetModelPreviewAssets(ModelSearchEntry model)
+    {
+        var key = (model.Type, model.Model, model.Base, model.Variant);
+        if (!previewAssetCaches.TryGetValue(key, out var report))
+        {
+            report = modelPreviewAssetResolver.Resolve(model);
+            previewAssetCaches.Add(key, report);
+        }
+        return report;
+    }
 
     private static bool FailUnsupported(out string message)
     {

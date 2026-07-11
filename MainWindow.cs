@@ -2,6 +2,7 @@ using Dalamud.Interface.Windowing;
 using Dalamud.Bindings.ImGui;
 using System.Numerics;
 using ActorMorpher.Localization;
+using ActorMorpher.Preview;
 
 namespace ActorMorpher;
 
@@ -544,6 +545,7 @@ public sealed class MainWindow : Window, IDisposable
                     if (ImGui.Selectable($"{model.Name}##model-{model.RowId}-{model.Source}-{model.SourceId}", selected))
                     {
                         selectedModel = model;
+                        var previewAssets = plugin.GetModelPreviewAssets(model);
                         plugin.Diagnostics.Log.Write(new DiagnosticLogEntry
                         {
                             EventId = DiagnosticEventIds.UserActionRequested,
@@ -557,6 +559,28 @@ public sealed class MainWindow : Window, IDisposable
                                 ["completeness"] = model.Completeness,
                                 ["source"] = model.Source,
                                 ["sourceRowId"] = model.SourceId,
+                                ["previewReadiness"] = previewAssets.Readiness,
+                                ["previewAssetsPresent"] = previewAssets.PresentCount,
+                                ["previewAssetsMissing"] = previewAssets.MissingCount,
+                            },
+                        });
+                        plugin.Diagnostics.Log.Write(new DiagnosticLogEntry
+                        {
+                            EventId = DiagnosticEventIds.PreviewAssetsResolved,
+                            Category = DiagnosticCategory.ModelSearch,
+                            Message = "Model preview assets resolved.",
+                            Outcome = previewAssets.Readiness.ToString(),
+                            Properties = new Dictionary<string, object?>
+                            {
+                                ["modelCharaId"] = model.ModelId,
+                                ["category"] = model.Category,
+                                ["type"] = model.Type,
+                                ["model"] = model.Model,
+                                ["base"] = model.Base,
+                                ["variant"] = model.Variant,
+                                ["presentAssets"] = previewAssets.PresentCount,
+                                ["missingAssets"] = previewAssets.MissingCount,
+                                ["assetPaths"] = previewAssets.Assets.Select(static asset => $"{asset.Label}:{asset.IsPresent}:{asset.Path}").ToArray(),
                             },
                         });
                     }
@@ -609,6 +633,8 @@ public sealed class MainWindow : Window, IDisposable
 
                 ImGui.EndTable();
             }
+
+            DrawPreviewAssetReport(plugin.GetModelPreviewAssets(model));
 
             if (model.Category == ModelCategory.Human)
             {
@@ -686,6 +712,62 @@ public sealed class MainWindow : Window, IDisposable
         ImGui.EndDisabled();
         ImGui.Spacing();
     }
+
+    private void DrawPreviewAssetReport(ModelPreviewAssetReport report)
+    {
+        ImGui.Spacing();
+        ImGui.TextUnformatted(T(TextKey.PreviewAssets));
+        ImGui.SameLine();
+        var readinessColor = report.Readiness is ModelPreviewReadiness.HumanDataReady or ModelPreviewReadiness.AssetsComplete
+            ? new Vector4(0.35f, 0.85f, 0.45f, 1.0f)
+            : report.Readiness == ModelPreviewReadiness.AssetsPartial
+                ? new Vector4(0.95f, 0.75f, 0.25f, 1.0f)
+                : new Vector4(0.95f, 0.35f, 0.35f, 1.0f);
+        ImGui.TextColored(readinessColor, GetPreviewReadinessName(report.Readiness));
+
+        if (report.Assets.Count == 0)
+            return;
+        if (!ImGui.BeginTable("##preview-assets", 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
+            return;
+        ImGui.TableSetupColumn(T(TextKey.Asset), ImGuiTableColumnFlags.WidthFixed, 80.0f);
+        ImGui.TableSetupColumn(T(TextKey.Status), ImGuiTableColumnFlags.WidthFixed, 65.0f);
+        ImGui.TableSetupColumn(T(TextKey.Path), ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableHeadersRow();
+        foreach (var asset in report.Assets)
+        {
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn(); ImGui.TextUnformatted(GetPreviewAssetLabel(asset.Label));
+            ImGui.TableNextColumn();
+            ImGui.TextColored(
+                asset.IsPresent ? new Vector4(0.35f, 0.85f, 0.45f, 1.0f) : new Vector4(0.95f, 0.45f, 0.35f, 1.0f),
+                asset.IsPresent ? T(TextKey.Ready) : T(TextKey.Missing));
+            ImGui.TableNextColumn(); ImGui.TextWrapped(asset.Path ?? T(TextKey.InMemoryAppearance));
+        }
+        ImGui.EndTable();
+    }
+
+    private string GetPreviewReadinessName(ModelPreviewReadiness readiness)
+        => T(readiness switch
+        {
+            ModelPreviewReadiness.HumanDataReady => TextKey.HumanDataReady,
+            ModelPreviewReadiness.AssetsComplete => TextKey.AssetsComplete,
+            ModelPreviewReadiness.AssetsPartial => TextKey.AssetsPartial,
+            ModelPreviewReadiness.AssetsMissing => TextKey.AssetsMissing,
+            _ => TextKey.InvalidModelData,
+        });
+
+    private string GetPreviewAssetLabel(string label)
+        => label switch
+        {
+            "Head" => T(TextKey.Head),
+            "Body" => T(TextKey.Body),
+            "Hands" => T(TextKey.Hands),
+            "Legs" => T(TextKey.Legs),
+            "Feet" => T(TextKey.Feet),
+            "Skeleton" => T(TextKey.Skeleton),
+            "Customize + Equipment" => T(TextKey.InMemoryAppearance),
+            _ => label,
+        };
 
     private static void DrawDetailRow(string field, string value)
     {

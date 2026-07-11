@@ -47,6 +47,7 @@ public static class DiagnosticEventIds
     public const string TroubleshootingCaptureStarted = "AM7001";
     public const string TroubleshootingCaptureEnded = "AM7002";
     public const string DiagnosticSnapshotCreated = "AM7003";
+    public const string PreviewAssetsResolved = "AM7101";
     public const string SlowOperation = "AM8001";
     public const string LogEventsDropped = "AM8002";
     public const string DiagnosticMarker = "AM8003";
@@ -81,6 +82,7 @@ public static class DiagnosticEventIds
         [TroubleshootingCaptureStarted] = "TroubleshootingCaptureStarted",
         [TroubleshootingCaptureEnded] = "TroubleshootingCaptureEnded",
         [DiagnosticSnapshotCreated] = "DiagnosticSnapshotCreated", [SlowOperation] = "SlowOperation",
+        [PreviewAssetsResolved] = "PreviewAssetsResolved",
         [LogEventsDropped] = "LogEventsDropped", [DiagnosticMarker] = "DiagnosticMarker",
         [RepeatedEventsSuppressed] = "RepeatedEventsSuppressed", [HandledException] = "HandledException",
         [FileLoggingUnavailable] = "FileLoggingUnavailable", [DiagnosticExportFailed] = "DiagnosticExportFailed",
