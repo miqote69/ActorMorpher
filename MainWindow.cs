@@ -22,6 +22,11 @@ public sealed class MainWindow : Window, IDisposable
     private ModelSearchEntry? selectedModel;
     private string applyStatus = string.Empty;
     private bool applySucceeded;
+    private string bulkNameFilter = string.Empty;
+    private int bulkActorType;
+    private int bulkRace;
+    private int bulkGender;
+    private bool bulkIncludeYourself;
 
     private static readonly string[] CategoryNames =
     [
@@ -88,9 +93,81 @@ public sealed class MainWindow : Window, IDisposable
                 ImGui.EndTabItem();
             }
 
+            if (ImGui.BeginTabItem("Bulk Outfit"))
+            {
+                DrawBulkOutfitTab();
+                ImGui.EndTabItem();
+            }
+
             ImGui.EndTabBar();
         }
 
+    }
+
+    private void DrawBulkOutfitTab()
+    {
+        ImGui.TextUnformatted("Source Outfit: Current Player Appearance");
+        ImGui.SameLine();
+        ImGui.BeginDisabled();
+        ImGui.Button("Refresh Source Preview");
+        ImGui.EndDisabled();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("Standalone outfit reading is not available in this build.");
+
+        ImGui.Separator();
+        ImGui.TextUnformatted("Target Filters");
+        ImGui.SetNextItemWidth(160.0f);
+        ImGui.Combo("Actor Type##bulk", ref bulkActorType, ActorTypeNames, ActorTypeNames.Length);
+        ImGui.SetNextItemWidth(160.0f);
+        if (ImGui.BeginCombo("Race##bulk", HumanRaces[bulkRace].Name))
+        {
+            for (var i = 0; i < HumanRaces.Length; ++i)
+            {
+                if (ImGui.Selectable(HumanRaces[i].Name, bulkRace == i))
+                    bulkRace = i;
+            }
+            ImGui.EndCombo();
+        }
+        ImGui.SetNextItemWidth(160.0f);
+        if (ImGui.BeginCombo("Gender##bulk", HumanGenders[bulkGender].Name))
+        {
+            for (var i = 0; i < HumanGenders.Length; ++i)
+            {
+                if (ImGui.Selectable(HumanGenders[i].Name, bulkGender == i))
+                    bulkGender = i;
+            }
+            ImGui.EndCombo();
+        }
+        ImGui.SetNextItemWidth(260.0f);
+        ImGui.InputTextWithHint("Name##bulk", "Filter by name", ref bulkNameFilter, 128);
+        ImGui.Checkbox("Include Yourself", ref bulkIncludeYourself);
+
+        var gender = HumanGenders[bulkGender].Id;
+        var preview = plugin.GetBulkOutfitPreview(new BulkOutfitSettings(
+            (ActorTargetType)bulkActorType,
+            HumanRaces[bulkRace].Id,
+            gender == byte.MaxValue ? null : gender,
+            bulkNameFilter,
+            bulkIncludeYourself));
+
+        ImGui.Separator();
+        ImGui.TextUnformatted($"Matching logical actors: {preview.MatchingLogicalActors}");
+        ImGui.TextUnformatted($"Eligible human actors: {preview.EligibleHumanActors}");
+        ImGui.TextUnformatted($"Skipped non-human actors: {preview.SkippedNonHumanActors}");
+        ImGui.TextUnformatted($"Unavailable actors: {preview.UnavailableActors}");
+
+        ImGui.Spacing();
+        ImGui.BeginDisabled();
+        ImGui.Button("Apply to Matching Actors");
+        ImGui.SameLine();
+        ImGui.Button("Unequip All");
+        ImGui.SameLine();
+        ImGui.Button("Restore Modified Actors");
+        ImGui.SameLine();
+        ImGui.Button("Cancel Pending Operation");
+        ImGui.EndDisabled();
+        ImGui.TextDisabled("Outfit apply is unavailable until standalone equipment memory access is verified.");
+        ImGui.TextDisabled("Facewear unavailable");
     }
 
     private void DrawActorsTab()

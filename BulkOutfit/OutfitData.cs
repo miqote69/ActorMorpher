@@ -3,14 +3,14 @@ using System.Collections.Immutable;
 namespace ActorMorpher.BulkOutfit;
 
 public sealed record OutfitData(
-    ImmutableArray<ulong> Equipment,
-    ushort Facewear,
+    ImmutableArray<ArmorAppearance> Equipment,
+    FacewearAppearance Facewear,
     bool HatVisible,
     bool VisorToggled)
 {
     public static OutfitData Create(
-        IEnumerable<ulong> equipment,
-        ushort facewear,
+        IEnumerable<ArmorAppearance> equipment,
+        FacewearAppearance facewear,
         bool hatVisible,
         bool visorToggled)
     {

@@ -32,6 +32,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly ActorIdentityService actorIdentity = new();
     private readonly RedrawCoordinator redrawCoordinator;
     private readonly GPoseCoordinator gposeCoordinator;
+    private readonly BulkOutfitTargetResolver bulkOutfitTargetResolver = new();
     private IReadOnlyList<ModelSearchEntry>? modelSearchCache;
 
     public Configuration Configuration { get; }
@@ -107,6 +108,9 @@ public sealed class Plugin : IDalamudPlugin
 
     public bool TryResolveActor(LogicalActorKey key, out ActorEntry actor)
         => actorIdentity.TryResolve(actorRegistry, key, out actor);
+
+    public BulkOutfitPreview GetBulkOutfitPreview(BulkOutfitSettings settings)
+        => bulkOutfitTargetResolver.Resolve(actorRegistry.Entries, settings);
 
     public IReadOnlyList<ModelSearchEntry> GetModelSearchEntries()
     {

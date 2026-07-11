@@ -79,5 +79,9 @@ public sealed class OverrideStoreTests
             [marker]);
 
     private static OutfitData Outfit(ulong marker)
-        => OutfitData.Create(Enumerable.Repeat(marker, Enum.GetValues<OutfitSlot>().Length), 0, true, false);
+        => OutfitData.Create(
+            Enumerable.Repeat(new ArmorAppearance((ushort)marker, (byte)marker, (byte)marker, (byte)marker), Enum.GetValues<OutfitSlot>().Length),
+            FacewearAppearance.Unavailable,
+            true,
+            false);
 }
