@@ -1,8 +1,8 @@
 {
   "Author": "miqote69",
   "Name": "Actor Morpher",
-  "Punchline": "Locally changes visible actor forms.",
-  "Description": "Prototype for locally changing visible actors into selected NPC, demihuman, or monster forms. Use /actormorpher to open the window.",
+  "Punchline": "Browse actors and model appearance data safely.",
+  "Description": "Standalone actor and model browser with safe state and redraw foundations. Appearance writes remain disabled pending current-client verification. Use /actormorpher to open the window.",
   "ApplicableVersion": "any",
   "RepoUrl": "https://github.com/miqote69/ActorMorpher",
   "Tags": [

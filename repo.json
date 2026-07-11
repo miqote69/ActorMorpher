@@ -2,14 +2,14 @@
   {
     "Author": "miqote69",
     "Name": "Actor Morpher",
-    "Description": "Locally changes visible actors into selected NPC, demihuman, or monster forms. Use /actormorpher to open the window.",
+    "Description": "Standalone actor and model browser with safe state and redraw foundations. Appearance writes remain disabled pending current-client verification.",
     "InternalName": "ActorMorpher",
-    "AssemblyVersion": "0.0.0.7",
+    "AssemblyVersion": "0.0.0.8",
     "TestingAssemblyVersion": null,
     "RepoUrl": "https://github.com/miqote69/ActorMorpher",
     "ApplicableVersion": "any",
     "DalamudApiLevel": 15,
-    "Punchline": "Locally changes visible actor forms.",
+    "Punchline": "Browse actors and model appearance data safely.",
     "Tags": [
       "actor",
       "model",
@@ -18,10 +18,10 @@
     "MinimumDalamudVersion": "15.0.0.0",
     "IsHide": false,
     "IsTestingExclusive": false,
-    "DownloadLinkInstall": "https://github.com/miqote69/ActorMorpher/releases/download/v0.0.0.7/ActorMorpher.zip",
-    "DownloadLinkTesting": "https://github.com/miqote69/ActorMorpher/releases/download/v0.0.0.7/ActorMorpher.zip",
-    "DownloadLinkUpdate": "https://github.com/miqote69/ActorMorpher/releases/download/v0.0.0.7/ActorMorpher.zip",
+    "DownloadLinkInstall": "https://github.com/miqote69/ActorMorpher/releases/download/v0.0.0.8/ActorMorpher.zip",
+    "DownloadLinkTesting": "https://github.com/miqote69/ActorMorpher/releases/download/v0.0.0.8/ActorMorpher.zip",
+    "DownloadLinkUpdate": "https://github.com/miqote69/ActorMorpher/releases/download/v0.0.0.8/ActorMorpher.zip",
     "DownloadCount": 0,
-    "LastUpdate": 1783721558
+    "LastUpdate": 1783737170
   }
 ]

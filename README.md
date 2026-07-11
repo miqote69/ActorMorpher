@@ -1,6 +1,6 @@
 # Actor Morpher
 
-Dalamud plugin prototype for locally changing visible actors into selected NPC, demihuman, or monster forms.
+Dalamud plugin for browsing visible actors and searchable Human, Demihuman, and Monster model data.
 
 ## Install
 
@@ -10,15 +10,14 @@ Add this URL to Dalamud's custom plugin repositories:
 https://raw.githubusercontent.com/miqote69/ActorMorpher/main/repo.json
 ```
 
-## Use
+Commands: `/actormorpher` or `/amorph`
 
-- Command: `/actormorpher`
-- Alias: `/amorph`
+## Current status
 
-## Current scope
+The plugin now has standalone actor identity, state stores, staged redraw coordination, conservative GPose mapping, model-data completeness checks, and Bulk Outfit target previews. It does not require Glamourer or Penumbra IPC.
 
-This first project shell lists visible actors and `ModelChara` rows. The actual model replacement path is intentionally left as the next step, after validating the target actor and form data in-game.
+Appearance and outfit memory writes remain disabled. Safe standalone writes for Human, Monster, Demihuman, equipment, and Facewear have not yet been verified against the current game client. Buttons that would perform those writes are disabled instead of using guessed offsets or partial model-ID writes.
 
-## Notes
+See [implementation notes](docs/IMPLEMENTATION_NOTES.md), [testing](docs/TESTING.md), and the [manual checklist](docs/MANUAL_TEST_CHECKLIST.md).
 
-This is a cosmetic client-side plugin prototype. It does not automate gameplay, send network requests, or collect player data.
+This is a cosmetic client-side plugin. It does not automate gameplay, send network requests, or collect player data.

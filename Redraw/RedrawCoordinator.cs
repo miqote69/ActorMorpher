@@ -7,7 +7,7 @@ public sealed class RedrawCoordinator : IDisposable
 {
     private const int TimeoutFrames = 180;
 
-    private readonly IFramework framework;
+    private readonly IFramework? framework;
     private readonly IActorResolver resolver;
     private readonly IAppearanceMemory appearanceMemory;
     private readonly IRedrawBackend redrawBackend;
@@ -22,13 +22,22 @@ public sealed class RedrawCoordinator : IDisposable
         IAppearanceMemory appearanceMemory,
         IRedrawBackend redrawBackend,
         IClientContext clientContext)
+        : this(resolver, appearanceMemory, redrawBackend, clientContext)
     {
         this.framework = framework;
+        framework.Update += OnFrameworkUpdate;
+    }
+
+    public RedrawCoordinator(
+        IActorResolver resolver,
+        IAppearanceMemory appearanceMemory,
+        IRedrawBackend redrawBackend,
+        IClientContext clientContext)
+    {
         this.resolver = resolver;
         this.appearanceMemory = appearanceMemory;
         this.redrawBackend = redrawBackend;
         this.clientContext = clientContext;
-        framework.Update += OnFrameworkUpdate;
     }
 
     public RedrawOperation? Current => current;
@@ -56,11 +65,12 @@ public sealed class RedrawCoordinator : IDisposable
             return;
 
         disposed = true;
-        framework.Update -= OnFrameworkUpdate;
+        if (framework is not null)
+            framework.Update -= OnFrameworkUpdate;
         CancelAll("Plugin disposed.");
     }
 
-    internal void AdvanceOneFrame()
+    public void ProcessNextFrame()
     {
         if (disposed)
             return;
@@ -114,7 +124,7 @@ public sealed class RedrawCoordinator : IDisposable
     }
 
     private void OnFrameworkUpdate(IFramework _)
-        => AdvanceOneFrame();
+        => ProcessNextFrame();
 
     private RedrawOperation Complete(RedrawOperation operation)
     {

@@ -14,6 +14,7 @@ public sealed unsafe class ActorRegistry : IDisposable
     private IReadOnlyList<ActorEntry> entries = Array.Empty<ActorEntry>();
     private IReadOnlyDictionary<ActorRepresentationKey, LogicalActorKey> gposeMappings
         = new Dictionary<ActorRepresentationKey, LogicalActorKey>();
+    private uint lastTerritoryId;
 
     public ActorRegistry(IObjectTable objectTable, IClientState clientState, IFramework framework)
     {
@@ -60,6 +61,9 @@ public sealed unsafe class ActorRegistry : IDisposable
     private void Refresh()
     {
         var territoryId = clientState.TerritoryType;
+        if (lastTerritoryId != 0 && lastTerritoryId != territoryId)
+            ClearGPoseMappings();
+        lastTerritoryId = territoryId;
         var localPlayerId = objectTable.LocalPlayer?.GameObjectId;
         var snapshots = objectTable
             .Where(static obj => obj is not null
