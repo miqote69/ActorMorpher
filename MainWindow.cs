@@ -8,6 +8,9 @@ public sealed class MainWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
     private string actorFilter = string.Empty;
+    private int selectedActorType;
+    private int selectedActorRace;
+    private int selectedActorGender;
     private string modelNameFilter = string.Empty;
     private string modelIdFilter = string.Empty;
     private int selectedCategory;
@@ -15,7 +18,7 @@ public sealed class MainWindow : Window, IDisposable
     private int selectedGender;
     private bool includeAdultHumans = true;
     private bool includeYoungNpc = true;
-    private ActorEntry? selectedActor;
+    private LogicalActorKey? selectedActorKey;
     private ModelSearchEntry? selectedModel;
     private string applyStatus = string.Empty;
     private bool applySucceeded;
@@ -25,6 +28,13 @@ public sealed class MainWindow : Window, IDisposable
         "Human",
         "Demihuman",
         "Monster",
+    ];
+
+    private static readonly string[] ActorTypeNames =
+    [
+        "All",
+        "Players",
+        "NPCs",
     ];
 
     private static readonly (uint Id, string Name)[] HumanRaces =
@@ -86,6 +96,8 @@ public sealed class MainWindow : Window, IDisposable
     private void DrawActorsTab()
     {
         var actors = plugin.GetVisibleActors().Where(MatchesActorFilter).ToArray();
+        if (selectedActorKey is { } selectedKey && !plugin.TryResolveActor(selectedKey, out _))
+            selectedActorKey = null;
         DrawActors(actors);
     }
 
@@ -98,26 +110,113 @@ public sealed class MainWindow : Window, IDisposable
 
     private void DrawActors(IReadOnlyList<ActorEntry> actors)
     {
-        ImGui.TextUnformatted($"Visible actors ({actors.Count})");
-        ImGui.SetNextItemWidth(-1);
-        ImGui.InputTextWithHint("##actor-filter", "Filter actors", ref actorFilter, 128);
-
-        if (ImGui.BeginChild("##actors", Vector2.Zero, true))
+        if (ImGui.BeginTable("##actor-results", 2, ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.Resizable, Vector2.Zero))
         {
-            foreach (var actor in actors)
-            {
-                var selected = selectedActor?.GameObjectId == actor.GameObjectId;
-                var localPlayerLabel = actor.IsLocalPlayer ? " (You)" : string.Empty;
-                var label = $"{actor.Name}{localPlayerLabel} [{actor.Kind}]##actor-{actor.GameObjectId}";
-                if (ImGui.Selectable(label, selected))
-                    selectedActor = actor;
+            ImGui.TableSetupColumn("Actors", ImGuiTableColumnFlags.WidthFixed, 280.0f);
+            ImGui.TableSetupColumn("Details", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
 
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip($"BaseId: {actor.BaseId}\nEntityId: {actor.EntityId:X}\nTargetable: {actor.IsTargetable}");
+            ImGui.TextUnformatted($"Visible actors ({actors.Count})");
+            ImGui.SetNextItemWidth(-1);
+            ImGui.InputTextWithHint("##actor-filter", "Filter by name", ref actorFilter, 128);
+            ImGui.SetNextItemWidth(-1);
+            ImGui.Combo("##actor-type", ref selectedActorType, ActorTypeNames, ActorTypeNames.Length);
+            ImGui.SetNextItemWidth(-1);
+            DrawActorRaceFilter();
+            ImGui.SetNextItemWidth(-1);
+            DrawActorGenderFilter();
+
+            var listHeight = Math.Max(120.0f, ImGui.GetContentRegionAvail().Y);
+            if (ImGui.BeginChild("##actors", new Vector2(0, listHeight), true))
+            {
+                foreach (var actor in actors)
+                {
+                    var selected = selectedActorKey == actor.Key;
+                    var localPlayerLabel = actor.IsLocalPlayer ? " (You)" : string.Empty;
+                    var label = $"{actor.Name}{localPlayerLabel}##actor-{actor.Key.GetHashCode()}";
+                    if (ImGui.Selectable(label, selected))
+                        selectedActorKey = actor.Key;
+                }
+            }
+
+            ImGui.EndChild();
+            ImGui.TableNextColumn();
+            DrawActorDetails();
+            ImGui.EndTable();
+        }
+    }
+
+    private void DrawActorDetails()
+    {
+        if (ImGui.BeginChild("##actor-details", Vector2.Zero, true))
+        {
+            if (selectedActorKey is not { } key || !plugin.TryResolveActor(key, out var actor))
+            {
+                ImGui.TextDisabled("Select an actor from the list.");
+                ImGui.EndChild();
+                return;
+            }
+
+            var current = actor.Current;
+            ImGui.TextUnformatted(actor.Name);
+            ImGui.Separator();
+            if (ImGui.BeginTable("##actor-detail-fields", 2, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
+            {
+                ImGui.TableSetupColumn("Field", ImGuiTableColumnFlags.WidthFixed, 150.0f);
+                ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                DrawDetailRow("Actor Type", actor.Kind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc ? "Player" : "NPC");
+                DrawDetailRow("ObjectKind", actor.Kind.ToString());
+                DrawDetailRow("Representation", actor.Representations.Count.ToString());
+                DrawDetailRow("Object Index", current.RepresentationKey.ObjectIndex.ToString());
+                DrawDetailRow("Original Object Index", actor.Key.OriginalObjectIndex.ToString());
+                DrawDetailRow("GameObject ID", $"0x{current.RepresentationKey.GameObjectId:X}");
+                DrawDetailRow("Entity ID", $"0x{current.RepresentationKey.EntityId:X}");
+                DrawDetailRow("Base ID", current.BaseId.ToString());
+                DrawDetailRow("ModelChara ID", current.ModelCharaId.ToString());
+                DrawDetailRow("Race", current.Race is { } race ? GetRaceName(race) : "Non-Human / Unknown");
+                DrawDetailRow("Gender", current.Gender is { } gender ? GetGenderName(gender) : "Non-Human / Unknown");
+                DrawDetailRow("Body Type", current.BodyType?.ToString() ?? "Non-Human / Unknown");
+                DrawDetailRow("Class Job", current.ClassJob.ToString());
+                DrawDetailRow("Level", current.Level.ToString());
+                DrawDetailRow("Is Local Player", current.IsLocalPlayer ? "Yes" : "No");
+                DrawDetailRow("Current Morph", "None");
+                DrawDetailRow("Bulk Outfit Modified", "No");
+                DrawDetailRow("Snapshot Available", "No");
+                DrawDetailRow("GPose Representation", current.RepresentationKey.IsGPoseRepresentation ? "Yes" : "No");
+                ImGui.EndTable();
             }
         }
 
         ImGui.EndChild();
+    }
+
+    private void DrawActorRaceFilter()
+    {
+        if (ImGui.BeginCombo("##actor-race", HumanRaces[selectedActorRace].Name))
+        {
+            for (var i = 0; i < HumanRaces.Length; ++i)
+            {
+                if (ImGui.Selectable(HumanRaces[i].Name, selectedActorRace == i))
+                    selectedActorRace = i;
+            }
+
+            ImGui.EndCombo();
+        }
+    }
+
+    private void DrawActorGenderFilter()
+    {
+        if (ImGui.BeginCombo("##actor-gender", HumanGenders[selectedActorGender].Name))
+        {
+            for (var i = 0; i < HumanGenders.Length; ++i)
+            {
+                if (ImGui.Selectable(HumanGenders[i].Name, selectedActorGender == i))
+                    selectedActorGender = i;
+            }
+
+            ImGui.EndCombo();
+        }
     }
 
     private void DrawModels(IReadOnlyList<ModelSearchEntry> models)
@@ -278,10 +377,21 @@ public sealed class MainWindow : Window, IDisposable
 
     private bool MatchesActorFilter(ActorEntry actor)
     {
-        return string.IsNullOrWhiteSpace(actorFilter)
-            || actor.Name.Contains(actorFilter, StringComparison.CurrentCultureIgnoreCase)
-            || actor.Kind.ToString().Contains(actorFilter, StringComparison.CurrentCultureIgnoreCase)
-            || actor.BaseId.ToString().Contains(actorFilter, StringComparison.Ordinal);
+        if (!string.IsNullOrWhiteSpace(actorFilter)
+            && !actor.Name.Contains(actorFilter, StringComparison.CurrentCultureIgnoreCase))
+            return false;
+
+        if (selectedActorType == 1 && actor.Kind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc)
+            return false;
+        if (selectedActorType == 2 && actor.Kind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc)
+            return false;
+
+        var race = HumanRaces[selectedActorRace].Id;
+        if (race != 0 && actor.Race != race)
+            return false;
+
+        var gender = HumanGenders[selectedActorGender].Id;
+        return gender == byte.MaxValue || actor.Gender == gender;
     }
 
     private bool MatchesModelFilter(ModelSearchEntry model)

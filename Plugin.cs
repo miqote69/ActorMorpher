@@ -23,9 +23,13 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] private static IObjectTable ObjectTable { get; set; } = null!;
     [PluginService] private static IDataManager DataManager { get; set; } = null!;
     [PluginService] private static IPluginLog Log { get; set; } = null!;
+    [PluginService] private static IClientState ClientState { get; set; } = null!;
+    [PluginService] private static IFramework Framework { get; set; } = null!;
 
     private readonly MainWindow mainWindow;
     private readonly WindowSystem windowSystem = new("ActorMorpher");
+    private readonly ActorRegistry actorRegistry;
+    private readonly ActorIdentityService actorIdentity = new();
     private IReadOnlyList<ModelSearchEntry>? modelSearchCache;
 
     public Configuration Configuration { get; }
@@ -43,6 +47,7 @@ public sealed class Plugin : IDalamudPlugin
     public Plugin()
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+        actorRegistry = new ActorRegistry(ObjectTable, ClientState, Framework);
         mainWindow = new MainWindow(this);
         windowSystem.AddWindow(mainWindow);
 
@@ -68,6 +73,7 @@ public sealed class Plugin : IDalamudPlugin
 
         windowSystem.RemoveAllWindows();
         mainWindow.Dispose();
+        actorRegistry.Dispose();
     }
 
     public void Save()
@@ -86,16 +92,10 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     public IReadOnlyList<ActorEntry> GetVisibleActors()
-    {
-        var localPlayerId = ObjectTable.LocalPlayer?.GameObjectId;
-        return ObjectTable.CharacterManagerObjects
-            .Where(static obj => obj.Address != nint.Zero && obj.IsValid())
-            .Select(obj => CreateActorEntry(obj, localPlayerId))
-            .OrderByDescending(static actor => actor.IsLocalPlayer)
-            .ThenBy(static actor => actor.Kind)
-            .ThenBy(static actor => actor.Name)
-            .ToArray();
-    }
+        => actorRegistry.Entries;
+
+    public bool TryResolveActor(LogicalActorKey key, out ActorEntry actor)
+        => actorIdentity.TryResolve(actorRegistry, key, out actor);
 
     public IReadOnlyList<ModelSearchEntry> GetModelSearchEntries()
     {
@@ -401,31 +401,7 @@ public sealed class Plugin : IDalamudPlugin
                 static group => group.Select(static link => link.BNpcNameId).Distinct().ToArray());
     }
 
-    private static ActorEntry CreateActorEntry(IGameObject obj, ulong? localPlayerId)
-    {
-        var name = obj.Name.ToString();
-        if (string.IsNullOrWhiteSpace(name))
-            name = $"{obj.ObjectKind} {obj.BaseId}";
-
-        return new ActorEntry(
-            obj.GameObjectId,
-            obj.EntityId,
-            obj.BaseId,
-            obj.ObjectKind,
-            name,
-            obj.IsTargetable,
-            obj.GameObjectId == localPlayerId);
-    }
 }
-
-public sealed record ActorEntry(
-    ulong GameObjectId,
-    ulong EntityId,
-    uint BaseId,
-    ObjectKind Kind,
-    string Name,
-    bool IsTargetable,
-    bool IsLocalPlayer);
 
 public enum NpcAge : byte
 {
