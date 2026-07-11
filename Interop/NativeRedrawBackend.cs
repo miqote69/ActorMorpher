@@ -21,10 +21,19 @@ public sealed unsafe class NativeRedrawBackend(IObjectTable objectTable) : IRedr
             || current.EntityId != key.EntityId)
             return false;
 
+        var gameObject = (GameObject*)current.Address;
         if (disable)
-            ((GameObject*)current.Address)->DisableDraw();
+        {
+            gameObject->RenderFlags |= VisibilityFlags.Model;
+            if (expected.RepresentationKey.IsGPoseRepresentation)
+                gameObject->DisableDraw();
+        }
         else
-            ((GameObject*)current.Address)->EnableDraw();
+        {
+            gameObject->RenderFlags &= ~VisibilityFlags.Model;
+            if (expected.RepresentationKey.IsGPoseRepresentation)
+                gameObject->EnableDraw();
+        }
         return true;
     }
 }

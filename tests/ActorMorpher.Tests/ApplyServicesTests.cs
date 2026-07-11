@@ -28,14 +28,14 @@ public sealed class ApplyServicesTests
         using var service = new AppearanceApplyService(resolver, memory, context, redraw, store, NullDiagnosticLog.Instance);
 
         Assert.True(service.TryApply(actor.LogicalKey, desired, out _));
-        Process(redraw, 5);
+        Process(redraw, 7);
 
         Assert.Same(desired, memory.Current);
         Assert.True(store.TryGet(actor.LogicalKey, out var state));
         Assert.Same(original, state.BaseData);
 
         Assert.True(service.TryRestore(actor.LogicalKey, out _));
-        Process(redraw, 5);
+        Process(redraw, 7);
 
         Assert.Same(original, memory.Current);
         Assert.False(store.TryGet(actor.LogicalKey, out _));
@@ -55,7 +55,7 @@ public sealed class ApplyServicesTests
         using var service = new AppearanceApplyService(resolver, memory, context, redraw, store, NullDiagnosticLog.Instance);
 
         Assert.True(service.TryApply(actor.LogicalKey, desired, out _));
-        Process(redraw, 6);
+        Process(redraw, 8);
 
         Assert.Same(original, memory.Current);
         Assert.False(store.TryGet(actor.LogicalKey, out _));

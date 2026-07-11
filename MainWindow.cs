@@ -476,7 +476,7 @@ public sealed class MainWindow : Window, IDisposable
             }
 
             ImGui.Spacing();
-            var canRestore = plugin.HasAppearanceOverride(actor.Key);
+            var canRestore = plugin.HasAppearanceOverride(actor.Key) && !plugin.IsAppearancePending(actor.Key);
             if (!canRestore)
                 ImGui.BeginDisabled();
             if (ImGui.Button("Restore Original Appearance"))
@@ -603,17 +603,20 @@ public sealed class MainWindow : Window, IDisposable
             ImGui.Spacing();
             var unavailableReason = Plugin.GetApplyUnavailableReason(model);
             var canApply = Plugin.CanApplyModel(model);
-            if (!canApply)
+            var canApplyYourself = canApply && !plugin.IsLocalPlayerAppearancePending();
+            if (!canApplyYourself)
                 ImGui.BeginDisabled();
             if (ImGui.Button("Apply to Yourself"))
                 applySucceeded = plugin.TryApplyModelToLocalPlayer(model, out applyStatus);
-            if (!canApply)
+            if (!canApplyYourself)
                 ImGui.EndDisabled();
             if (!canApply && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
                 ImGui.SetTooltip(unavailableReason);
 
             ImGui.SameLine();
-            var canApplySelected = canApply && selectedActorKey is not null;
+            var canApplySelected = canApply
+                && selectedActorKey is { } selectedKey
+                && !plugin.IsAppearancePending(selectedKey);
             if (!canApplySelected)
                 ImGui.BeginDisabled();
             if (ImGui.Button("Apply to Selected Actor") && selectedActorKey is { } actorKey)

@@ -264,6 +264,13 @@ public sealed class Plugin : IDalamudPlugin
     public bool HasOutfitOverride(LogicalActorKey actor)
         => bulkOutfitService.Store.TryGet(actor, out _);
 
+    public bool IsAppearancePending(LogicalActorKey actor)
+        => appearanceApplyService.IsPending(actor);
+
+    public bool IsLocalPlayerAppearancePending()
+        => actorRegistry.Entries.FirstOrDefault(static actor => actor.IsLocalPlayer) is { } local
+        && appearanceApplyService.IsPending(local.Key);
+
     public string AppearanceStatus => appearanceApplyService.LastStatus;
 
     private static bool FailUnsupported(out string message)

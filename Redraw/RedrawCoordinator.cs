@@ -109,7 +109,12 @@ public sealed class RedrawCoordinator : IDisposable
 
         if (operation.FrameCount > TimeoutFrames)
         {
-            if (operation.Stage is RedrawStage.Rollback or RedrawStage.RollbackEnable)
+            if (operation.Stage is RedrawStage.Rollback
+                or RedrawStage.RollbackDisable
+                or RedrawStage.RollbackHidden
+                or RedrawStage.RollbackEnable
+                or RedrawStage.RollbackRecreate
+                or RedrawStage.RollbackVerify)
                 Finish(operation with { Stage = RedrawStage.Failed, Error = "Rollback timed out." });
             else
                 current = operation with { Stage = RedrawStage.Rollback, FrameCount = 0, Error = "Redraw timed out." };
@@ -128,16 +133,29 @@ public sealed class RedrawCoordinator : IDisposable
         var previousStage = operation.Stage;
         current = operation.Stage switch
         {
-            RedrawStage.Pending => operation with { Stage = RedrawStage.Disable },
-            RedrawStage.Disable when redrawBackend.TryDisable(actor) => operation with { Stage = RedrawStage.Apply },
-            RedrawStage.Apply when appearanceMemory.TryWrite(actor, operation.Desired) => operation with { Stage = RedrawStage.Enable },
-            RedrawStage.Enable when redrawBackend.TryEnable(actor) => operation with { Stage = RedrawStage.Verify },
+            RedrawStage.Pending => operation with { Stage = RedrawStage.Apply },
+            RedrawStage.Apply when appearanceMemory.TryWrite(actor, operation.Desired) => operation with { Stage = RedrawStage.Disable },
+            RedrawStage.Disable when redrawBackend.TryDisable(actor) => operation with { Stage = RedrawStage.ApplyHidden },
+            RedrawStage.ApplyHidden when appearanceMemory.TryWrite(actor, operation.Desired) => operation with { Stage = RedrawStage.Enable },
+            RedrawStage.Enable when redrawBackend.TryEnable(actor) => operation with { Stage = RedrawStage.Recreate },
+            RedrawStage.Recreate => operation with { Stage = RedrawStage.Verify },
             RedrawStage.Verify when appearanceMemory.IsApplied(actor, operation.Desired) => Complete(operation),
-            RedrawStage.Rollback when appearanceMemory.TryWrite(actor, operation.Rollback) => operation with { Stage = RedrawStage.RollbackEnable },
-            RedrawStage.RollbackEnable when redrawBackend.TryEnable(actor) => Fail(operation),
-            RedrawStage.Disable or RedrawStage.Apply or RedrawStage.Enable or RedrawStage.Verify
-                => operation with { Stage = RedrawStage.Rollback, Error = operation.Error ?? "Redraw stage failed." },
-            RedrawStage.Rollback or RedrawStage.RollbackEnable => Fail(operation),
+            RedrawStage.Verify => operation,
+            RedrawStage.Rollback when appearanceMemory.TryWrite(actor, operation.Rollback)
+                => operation with { Stage = RedrawStage.RollbackDisable },
+            RedrawStage.RollbackDisable when redrawBackend.TryDisable(actor)
+                => operation with { Stage = RedrawStage.RollbackHidden },
+            RedrawStage.RollbackHidden when appearanceMemory.TryWrite(actor, operation.Rollback)
+                => operation with { Stage = RedrawStage.RollbackEnable },
+            RedrawStage.RollbackEnable when redrawBackend.TryEnable(actor)
+                => operation with { Stage = RedrawStage.RollbackRecreate },
+            RedrawStage.RollbackRecreate => operation with { Stage = RedrawStage.RollbackVerify },
+            RedrawStage.RollbackVerify when appearanceMemory.IsApplied(actor, operation.Rollback) => Fail(operation),
+            RedrawStage.RollbackVerify => operation,
+            RedrawStage.Apply or RedrawStage.Disable or RedrawStage.ApplyHidden or RedrawStage.Enable
+                => operation with { Stage = RedrawStage.Rollback, FrameCount = 0, Error = operation.Error ?? "Redraw stage failed." },
+            RedrawStage.Rollback or RedrawStage.RollbackDisable or RedrawStage.RollbackHidden or RedrawStage.RollbackEnable
+                => Fail(operation),
             _ => operation,
         };
         if (current is { } changed && changed.Stage != previousStage)

@@ -18,7 +18,7 @@ public sealed class RedrawCoordinatorTests
         using var coordinator = fixture.CreateCoordinator();
         coordinator.Enqueue(fixture.Operation());
 
-        for (var i = 0; i < 5; ++i)
+        for (var i = 0; i < 7; ++i)
             coordinator.ProcessNextFrame();
 
         Assert.Equal(RedrawStage.Completed, coordinator.LastResult?.Stage);
@@ -32,7 +32,6 @@ public sealed class RedrawCoordinatorTests
         var fixture = new Fixture();
         using var coordinator = fixture.CreateCoordinator();
         coordinator.Enqueue(fixture.Operation());
-        coordinator.ProcessNextFrame();
         coordinator.ProcessNextFrame();
         fixture.Resolver.Available = false;
 
@@ -50,11 +49,11 @@ public sealed class RedrawCoordinatorTests
         using var coordinator = fixture.CreateCoordinator();
         coordinator.Enqueue(fixture.Operation());
 
-        for (var i = 0; i < 6; ++i)
+        for (var i = 0; i < 8; ++i)
             coordinator.ProcessNextFrame();
 
         Assert.Equal(RedrawStage.Failed, coordinator.LastResult?.Stage);
-        Assert.Equal(2, fixture.Memory.Writes.Count);
+        Assert.Equal(3, fixture.Memory.Writes.Count);
         Assert.Equal(1, fixture.Backend.EnableCount);
     }
 

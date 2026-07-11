@@ -52,6 +52,9 @@ public sealed class AppearanceApplyService : IDisposable
     public string LastStatus { get; private set; } = string.Empty;
     public event Action<LogicalActorKey, uint>? AppearanceChanged;
 
+    public bool IsPending(LogicalActorKey key)
+        => pending.Values.Any(change => change.Actor == key);
+
     public bool TryApply(LogicalActorKey key, AppearanceData desired, out string message)
     {
         if (disposed)
@@ -61,7 +64,7 @@ public sealed class AppearanceApplyService : IDisposable
         }
         if (!CanApply(desired, out message))
             return false;
-        if (pending.Values.Any(change => change.Actor == key))
+        if (IsPending(key))
         {
             message = "An appearance operation is already pending for this actor.";
             return false;
@@ -72,7 +75,7 @@ public sealed class AppearanceApplyService : IDisposable
             return false;
         }
 
-        WriteMorphLog(DiagnosticEventIds.MorphSnapshotCaptured, "Original appearance snapshot captured.", key, current.ModelCharaId);
+        WriteMorphLog(DiagnosticEventIds.MorphSnapshotCaptured, "Current appearance snapshot captured.", key, current.ModelCharaId, appearance: current);
 
         store.TryGet(key, out var previous);
         var state = store.SetDesired(key, current, desired);
@@ -86,8 +89,8 @@ public sealed class AppearanceApplyService : IDisposable
             return false;
         }
 
-        WriteMorphLog(DiagnosticEventIds.MorphOperationStarted, "Appearance operation queued.", key, desired.ModelCharaId, operation.OperationId);
-        WriteMorphLog(DiagnosticEventIds.MorphDesiredUpdated, "Desired appearance state updated.", key, desired.ModelCharaId, operation.OperationId);
+        WriteMorphLog(DiagnosticEventIds.MorphOperationStarted, "Appearance operation queued.", key, desired.ModelCharaId, operation.OperationId, desired, state.Revision, state.BaseData.ModelCharaId);
+        WriteMorphLog(DiagnosticEventIds.MorphDesiredUpdated, "Desired appearance state updated.", key, desired.ModelCharaId, operation.OperationId, desired, state.Revision, state.BaseData.ModelCharaId);
 
         message = $"Applying Model ID {desired.ModelCharaId}.";
         LastStatus = message;
@@ -106,7 +109,7 @@ public sealed class AppearanceApplyService : IDisposable
             message = "No Actor Morpher appearance snapshot is available.";
             return false;
         }
-        if (pending.Values.Any(change => change.Actor == key))
+        if (IsPending(key))
         {
             message = "An appearance operation is already pending for this actor.";
             return false;
@@ -125,6 +128,7 @@ public sealed class AppearanceApplyService : IDisposable
             message = "The restore operation could not be queued.";
             return false;
         }
+        WriteMorphLog(DiagnosticEventIds.MorphOperationStarted, "Appearance restore operation queued.", key, state.BaseData.ModelCharaId, operation.OperationId, state.BaseData, state.Revision + 1, state.BaseData.ModelCharaId);
         message = "Restoring the original appearance.";
         LastStatus = message;
         return true;
@@ -230,14 +234,36 @@ public sealed class AppearanceApplyService : IDisposable
         AppearanceOverrideState? PreviousState,
         bool IsRestore);
 
-    private void WriteMorphLog(string eventId, string message, LogicalActorKey actor, uint modelId, Guid? operationId = null)
-        => diagnostics.Write(new DiagnosticLogEntry
+    private void WriteMorphLog(
+        string eventId,
+        string message,
+        LogicalActorKey actor,
+        uint modelId,
+        Guid? operationId = null,
+        AppearanceData? appearance = null,
+        long? revision = null,
+        uint? baseModelId = null)
+    {
+        var properties = new Dictionary<string, object?>
+        {
+            ["modelCharaId"] = modelId,
+            ["category"] = appearance?.Category,
+            ["sourceRowId"] = appearance?.SourceRowId,
+            ["completeness"] = appearance?.Completeness,
+            ["bodyType"] = appearance is { Customize.Length: > 2 } ? appearance.Customize[2] : null,
+            ["customizeLength"] = appearance?.Customize.Length,
+            ["equipmentLength"] = appearance?.Equipment.Length,
+            ["revision"] = revision,
+            ["baseModelCharaId"] = baseModelId,
+        };
+        diagnostics.Write(new DiagnosticLogEntry
         {
             EventId = eventId,
             Category = DiagnosticCategory.Appearance,
             Message = message,
             ActorKey = DiagnosticActorKeys.Format(diagnostics, actor),
             OperationId = operationId is { } id ? $"redraw-{id:N}" : null,
-            Properties = new Dictionary<string, object?> { ["modelCharaId"] = modelId },
+            Properties = properties,
         });
+    }
 }

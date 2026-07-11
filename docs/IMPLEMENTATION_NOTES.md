@@ -31,7 +31,7 @@ Model search data is classified as `Complete`, `ModelOnly`, or `Unsupported`. De
 
 ## Redraw
 
-`RedrawCoordinator` advances on Framework Update through disable, apply, enable, verify, and rollback stages. It has territory, logout, actor-loss, cancellation, timeout, and rollback handling. The backend uses only current FFXIVClientStructs `DisableDraw` and `EnableDraw` member functions after identity validation. It stores no native pointer.
+`RedrawCoordinator` advances on Framework Update through pre-apply, model hide, hidden reapply, model show, recreation wait, verify, and symmetric rollback stages. Normal actors use the current FFXIVClientStructs `VisibilityFlags.Model` path; GPose representations additionally use generated `DisableDraw` and `EnableDraw` member functions. Every native access follows identity validation and no pointer is retained between frames.
 
 The production memory layer captures ModelChara ID, the generated Customize array, and the generated equipment array. Writes are staged between current FFXIVClientStructs `DisableDraw` and `EnableDraw` member calls and verified afterward. Actor identity is re-resolved before every native access; no pointer is retained between frames. The new path has not yet been exercised in FF14 by this revision.
 
