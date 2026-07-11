@@ -81,8 +81,6 @@ public sealed class MainWindow : Window, IDisposable
             ImGui.EndTabBar();
         }
 
-        ImGui.Separator();
-        DrawSelectionFooter();
     }
 
     private void DrawActorsTab()
@@ -188,8 +186,14 @@ public sealed class MainWindow : Window, IDisposable
             }
 
             ImGui.Spacing();
-            if (ImGui.Button("Apply to Yourself"))
-                applySucceeded = plugin.TryApplyModelToLocalPlayer(model, out applyStatus);
+            var unavailableReason = Plugin.GetApplyUnavailableReason(model);
+            ImGui.BeginDisabled();
+            ImGui.Button("Apply to Yourself");
+            ImGui.EndDisabled();
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip(unavailableReason);
+            applyStatus = unavailableReason;
+            applySucceeded = false;
 
             if (!string.IsNullOrWhiteSpace(applyStatus))
             {
@@ -270,38 +274,6 @@ public sealed class MainWindow : Window, IDisposable
         ImGui.Checkbox("Adult", ref includeAdultHumans);
         ImGui.SameLine();
         ImGui.Checkbox("Young NPC", ref includeYoungNpc);
-    }
-
-    private void DrawSelectionFooter()
-    {
-        var actorText = selectedActor is null
-            ? "No actor selected"
-            : $"{selectedActor.Name} [{selectedActor.Kind}]";
-        var modelText = selectedModel is null
-            ? "No form selected"
-            : $"{selectedModel.Name} / Model ID {selectedModel.ModelId}";
-
-        ImGui.TextUnformatted(actorText);
-        ImGui.SameLine();
-        ImGui.TextUnformatted("->");
-        ImGui.SameLine();
-        ImGui.TextUnformatted(modelText);
-
-        var canApply = selectedActor is not null && selectedModel is not null;
-        if (!canApply)
-            ImGui.BeginDisabled();
-
-        if (ImGui.Button("Apply prototype"))
-            ImGui.OpenPopup("##not-implemented");
-
-        if (!canApply)
-            ImGui.EndDisabled();
-
-        if (ImGui.BeginPopup("##not-implemented"))
-        {
-            ImGui.TextWrapped("Model replacement is intentionally not wired yet. This UI now selects an actor and a target Model ID for the next implementation step.");
-            ImGui.EndPopup();
-        }
     }
 
     private bool MatchesActorFilter(ActorEntry actor)
