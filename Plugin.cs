@@ -31,6 +31,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly ActorRegistry actorRegistry;
     private readonly ActorIdentityService actorIdentity = new();
     private readonly RedrawCoordinator redrawCoordinator;
+    private readonly GPoseCoordinator gposeCoordinator;
     private IReadOnlyList<ModelSearchEntry>? modelSearchCache;
 
     public Configuration Configuration { get; }
@@ -55,6 +56,7 @@ public sealed class Plugin : IDalamudPlugin
             new UnavailableAppearanceMemory(),
             new NativeRedrawBackend(ObjectTable),
             new DalamudClientContext(ClientState));
+        gposeCoordinator = new GPoseCoordinator(Framework, ClientState, actorRegistry);
         mainWindow = new MainWindow(this);
         windowSystem.AddWindow(mainWindow);
 
@@ -80,6 +82,7 @@ public sealed class Plugin : IDalamudPlugin
 
         windowSystem.RemoveAllWindows();
         mainWindow.Dispose();
+        gposeCoordinator.Dispose();
         redrawCoordinator.Dispose();
         actorRegistry.Dispose();
     }

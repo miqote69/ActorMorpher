@@ -12,6 +12,8 @@ public sealed unsafe class ActorRegistry : IDisposable
     private readonly IFramework framework;
     private readonly object syncRoot = new();
     private IReadOnlyList<ActorEntry> entries = Array.Empty<ActorEntry>();
+    private IReadOnlyDictionary<ActorRepresentationKey, LogicalActorKey> gposeMappings
+        = new Dictionary<ActorRepresentationKey, LogicalActorKey>();
 
     public ActorRegistry(IObjectTable objectTable, IClientState clientState, IFramework framework)
     {
@@ -43,6 +45,15 @@ public sealed unsafe class ActorRegistry : IDisposable
         }
     }
 
+    public void SetGPoseMappings(IReadOnlyDictionary<ActorRepresentationKey, LogicalActorKey> mappings)
+    {
+        lock (syncRoot)
+            gposeMappings = new Dictionary<ActorRepresentationKey, LogicalActorKey>(mappings);
+    }
+
+    public void ClearGPoseMappings()
+        => SetGPoseMappings(new Dictionary<ActorRepresentationKey, LogicalActorKey>());
+
     private void OnFrameworkUpdate(IFramework _)
         => Refresh();
 
@@ -60,7 +71,23 @@ public sealed unsafe class ActorRegistry : IDisposable
             .Select(static snapshot => snapshot!)
             .ToArray();
 
-        var next = snapshots
+        IReadOnlyDictionary<ActorRepresentationKey, LogicalActorKey> mappings;
+        lock (syncRoot)
+            mappings = gposeMappings;
+
+        var mappedSnapshots = snapshots.Select(snapshot =>
+        {
+            if (!mappings.TryGetValue(snapshot.RepresentationKey, out var logicalKey))
+                return snapshot;
+
+            return snapshot with
+            {
+                LogicalKey = logicalKey,
+                RepresentationKey = snapshot.RepresentationKey with { IsGPoseRepresentation = true },
+            };
+        });
+
+        var next = mappedSnapshots
             .GroupBy(static snapshot => snapshot.LogicalKey)
             .Select(static group => new ActorEntry(
                 group.Key,

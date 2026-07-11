@@ -6,3 +6,4 @@ global using ActorMorpher.Appearance;
 global using ActorMorpher.BulkOutfit;
 global using ActorMorpher.Interop;
 global using ActorMorpher.Redraw;
+global using ActorMorpher.GPose;
