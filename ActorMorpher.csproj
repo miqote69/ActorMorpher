@@ -10,4 +10,7 @@
   <ItemGroup>
     <PackageReference Include="LuminaSupplemental.Excel" Version="4.3.7" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="tests/**/*.cs" />
+  </ItemGroup>
 </Project>
