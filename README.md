@@ -14,9 +14,9 @@ Commands: `/actormorpher` or `/amorph`
 
 ## Current status
 
-The plugin now has standalone actor identity, state stores, staged redraw coordination, conservative GPose mapping, model-data completeness checks, and Bulk Outfit target previews. It does not require Glamourer or Penumbra IPC.
+The plugin provides standalone actor identity, Human/Demihuman/Monster morph application and restore, staged redraw coordination, conservative GPose synchronization, and Bulk Outfit apply/unequip/restore. It does not require Glamourer or Penumbra IPC.
 
-Appearance and outfit memory writes remain disabled. Safe standalone writes for Human, Monster, Demihuman, equipment, and Facewear have not yet been verified against the current game client. Buttons that would perform those writes are disabled instead of using guessed offsets or partial model-ID writes.
+Native appearance features use the current Dalamud and FFXIVClientStructs APIs without guessed offsets, signatures, VTable indexes, or ObjectKind writes. These new write paths still require FF14 testing against the current client; enable diagnostics before testing and report any crash pack with the session log.
 
 See [implementation notes](docs/IMPLEMENTATION_NOTES.md), [diagnostics](docs/DIAGNOSTICS.md), [testing](docs/TESTING.md), and the [manual checklist](docs/MANUAL_TEST_CHECKLIST.md).
 

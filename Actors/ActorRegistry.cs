@@ -10,6 +10,7 @@ public sealed unsafe class ActorRegistry : IDisposable
     private readonly IObjectTable objectTable;
     private readonly IClientState clientState;
     private readonly IFramework framework;
+    private readonly IHumanModelClassifier humanModelClassifier;
     private readonly IDiagnosticLog diagnostics;
     private readonly object syncRoot = new();
     private IReadOnlyList<ActorEntry> entries = Array.Empty<ActorEntry>();
@@ -17,11 +18,17 @@ public sealed unsafe class ActorRegistry : IDisposable
         = new Dictionary<ActorRepresentationKey, LogicalActorKey>();
     private uint lastTerritoryId;
 
-    public ActorRegistry(IObjectTable objectTable, IClientState clientState, IFramework framework, IDiagnosticLog? diagnostics = null)
+    public ActorRegistry(
+        IObjectTable objectTable,
+        IClientState clientState,
+        IFramework framework,
+        IHumanModelClassifier humanModelClassifier,
+        IDiagnosticLog? diagnostics = null)
     {
         this.objectTable = objectTable;
         this.clientState = clientState;
         this.framework = framework;
+        this.humanModelClassifier = humanModelClassifier;
         this.diagnostics = diagnostics ?? NullDiagnosticLog.Instance;
         framework.Update += OnFrameworkUpdate;
     }
@@ -130,7 +137,7 @@ public sealed unsafe class ActorRegistry : IDisposable
             });
     }
 
-    private static ActorSnapshot? CreateSnapshot(IGameObject obj, uint territoryId, ulong? localPlayerId)
+    private ActorSnapshot? CreateSnapshot(IGameObject obj, uint territoryId, ulong? localPlayerId)
     {
         if (obj.Address == nint.Zero)
             return null;
@@ -138,7 +145,7 @@ public sealed unsafe class ActorRegistry : IDisposable
         var native = (Character*)obj.Address;
         var objectIndex = checked((ushort)obj.ObjectIndex);
         var modelCharaId = checked((uint)native->ModelContainer.ModelCharaId);
-        var isHuman = modelCharaId == 0;
+        var isHuman = humanModelClassifier.IsHuman(modelCharaId);
         var name = obj.Name.ToString();
         if (string.IsNullOrWhiteSpace(name))
             name = $"{obj.ObjectKind} {obj.BaseId}";

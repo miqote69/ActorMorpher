@@ -28,6 +28,8 @@ public sealed class GPoseCoordinator : IDisposable
     public GPoseState State { get; private set; }
     public int MappingCount { get; private set; }
     public string Status { get; private set; } = string.Empty;
+    public event Action? MappingsReady;
+    public event Action? Exited;
 
     public void Dispose()
     {
@@ -51,6 +53,7 @@ public sealed class GPoseCoordinator : IDisposable
                 State = GPoseState.Exiting;
                 registry.ClearGPoseMappings();
                 MappingCount = 0;
+                Exited?.Invoke();
             }
 
             normalActors = registry.Entries;
@@ -111,6 +114,7 @@ public sealed class GPoseCoordinator : IDisposable
             case GPoseState.ApplyingOverrides:
                 Status = $"Mapped {MappingCount} GPose representations.";
                 State = GPoseState.Ready;
+                MappingsReady?.Invoke();
                 break;
         }
     }

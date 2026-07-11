@@ -13,7 +13,7 @@ public sealed class BulkOutfitTargetResolver
     {
         var matching = actors.Where(actor => Matches(actor, settings)).ToArray();
         var eligible = matching
-            .Where(static actor => actor.Representations.Count > 0 && actor.Current.ModelCharaId == 0)
+            .Where(static actor => actor.Representations.Count > 0 && actor.Current.Race is not null)
             .Select(static actor => actor.Key)
             .Distinct()
             .ToArray();
@@ -22,7 +22,7 @@ public sealed class BulkOutfitTargetResolver
         return new BulkOutfitPreview(
             matching.Length,
             eligible.Length,
-            matching.Count(static actor => actor.Representations.Count > 0 && actor.Current.ModelCharaId != 0),
+            matching.Count(static actor => actor.Representations.Count > 0 && actor.Current.Race is null),
             unavailable,
             eligible);
     }

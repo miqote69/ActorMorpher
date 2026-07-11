@@ -6,4 +6,5 @@ public sealed class DalamudClientContext(IClientState clientState) : IClientCont
 {
     public uint TerritoryId => clientState.TerritoryType;
     public bool IsLoggedIn => clientState.IsLoggedIn;
+    public bool IsGPosing => clientState.IsGPosing;
 }

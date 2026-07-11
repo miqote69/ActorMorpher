@@ -3,6 +3,8 @@ namespace ActorMorpher.BulkOutfit;
 public sealed class OutfitOverrideStore
 {
     private readonly Dictionary<LogicalActorKey, OutfitOverrideState> states = new();
+    public IReadOnlyDictionary<LogicalActorKey, OutfitOverrideState> States
+        => new Dictionary<LogicalActorKey, OutfitOverrideState>(states);
 
     public OutfitOverrideState SetDesired(LogicalActorKey actor, OutfitData currentGameOutfit, OutfitData desiredOutfit)
     {
@@ -27,6 +29,14 @@ public sealed class OutfitOverrideStore
 
     public bool CompleteRestore(LogicalActorKey actor)
         => states.Remove(actor);
+
+    public void RestoreState(LogicalActorKey actor, OutfitOverrideState? state)
+    {
+        if (state is null)
+            states.Remove(actor);
+        else
+            states[actor] = state;
+    }
 
     public void Clear()
         => states.Clear();

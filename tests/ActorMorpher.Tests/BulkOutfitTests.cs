@@ -35,13 +35,27 @@ public sealed class BulkOutfitTests
         Assert.Equal(0, operation.CurrentIndex);
     }
 
+    [Fact]
+    public void NonzeroHumanNpcModelRemainsEligible()
+    {
+        var youngNpc = Entry(2, "Young NPC", ObjectKind.EventNpc, 123, false, true);
+        var settings = new BulkOutfitSettings(ActorTargetType.All, 0, null, string.Empty, false);
+
+        var preview = new BulkOutfitTargetResolver().Resolve([youngNpc], settings);
+
+        Assert.Equal(1, preview.EligibleHumanActors);
+        Assert.Equal(0, preview.SkippedNonHumanActors);
+    }
+
     private static ActorEntry Entry(
         ushort index,
         string name,
         ObjectKind kind,
         uint modelCharaId,
-        bool isLocalPlayer)
+        bool isLocalPlayer,
+        bool? isHuman = null)
     {
+        var human = isHuman ?? modelCharaId == 0;
         var logical = new LogicalActorKey(index, index, index, index, kind, 30);
         var representation = new ActorRepresentationKey(index, index, index, false);
         var snapshot = new ActorSnapshot(
@@ -51,9 +65,9 @@ public sealed class BulkOutfitTests
             kind,
             index,
             modelCharaId,
-            modelCharaId == 0 ? (byte)1 : null,
-            modelCharaId == 0 ? (byte)0 : null,
-            modelCharaId == 0 ? (byte)1 : null,
+            human ? (byte)1 : null,
+            human ? (byte)0 : null,
+            human ? (byte)1 : null,
             0,
             0,
             isLocalPlayer);

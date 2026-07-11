@@ -15,6 +15,7 @@ public sealed class RedrawCoordinator : IDisposable
     private readonly IDiagnosticLog diagnostics;
     private readonly Queue<RedrawOperation> queue = new();
     private RedrawOperation? current;
+    private ActorSnapshot? activeRepresentation;
     private bool disposed;
 
     public RedrawCoordinator(
@@ -46,10 +47,14 @@ public sealed class RedrawCoordinator : IDisposable
 
     public RedrawOperation? Current => current;
     public RedrawOperation? LastResult { get; private set; }
+    public event Action<RedrawOperation>? OperationFinished;
 
     public bool Enqueue(RedrawOperation operation)
     {
-        if (disposed || operation.TerritoryId != clientContext.TerritoryId)
+        if (disposed
+            || operation.TerritoryId != clientContext.TerritoryId
+            || current?.Actor == operation.Actor
+            || queue.Any(queued => queued.Actor == operation.Actor))
             return false;
 
         queue.Enqueue(operation);
@@ -62,6 +67,8 @@ public sealed class RedrawCoordinator : IDisposable
         queue.Clear();
         if (current is not null)
         {
+            if (activeRepresentation is not null)
+                redrawBackend.TryEnable(activeRepresentation);
             diagnostics.Write(CreateEntry(current, DiagnosticEventIds.RedrawCancelled, "Redraw operation cancelled.", DiagnosticLogLevel.Warning, reason));
             Finish(current with { Stage = RedrawStage.Cancelled, Error = reason });
         }
@@ -111,19 +118,22 @@ public sealed class RedrawCoordinator : IDisposable
 
         if (!resolver.TryResolve(operation.Actor, out var actor))
         {
+            if (activeRepresentation is not null && operation.Stage != RedrawStage.Pending)
+                redrawBackend.TryEnable(activeRepresentation);
             Finish(operation with { Stage = RedrawStage.Cancelled, Error = "Actor is no longer available." });
             return;
         }
+        activeRepresentation = actor;
 
         var previousStage = operation.Stage;
         current = operation.Stage switch
         {
             RedrawStage.Pending => operation with { Stage = RedrawStage.Disable },
             RedrawStage.Disable when redrawBackend.TryDisable(actor) => operation with { Stage = RedrawStage.Apply },
-            RedrawStage.Apply when appearanceMemory.TryWrite(operation.Actor, operation.Desired) => operation with { Stage = RedrawStage.Enable },
+            RedrawStage.Apply when appearanceMemory.TryWrite(actor, operation.Desired) => operation with { Stage = RedrawStage.Enable },
             RedrawStage.Enable when redrawBackend.TryEnable(actor) => operation with { Stage = RedrawStage.Verify },
-            RedrawStage.Verify when appearanceMemory.IsApplied(operation.Actor, operation.Desired) => Complete(operation),
-            RedrawStage.Rollback when appearanceMemory.TryWrite(operation.Actor, operation.Rollback) => operation with { Stage = RedrawStage.RollbackEnable },
+            RedrawStage.Verify when appearanceMemory.IsApplied(actor, operation.Desired) => Complete(operation),
+            RedrawStage.Rollback when appearanceMemory.TryWrite(actor, operation.Rollback) => operation with { Stage = RedrawStage.RollbackEnable },
             RedrawStage.RollbackEnable when redrawBackend.TryEnable(actor) => Fail(operation),
             RedrawStage.Disable or RedrawStage.Apply or RedrawStage.Enable or RedrawStage.Verify
                 => operation with { Stage = RedrawStage.Rollback, Error = operation.Error ?? "Redraw stage failed." },
@@ -165,7 +175,9 @@ public sealed class RedrawCoordinator : IDisposable
             $"Redraw operation {operation.Stage}.",
             operation.Stage is RedrawStage.Failed ? DiagnosticLogLevel.Error : DiagnosticLogLevel.Information,
             operation.Error));
+        OperationFinished?.Invoke(operation);
         current = null;
+        activeRepresentation = null;
     }
 
     private DiagnosticLogEntry CreateEntry(

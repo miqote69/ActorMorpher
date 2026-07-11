@@ -100,13 +100,19 @@ public sealed class RedrawCoordinatorTests
         public bool FailDesired { get; set; }
         public List<AppearanceData> Writes { get; } = new();
 
-        public bool TryWrite(LogicalActorKey actor, AppearanceData appearance)
+        public bool TryCapture(ActorSnapshot actor, out AppearanceData appearance)
+        {
+            appearance = Desired;
+            return true;
+        }
+
+        public bool TryWrite(ActorSnapshot actor, AppearanceData appearance)
         {
             Writes.Add(appearance);
             return !FailDesired || appearance != Desired;
         }
 
-        public bool IsApplied(LogicalActorKey actor, AppearanceData appearance)
+        public bool IsApplied(ActorSnapshot actor, AppearanceData appearance)
             => true;
     }
 
@@ -132,6 +138,7 @@ public sealed class RedrawCoordinatorTests
     {
         public uint TerritoryId => 30;
         public bool IsLoggedIn => true;
+        public bool IsGPosing => false;
     }
 
     private static AppearanceData Appearance(uint modelId, byte marker)

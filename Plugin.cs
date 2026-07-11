@@ -34,6 +34,9 @@ public sealed class Plugin : IDalamudPlugin
     private readonly ActorIdentityService actorIdentity = new();
     private readonly RedrawCoordinator redrawCoordinator;
     private readonly GPoseCoordinator gposeCoordinator;
+    private readonly AppearanceApplyService appearanceApplyService;
+    private readonly BulkOutfitService bulkOutfitService;
+    private readonly IHumanModelClassifier humanModelClassifier;
     private readonly BulkOutfitTargetResolver bulkOutfitTargetResolver = new();
     private IReadOnlyList<ModelSearchEntry>? modelSearchCache;
 
@@ -68,16 +71,38 @@ public sealed class Plugin : IDalamudPlugin
             ClientState,
             isDev);
         diagnosticController.Start();
-        actorRegistry = new ActorRegistry(ObjectTable, ClientState, Framework, diagnosticRouter);
+        humanModelClassifier = new HumanModelClassifier(DataManager);
+        actorRegistry = new ActorRegistry(ObjectTable, ClientState, Framework, humanModelClassifier, diagnosticRouter);
         actorIdentity = new ActorIdentityService(diagnosticRouter);
+        var clientContext = new DalamudClientContext(ClientState);
+        var actorResolver = new RegistryActorResolver(actorRegistry, clientContext);
+        var appearanceMemory = new NativeAppearanceMemory(ObjectTable, humanModelClassifier, diagnosticRouter);
         redrawCoordinator = new RedrawCoordinator(
             Framework,
-            new RegistryActorResolver(actorRegistry),
-            new UnavailableAppearanceMemory(),
+            actorResolver,
+            appearanceMemory,
             new NativeRedrawBackend(ObjectTable),
-            new DalamudClientContext(ClientState),
+            clientContext,
             diagnosticRouter);
         gposeCoordinator = new GPoseCoordinator(Framework, ClientState, actorRegistry, diagnosticRouter);
+        appearanceApplyService = new AppearanceApplyService(
+            Framework,
+            actorResolver,
+            appearanceMemory,
+            clientContext,
+            redrawCoordinator,
+            new AppearanceOverrideStore(),
+            diagnosticRouter);
+        bulkOutfitService = new BulkOutfitService(
+            Framework,
+            actorResolver,
+            new NativeOutfitMemory(ObjectTable, humanModelClassifier, diagnosticRouter),
+            clientContext,
+            new OutfitOverrideStore(),
+            diagnosticRouter);
+        gposeCoordinator.MappingsReady += OnRepresentationContextChanged;
+        gposeCoordinator.Exited += OnRepresentationContextChanged;
+        appearanceApplyService.AppearanceChanged += OnAppearanceChanged;
         bulkOutfitTargetResolver = new BulkOutfitTargetResolver(diagnosticRouter);
         mainWindow = new MainWindow(this);
         windowSystem.AddWindow(mainWindow);
@@ -104,6 +129,11 @@ public sealed class Plugin : IDalamudPlugin
 
         windowSystem.RemoveAllWindows();
         mainWindow.Dispose();
+        gposeCoordinator.MappingsReady -= OnRepresentationContextChanged;
+        gposeCoordinator.Exited -= OnRepresentationContextChanged;
+        appearanceApplyService.AppearanceChanged -= OnAppearanceChanged;
+        bulkOutfitService.Dispose();
+        appearanceApplyService.Dispose();
         gposeCoordinator.Dispose();
         redrawCoordinator.Dispose();
         actorRegistry.Dispose();
@@ -148,6 +178,33 @@ public sealed class Plugin : IDalamudPlugin
     public BulkOutfitPreview GetBulkOutfitPreview(BulkOutfitSettings settings)
         => bulkOutfitTargetResolver.Resolve(actorRegistry.Entries, settings);
 
+    public bool RefreshSourceOutfit(out string message)
+    {
+        var local = actorRegistry.Entries.FirstOrDefault(static actor => actor.IsLocalPlayer);
+        if (local is null)
+        {
+            message = "Local player is unavailable.";
+            return false;
+        }
+        return bulkOutfitService.RefreshSource(local.Key, out message);
+    }
+
+    public bool StartBulkOutfit(BulkOutfitPreview preview, out string message)
+        => bulkOutfitService.StartApply(preview.EligibleTargets, out message);
+
+    public bool StartUnequipAll(BulkOutfitPreview preview, out string message)
+        => bulkOutfitService.StartUnequip(preview.EligibleTargets, out message);
+
+    public bool StartRestoreModifiedActors(out string message)
+        => bulkOutfitService.StartRestore(out message);
+
+    public void CancelBulkOperation()
+        => bulkOutfitService.Cancel();
+
+    public OutfitData? SourceOutfit => bulkOutfitService.SourceOutfit;
+    public BulkOperation? CurrentBulkOperation => bulkOutfitService.CurrentOperation;
+    public string BulkOutfitStatus => bulkOutfitService.LastStatus;
+
     public IReadOnlyList<ModelSearchEntry> GetModelSearchEntries()
     {
         if (modelSearchCache is { } cache)
@@ -181,22 +238,51 @@ public sealed class Plugin : IDalamudPlugin
 
     public bool TryApplyModelToLocalPlayer(ModelSearchEntry model, out string message)
     {
-        message = GetApplyUnavailableReason(model);
-        diagnosticRouter.Write(new DiagnosticLogEntry
+        var local = actorRegistry.Entries.FirstOrDefault(static actor => actor.IsLocalPlayer);
+        if (local is null)
         {
-            Level = DiagnosticLogLevel.Warning,
-            EventId = DiagnosticEventIds.UserActionRejected,
-            Category = DiagnosticCategory.UserAction,
-            Message = "Apply to yourself was rejected.",
-            Properties = new Dictionary<string, object?>
-            {
-                ["modelCharaId"] = model.ModelId,
-                ["category"] = model.Category,
-                ["completeness"] = model.Completeness,
-                ["reason"] = message,
-            },
-        });
+            message = "Local player is not available.";
+            return false;
+        }
+        return TryApplyModel(local.Key, model, out message);
+    }
+
+    public bool TryApplyModel(LogicalActorKey actor, ModelSearchEntry model, out string message)
+        => model.ModelAppearance is { } appearance
+            ? appearanceApplyService.TryApply(actor, appearance, out message)
+            : FailUnsupported(out message);
+
+    public bool TryRestoreAppearance(LogicalActorKey actor, out string message)
+        => appearanceApplyService.TryRestore(actor, out message);
+
+    public bool HasAppearanceOverride(LogicalActorKey actor)
+        => appearanceApplyService.Store.TryGet(actor, out _);
+
+    public bool TryGetAppearanceOverride(LogicalActorKey actor, out AppearanceOverrideState state)
+        => appearanceApplyService.Store.TryGet(actor, out state!);
+
+    public bool HasOutfitOverride(LogicalActorKey actor)
+        => bulkOutfitService.Store.TryGet(actor, out _);
+
+    public string AppearanceStatus => appearanceApplyService.LastStatus;
+
+    private static bool FailUnsupported(out string message)
+    {
+        message = "The selected model does not have an applicable appearance payload.";
         return false;
+    }
+
+    private void OnAppearanceChanged(LogicalActorKey actor, uint modelCharaId)
+    {
+        if (humanModelClassifier.IsHuman(modelCharaId))
+            bulkOutfitService.Reapply(actor);
+    }
+
+    private void OnRepresentationContextChanged()
+    {
+        var appearanceKeys = appearanceApplyService.Store.States.Keys.ToArray();
+        appearanceApplyService.ReapplyAll();
+        bulkOutfitService.ReapplyWithoutAppearanceOverrides(appearanceKeys);
     }
 
     public static string GetApplyUnavailableReason(ModelSearchEntry model)
@@ -211,6 +297,15 @@ public sealed class Plugin : IDalamudPlugin
             _ when model.Category == ModelCategory.Human && model.HumanAppearance is null
                 => "This Human NPC does not have complete appearance data.",
             _ => "Standalone appearance apply is not available in this build.",
+        };
+
+    public static bool CanApplyModel(ModelSearchEntry model)
+        => model.ModelAppearance is { } appearance
+        && appearance.Category switch
+        {
+            ModelCategory.Human or ModelCategory.Demihuman => appearance.Completeness == AppearanceCompleteness.Complete,
+            ModelCategory.Monster => appearance.Completeness is AppearanceCompleteness.Complete or AppearanceCompleteness.ModelOnly,
+            _ => false,
         };
 
     private IReadOnlyList<ModelSearchEntry> BuildModelSearchEntries()
@@ -237,7 +332,13 @@ public sealed class Plugin : IDalamudPlugin
             var appearance = model.Type == 1 ? CreateHumanAppearance(row) : null;
             if (model.Type == 1 && appearance is null)
                 continue;
-            var modelAppearance = model.Type == 2 ? CreateDemihumanAppearance(row) : null;
+            var modelAppearance = model.Type switch
+            {
+                1 when appearance is not null => CreateHumanModelAppearance(modelId, row.RowId, appearance),
+                2 => CreateDemihumanAppearance(row),
+                3 => CreateMonsterAppearance(modelId, row.RowId),
+                _ => null,
+            };
 
             entries.Add(CreateSearchEntry(
                 model,
@@ -271,9 +372,14 @@ public sealed class Plugin : IDalamudPlugin
             var appearance = model.Type == 1 && customize is { } humanCustomize && npcEquip is { } humanEquip
                 ? CreateHumanAppearance(humanCustomize, humanEquip)
                 : null;
-            var modelAppearance = model.Type == 2 && customize is { } demihumanCustomize && npcEquip is { } demihumanEquip
-                ? CreateDemihumanAppearance(row.RowId, modelId, demihumanCustomize, demihumanEquip)
-                : null;
+            var modelAppearance = model.Type switch
+            {
+                1 when appearance is not null => CreateHumanModelAppearance(modelId, row.RowId, appearance),
+                2 when customize is { } demihumanCustomize && npcEquip is { } demihumanEquip
+                    => CreateDemihumanAppearance(row.RowId, modelId, demihumanCustomize, demihumanEquip),
+                3 => CreateMonsterAppearance(modelId, row.RowId),
+                _ => null,
+            };
             if (model.Type == 1 && (appearance is null || names.Length == 0))
                 continue;
 
@@ -311,7 +417,8 @@ public sealed class Plugin : IDalamudPlugin
                 $"ModelChara {model.RowId}",
                 0,
                 0,
-                0));
+                0,
+                modelAppearance: model.Type == 3 ? CreateMonsterAppearance(model.RowId, model.RowId) : null));
         }
 
         return entries
@@ -357,14 +464,29 @@ public sealed class Plugin : IDalamudPlugin
             humanAppearance,
             model.Type switch
             {
-                1 when humanAppearance is not null => AppearanceCompleteness.Complete,
-                1 => AppearanceCompleteness.Unsupported,
-                2 when modelAppearance is not null => AppearanceCompleteness.Complete,
-                2 or 3 => AppearanceCompleteness.ModelOnly,
+                _ when modelAppearance is not null => modelAppearance.Completeness,
                 _ => AppearanceCompleteness.Unsupported,
             },
             modelAppearance);
     }
+
+    private static AppearanceData CreateHumanModelAppearance(uint modelCharaId, uint sourceRowId, HumanAppearance appearance)
+        => AppearanceData.Create(
+            modelCharaId,
+            ModelCategory.Human,
+            sourceRowId,
+            AppearanceCompleteness.Complete,
+            appearance.Customize,
+            appearance.Equipment);
+
+    private static AppearanceData CreateMonsterAppearance(uint modelCharaId, uint sourceRowId)
+        => AppearanceData.Create(
+            modelCharaId,
+            ModelCategory.Monster,
+            sourceRowId,
+            AppearanceCompleteness.ModelOnly,
+            Array.Empty<byte>(),
+            Array.Empty<ulong>());
 
     private static HumanAppearance? CreateHumanAppearance(ENpcBase row)
     {

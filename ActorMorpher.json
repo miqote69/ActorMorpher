@@ -2,7 +2,7 @@
   "Author": "miqote69",
   "Name": "Actor Morpher",
   "Punchline": "Browse actors and model appearance data safely.",
-  "Description": "Standalone actor and model browser with safe state and redraw foundations. Appearance writes remain disabled pending current-client verification. Use /actormorpher to open the window.",
+  "Description": "Standalone Human, Demihuman, and Monster morphing with actor restore and bulk outfits. Use /actormorpher to open the window.",
   "ApplicableVersion": "any",
   "RepoUrl": "https://github.com/miqote69/ActorMorpher",
   "Tags": [

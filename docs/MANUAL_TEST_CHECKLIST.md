@@ -1,6 +1,6 @@
 # Manual Test Checklist
 
-Do not enable appearance-write buttons until the standalone memory implementation has been reviewed for the current FFXIVClientStructs version.
+Enable Full diagnostics before testing native appearance operations. Stop after any crash, permanent T-pose, missing skeleton, or incorrect restore and attach both the session log and crash pack.
 
 ## Available now
 
@@ -20,7 +20,7 @@ Do not enable appearance-write buttons until the standalone memory implementatio
 - [ ] Bulk Outfit preview counts non-Human actors as skipped
 - [ ] Territory change, logout, and plugin disable do not crash
 
-## Blocked until safe memory writes exist
+## Native appearance verification
 
 - [ ] Human Apply and Restore, including Young NPC bones
 - [ ] Monster Apply and Restore
@@ -31,6 +31,8 @@ Do not enable appearance-write buttons until the standalone memory implementatio
 - [ ] Facewear Apply and removal
 - [ ] Unequip All while preserving both weapons, job, customize, and ModelChara ID
 - [ ] repeated Apply/Restore and cancellation stress tests
+
+For each Bulk Outfit test, verify that main hand, off hand, weapon dyes, weapon visibility, class job, level, race, gender, customize, and ModelChara ID remain unchanged.
 
 ## Diagnostics
 

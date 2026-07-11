@@ -117,4 +117,4 @@ Get-Content .\ActorMorpherDiagnostics\latest.jsonl |
 
 ## Known Limitations
 
-Appearance and outfit writes are currently disabled, so successful Morph, Restore, Bulk Outfit, and Unequip events cannot yet be produced. Their rejection and safety paths are logged. Game-side timing, file permission failures, Dev Mirror behavior, and plugin unload flushing still require FF14 validation.
+Morph, Restore, Bulk Outfit, Unequip, actor snapshots, successful applies, skips, failures, and rollbacks produce structured events. Game-side timing, native crash behavior, file permission failures, Dev Mirror behavior, and plugin unload flushing still require FF14 validation.

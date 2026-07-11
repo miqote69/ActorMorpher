@@ -27,6 +27,7 @@ public sealed class MainWindow : Window, IDisposable
     private int bulkRace;
     private int bulkGender;
     private bool bulkIncludeYourself;
+    private string bulkActionStatus = string.Empty;
     private string diagnosticMarker = string.Empty;
     private bool diagnosticSettingsDirty;
 
@@ -253,11 +254,36 @@ public sealed class MainWindow : Window, IDisposable
     {
         ImGui.TextUnformatted("Source Outfit: Current Player Appearance");
         ImGui.SameLine();
-        ImGui.BeginDisabled();
-        ImGui.Button("Refresh Source Preview");
-        ImGui.EndDisabled();
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Standalone outfit reading is not available in this build.");
+        if (ImGui.Button("Refresh Source Preview"))
+            plugin.RefreshSourceOutfit(out bulkActionStatus);
+
+        if (plugin.SourceOutfit is { } source)
+        {
+            if (ImGui.BeginTable("##source-outfit", 5, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
+            {
+                ImGui.TableSetupColumn("Slot");
+                ImGui.TableSetupColumn("Set");
+                ImGui.TableSetupColumn("Variant");
+                ImGui.TableSetupColumn("Stain 1");
+                ImGui.TableSetupColumn("Stain 2");
+                foreach (var slot in Enum.GetValues<OutfitSlot>())
+                {
+                    var armor = source.Equipment[(int)slot];
+                    ImGui.TableNextRow();
+                    ImGui.TableNextColumn(); ImGui.TextUnformatted(slot.ToString());
+                    ImGui.TableNextColumn(); ImGui.TextUnformatted(armor.Set.ToString());
+                    ImGui.TableNextColumn(); ImGui.TextUnformatted(armor.Variant.ToString());
+                    ImGui.TableNextColumn(); ImGui.TextUnformatted(armor.Stain1.ToString());
+                    ImGui.TableNextColumn(); ImGui.TextUnformatted(armor.Stain2.ToString());
+                }
+                ImGui.EndTable();
+            }
+            ImGui.TextUnformatted($"Facewear: {(source.Facewear.IsAvailable ? source.Facewear.ModelId : "Unavailable")}");
+            ImGui.SameLine();
+            ImGui.TextUnformatted($"Hat: {(source.HatVisible ? "Visible" : "Hidden")}");
+            ImGui.SameLine();
+            ImGui.TextUnformatted($"Visor: {(source.VisorToggled ? "Toggled" : "Normal")}");
+        }
 
         ImGui.Separator();
         ImGui.TextUnformatted("Target Filters");
@@ -302,17 +328,46 @@ public sealed class MainWindow : Window, IDisposable
         ImGui.TextUnformatted($"Unavailable actors: {preview.UnavailableActors}");
 
         ImGui.Spacing();
-        ImGui.BeginDisabled();
-        ImGui.Button("Apply to Matching Actors");
+        var operationRunning = plugin.CurrentBulkOperation is not null;
+        var canApply = !operationRunning && plugin.SourceOutfit is not null && preview.EligibleHumanActors > 0;
+        if (!canApply)
+            ImGui.BeginDisabled();
+        if (ImGui.Button("Apply to Matching Actors"))
+            plugin.StartBulkOutfit(preview, out bulkActionStatus);
+        if (!canApply)
+            ImGui.EndDisabled();
         ImGui.SameLine();
-        ImGui.Button("Unequip All");
+        var canUnequip = !operationRunning && preview.EligibleHumanActors > 0;
+        if (!canUnequip)
+            ImGui.BeginDisabled();
+        if (ImGui.Button("Unequip All"))
+            plugin.StartUnequipAll(preview, out bulkActionStatus);
+        if (!canUnequip)
+            ImGui.EndDisabled();
         ImGui.SameLine();
-        ImGui.Button("Restore Modified Actors");
+        if (operationRunning)
+            ImGui.BeginDisabled();
+        if (ImGui.Button("Restore Modified Actors"))
+            plugin.StartRestoreModifiedActors(out bulkActionStatus);
+        if (operationRunning)
+            ImGui.EndDisabled();
         ImGui.SameLine();
-        ImGui.Button("Cancel Pending Operation");
-        ImGui.EndDisabled();
-        ImGui.TextDisabled("Outfit apply is unavailable until standalone equipment memory access is verified.");
-        ImGui.TextDisabled("Facewear unavailable");
+        if (!operationRunning)
+            ImGui.BeginDisabled();
+        if (ImGui.Button("Cancel Pending Operation"))
+            plugin.CancelBulkOperation();
+        if (!operationRunning)
+            ImGui.EndDisabled();
+
+        if (plugin.CurrentBulkOperation is { } operation)
+        {
+            ImGui.TextUnformatted($"Processing {operation.CurrentIndex} / {operation.Targets.Count}");
+            ImGui.TextUnformatted($"Succeeded: {operation.Succeeded}  Skipped: {operation.Skipped}  Failed: {operation.Failed}");
+        }
+        if (!string.IsNullOrWhiteSpace(bulkActionStatus))
+            ImGui.TextWrapped(bulkActionStatus);
+        if (!string.IsNullOrWhiteSpace(plugin.BulkOutfitStatus))
+            ImGui.TextWrapped(plugin.BulkOutfitStatus);
     }
 
     private void DrawActorsTab()
@@ -412,12 +467,24 @@ public sealed class MainWindow : Window, IDisposable
                 DrawDetailRow("Class Job", current.ClassJob.ToString());
                 DrawDetailRow("Level", current.Level.ToString());
                 DrawDetailRow("Is Local Player", current.IsLocalPlayer ? "Yes" : "No");
-                DrawDetailRow("Current Morph", "None");
-                DrawDetailRow("Bulk Outfit Modified", "No");
-                DrawDetailRow("Snapshot Available", "No");
+                var hasMorph = plugin.TryGetAppearanceOverride(actor.Key, out var morphState);
+                DrawDetailRow("Current Morph", hasMorph ? $"Model ID {morphState.DesiredData.ModelCharaId}" : "None");
+                DrawDetailRow("Bulk Outfit Modified", plugin.HasOutfitOverride(actor.Key) ? "Yes" : "No");
+                DrawDetailRow("Snapshot Available", hasMorph ? "Yes" : "No");
                 DrawDetailRow("GPose Representation", current.RepresentationKey.IsGPoseRepresentation ? "Yes" : "No");
                 ImGui.EndTable();
             }
+
+            ImGui.Spacing();
+            var canRestore = plugin.HasAppearanceOverride(actor.Key);
+            if (!canRestore)
+                ImGui.BeginDisabled();
+            if (ImGui.Button("Restore Original Appearance"))
+                applySucceeded = plugin.TryRestoreAppearance(actor.Key, out applyStatus);
+            if (!canRestore)
+                ImGui.EndDisabled();
+            if (!string.IsNullOrWhiteSpace(plugin.AppearanceStatus))
+                ImGui.TextWrapped(plugin.AppearanceStatus);
         }
 
         ImGui.EndChild();
@@ -535,13 +602,24 @@ public sealed class MainWindow : Window, IDisposable
 
             ImGui.Spacing();
             var unavailableReason = Plugin.GetApplyUnavailableReason(model);
-            ImGui.BeginDisabled();
-            ImGui.Button("Apply to Yourself");
-            ImGui.EndDisabled();
-            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            var canApply = Plugin.CanApplyModel(model);
+            if (!canApply)
+                ImGui.BeginDisabled();
+            if (ImGui.Button("Apply to Yourself"))
+                applySucceeded = plugin.TryApplyModelToLocalPlayer(model, out applyStatus);
+            if (!canApply)
+                ImGui.EndDisabled();
+            if (!canApply && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
                 ImGui.SetTooltip(unavailableReason);
-            applyStatus = unavailableReason;
-            applySucceeded = false;
+
+            ImGui.SameLine();
+            var canApplySelected = canApply && selectedActorKey is not null;
+            if (!canApplySelected)
+                ImGui.BeginDisabled();
+            if (ImGui.Button("Apply to Selected Actor") && selectedActorKey is { } actorKey)
+                applySucceeded = plugin.TryApplyModel(actorKey, model, out applyStatus);
+            if (!canApplySelected)
+                ImGui.EndDisabled();
 
             if (!string.IsNullOrWhiteSpace(applyStatus))
             {

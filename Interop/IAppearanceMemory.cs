@@ -2,6 +2,7 @@ namespace ActorMorpher.Interop;
 
 public interface IAppearanceMemory
 {
-    bool TryWrite(LogicalActorKey actor, AppearanceData appearance);
-    bool IsApplied(LogicalActorKey actor, AppearanceData appearance);
+    bool TryCapture(ActorSnapshot actor, out AppearanceData appearance);
+    bool TryWrite(ActorSnapshot actor, AppearanceData appearance);
+    bool IsApplied(ActorSnapshot actor, AppearanceData appearance);
 }

@@ -5,6 +5,8 @@ public sealed class AppearanceOverrideStore
     private readonly Dictionary<LogicalActorKey, AppearanceOverrideState> states = new();
 
     public int Count => states.Count;
+    public IReadOnlyDictionary<LogicalActorKey, AppearanceOverrideState> States
+        => new Dictionary<LogicalActorKey, AppearanceOverrideState>(states);
 
     public AppearanceOverrideState SetDesired(
         LogicalActorKey actor,
@@ -32,6 +34,14 @@ public sealed class AppearanceOverrideStore
 
     public bool CompleteRestore(LogicalActorKey actor)
         => states.Remove(actor);
+
+    public void RestoreState(LogicalActorKey actor, AppearanceOverrideState? state)
+    {
+        if (state is null)
+            states.Remove(actor);
+        else
+            states[actor] = state;
+    }
 
     public void Clear()
         => states.Clear();
