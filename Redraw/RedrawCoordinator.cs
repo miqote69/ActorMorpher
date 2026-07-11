@@ -68,7 +68,7 @@ public sealed class RedrawCoordinator : IDisposable
         if (current is not null)
         {
             if (activeRepresentation is not null)
-                redrawBackend.TryEnable(activeRepresentation);
+                redrawBackend.TryEnable(activeRepresentation, null);
             diagnostics.Write(CreateEntry(current, DiagnosticEventIds.RedrawCancelled, "Redraw operation cancelled.", DiagnosticLogLevel.Warning, reason));
             Finish(current with { Stage = RedrawStage.Cancelled, Error = reason });
         }
@@ -124,7 +124,7 @@ public sealed class RedrawCoordinator : IDisposable
         if (!resolver.TryResolve(operation.Actor, out var actor))
         {
             if (activeRepresentation is not null && operation.Stage != RedrawStage.Pending)
-                redrawBackend.TryEnable(activeRepresentation);
+                redrawBackend.TryEnable(activeRepresentation, null);
             Finish(operation with { Stage = RedrawStage.Cancelled, Error = "Actor is no longer available." });
             return;
         }
@@ -137,7 +137,7 @@ public sealed class RedrawCoordinator : IDisposable
             RedrawStage.Apply when appearanceMemory.TryWrite(actor, operation.Desired) => operation with { Stage = RedrawStage.Disable },
             RedrawStage.Disable when redrawBackend.TryDisable(actor) => operation with { Stage = RedrawStage.ApplyHidden },
             RedrawStage.ApplyHidden when appearanceMemory.TryWrite(actor, operation.Desired) => operation with { Stage = RedrawStage.Enable },
-            RedrawStage.Enable when redrawBackend.TryEnable(actor) => operation with { Stage = RedrawStage.Recreate },
+            RedrawStage.Enable when redrawBackend.TryEnable(actor, operation.Desired) => operation with { Stage = RedrawStage.Recreate },
             RedrawStage.Recreate => operation with { Stage = RedrawStage.Verify },
             RedrawStage.Verify when appearanceMemory.IsApplied(actor, operation.Desired) => Complete(operation),
             RedrawStage.Verify => operation,
@@ -147,7 +147,7 @@ public sealed class RedrawCoordinator : IDisposable
                 => operation with { Stage = RedrawStage.RollbackHidden },
             RedrawStage.RollbackHidden when appearanceMemory.TryWrite(actor, operation.Rollback)
                 => operation with { Stage = RedrawStage.RollbackEnable },
-            RedrawStage.RollbackEnable when redrawBackend.TryEnable(actor)
+            RedrawStage.RollbackEnable when redrawBackend.TryEnable(actor, operation.Rollback)
                 => operation with { Stage = RedrawStage.RollbackRecreate },
             RedrawStage.RollbackRecreate => operation with { Stage = RedrawStage.RollbackVerify },
             RedrawStage.RollbackVerify when appearanceMemory.IsApplied(actor, operation.Rollback) => Fail(operation),

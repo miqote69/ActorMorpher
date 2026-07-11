@@ -33,6 +33,8 @@ Model search data is classified as `Complete`, `ModelOnly`, or `Unsupported`. De
 
 `RedrawCoordinator` advances on Framework Update through pre-apply, model hide, hidden reapply, model show, recreation wait, verify, and symmetric rollback stages. Normal actors use the current FFXIVClientStructs `VisibilityFlags.Model` path; GPose representations additionally use generated `DisableDraw` and `EnableDraw` member functions. Every native access follows identity validation and no pointer is retained between frames.
 
+During Actor Morpher's synchronous `EnableDraw` call, `NativeDrawObjectInjector` hooks the current FFXIVClientStructs `CharacterBase.Create` member-function address and substitutes the operation's ModelChara ID, Customize, and ten equipment slots. The injection context is managed data scoped to that call; native pointers are stack-local and are never retained. This avoids ObjectKind mutation while allowing NPC body types and non-Human draw objects to be created with their complete source data.
+
 The production memory layer captures ModelChara ID, the generated Customize array, and the generated equipment array. Writes are staged between current FFXIVClientStructs `DisableDraw` and `EnableDraw` member calls and verified afterward. Actor identity is re-resolved before every native access; no pointer is retained between frames. The new path has not yet been exercised in FF14 by this revision.
 
 ## GPose

@@ -126,7 +126,7 @@ public sealed class RedrawCoordinatorTests
             return true;
         }
 
-        public bool TryEnable(ActorSnapshot actor)
+        public bool TryEnable(ActorSnapshot actor, AppearanceData? appearance)
         {
             EnableCount++;
             return true;

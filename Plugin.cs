@@ -25,6 +25,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] private static IPluginLog Log { get; set; } = null!;
     [PluginService] private static IClientState ClientState { get; set; } = null!;
     [PluginService] private static IFramework Framework { get; set; } = null!;
+    [PluginService] private static IGameInteropProvider GameInteropProvider { get; set; } = null!;
 
     private readonly MainWindow mainWindow;
     private readonly WindowSystem windowSystem = new("ActorMorpher");
@@ -37,6 +38,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly AppearanceApplyService appearanceApplyService;
     private readonly BulkOutfitService bulkOutfitService;
     private readonly IHumanModelClassifier humanModelClassifier;
+    private readonly NativeDrawObjectInjector drawObjectInjector;
     private readonly BulkOutfitTargetResolver bulkOutfitTargetResolver = new();
     private IReadOnlyList<ModelSearchEntry>? modelSearchCache;
 
@@ -77,11 +79,12 @@ public sealed class Plugin : IDalamudPlugin
         var clientContext = new DalamudClientContext(ClientState);
         var actorResolver = new RegistryActorResolver(actorRegistry, clientContext);
         var appearanceMemory = new NativeAppearanceMemory(ObjectTable, humanModelClassifier, diagnosticRouter);
+        drawObjectInjector = new NativeDrawObjectInjector(GameInteropProvider, diagnosticRouter);
         redrawCoordinator = new RedrawCoordinator(
             Framework,
             actorResolver,
             appearanceMemory,
-            new NativeRedrawBackend(ObjectTable),
+            new NativeRedrawBackend(ObjectTable, drawObjectInjector),
             clientContext,
             diagnosticRouter);
         gposeCoordinator = new GPoseCoordinator(Framework, ClientState, actorRegistry, diagnosticRouter);
@@ -136,6 +139,7 @@ public sealed class Plugin : IDalamudPlugin
         appearanceApplyService.Dispose();
         gposeCoordinator.Dispose();
         redrawCoordinator.Dispose();
+        drawObjectInjector.Dispose();
         actorRegistry.Dispose();
         diagnosticController.Dispose();
     }
@@ -429,14 +433,25 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         return entries
-            .DistinctBy(static entry => entry.HumanAppearance is { } appearance
-                ? $"{entry.Name}\u001f{appearance.Signature}"
-                : $"{entry.Name}\u001f{entry.ModelId}\u001f{entry.Source}\u001f{entry.SourceId}")
+            .DistinctBy(static entry => entry switch
+            {
+                { HumanAppearance: { } human } => $"{entry.Name}\u001f{human.Signature}",
+                { ModelAppearance: { } model } => $"{entry.Name}\u001f{CreateAppearanceSignature(model)}",
+                _ => $"{entry.Name}\u001f{entry.ModelId}\u001f{entry.Source}\u001f{entry.SourceId}",
+            })
             .OrderBy(static row => row.Category)
             .ThenBy(static row => row.Name)
             .ThenBy(static row => row.ModelId)
             .ToArray();
     }
+
+    private static string CreateAppearanceSignature(AppearanceData appearance)
+        => string.Join(
+            ':',
+            appearance.ModelCharaId,
+            appearance.Category,
+            Convert.ToHexString(appearance.Customize.AsSpan()),
+            string.Join(',', appearance.Equipment.Select(static value => value.ToString("X16"))));
 
     private static ModelSearchEntry CreateSearchEntry(
         ModelChara model,

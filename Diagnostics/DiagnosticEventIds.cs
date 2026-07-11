@@ -26,6 +26,7 @@ public static class DiagnosticEventIds
     public const string RedrawStateChanged = "AM4002";
     public const string RedrawCompleted = "AM4003";
     public const string RedrawCancelled = "AM4004";
+    public const string DrawObjectCreateInjected = "AM4005";
     public const string RedrawFailed = "AM4099";
     public const string GPoseEntered = "AM5001";
     public const string GPoseExited = "AM5002";
@@ -68,7 +69,8 @@ public static class DiagnosticEventIds
         [MorphApplied] = "MorphApplied", [MorphRestored] = "MorphRestored",
         [MorphOperationFailed] = "MorphOperationFailed", [RedrawOperationStarted] = "RedrawOperationStarted",
         [RedrawStateChanged] = "RedrawStateChanged", [RedrawCompleted] = "RedrawCompleted",
-        [RedrawCancelled] = "RedrawCancelled", [RedrawFailed] = "RedrawFailed", [GPoseEntered] = "GPoseEntered",
+        [RedrawCancelled] = "RedrawCancelled", [DrawObjectCreateInjected] = "DrawObjectCreateInjected",
+        [RedrawFailed] = "RedrawFailed", [GPoseEntered] = "GPoseEntered",
         [GPoseExited] = "GPoseExited", [GPoseMappingResolved] = "GPoseMappingResolved",
         [GPoseMappingAmbiguous] = "GPoseMappingAmbiguous", [GPoseOperationFailed] = "GPoseOperationFailed",
         [BulkBatchStarted] = "BulkBatchStarted", [BulkTargetResolved] = "BulkTargetResolved",

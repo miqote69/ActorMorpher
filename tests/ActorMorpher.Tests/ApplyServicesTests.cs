@@ -199,7 +199,7 @@ public sealed class ApplyServicesTests
     private sealed class FakeRedrawBackend : IRedrawBackend
     {
         public bool TryDisable(ActorSnapshot actor) => true;
-        public bool TryEnable(ActorSnapshot actor) => true;
+        public bool TryEnable(ActorSnapshot actor, AppearanceData? appearance) => true;
     }
 
     private sealed class FakeContext : IClientContext

@@ -545,6 +545,7 @@ public sealed class MainWindow : Window, IDisposable
                             Properties = new Dictionary<string, object?>
                             {
                                 ["modelCharaId"] = model.ModelId,
+                                ["modelName"] = model.Name,
                                 ["category"] = model.Category,
                                 ["completeness"] = model.Completeness,
                                 ["source"] = model.Source,
