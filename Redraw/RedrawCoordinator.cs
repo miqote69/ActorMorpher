@@ -138,7 +138,12 @@ public sealed class RedrawCoordinator : IDisposable
             RedrawStage.Disable when redrawBackend.TryDisable(actor) => operation with { Stage = RedrawStage.ApplyHidden },
             RedrawStage.ApplyHidden when appearanceMemory.TryWrite(actor, operation.Desired) => operation with { Stage = RedrawStage.Enable },
             RedrawStage.Enable when redrawBackend.TryEnable(actor, operation.Desired) => operation with { Stage = RedrawStage.Recreate },
-            RedrawStage.Recreate => operation with { Stage = RedrawStage.Verify },
+            RedrawStage.Recreate when appearanceMemory is not IAppearanceFinalizer recreateFinalizer
+                || recreateFinalizer.TryFinalize(actor, operation.Desired) => operation with { Stage = RedrawStage.Verify },
+            RedrawStage.Recreate => operation with { Stage = RedrawStage.Finalize },
+            RedrawStage.Finalize when appearanceMemory is not IAppearanceFinalizer finalizer
+                || finalizer.TryFinalize(actor, operation.Desired) => operation with { Stage = RedrawStage.Verify },
+            RedrawStage.Finalize => operation,
             RedrawStage.Verify when appearanceMemory.IsApplied(actor, operation.Desired) => Complete(operation),
             RedrawStage.Verify => operation,
             RedrawStage.Rollback when appearanceMemory.TryWrite(actor, operation.Rollback)
@@ -149,7 +154,12 @@ public sealed class RedrawCoordinator : IDisposable
                 => operation with { Stage = RedrawStage.RollbackEnable },
             RedrawStage.RollbackEnable when redrawBackend.TryEnable(actor, operation.Rollback)
                 => operation with { Stage = RedrawStage.RollbackRecreate },
-            RedrawStage.RollbackRecreate => operation with { Stage = RedrawStage.RollbackVerify },
+            RedrawStage.RollbackRecreate when appearanceMemory is not IAppearanceFinalizer rollbackRecreateFinalizer
+                || rollbackRecreateFinalizer.TryFinalize(actor, operation.Rollback) => operation with { Stage = RedrawStage.RollbackVerify },
+            RedrawStage.RollbackRecreate => operation with { Stage = RedrawStage.RollbackFinalize },
+            RedrawStage.RollbackFinalize when appearanceMemory is not IAppearanceFinalizer rollbackFinalizer
+                || rollbackFinalizer.TryFinalize(actor, operation.Rollback) => operation with { Stage = RedrawStage.RollbackVerify },
+            RedrawStage.RollbackFinalize => operation,
             RedrawStage.RollbackVerify when appearanceMemory.IsApplied(actor, operation.Rollback) => Fail(operation),
             RedrawStage.RollbackVerify => operation,
             RedrawStage.Apply or RedrawStage.Disable or RedrawStage.ApplyHidden or RedrawStage.Enable

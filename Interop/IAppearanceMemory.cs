@@ -6,3 +6,8 @@ public interface IAppearanceMemory
     bool TryWrite(ActorSnapshot actor, AppearanceData appearance);
     bool IsApplied(ActorSnapshot actor, AppearanceData appearance);
 }
+
+public interface IAppearanceFinalizer
+{
+    bool TryFinalize(ActorSnapshot actor, AppearanceData appearance);
+}

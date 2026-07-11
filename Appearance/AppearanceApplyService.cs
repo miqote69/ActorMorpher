@@ -342,6 +342,7 @@ public sealed class AppearanceApplyService : IDisposable
             ["bodyType"] = appearance is { Customize.Length: > 2 } ? appearance.Customize[2] : null,
             ["customizeLength"] = appearance?.Customize.Length,
             ["equipmentLength"] = appearance?.Equipment.Length,
+            ["equipmentSignature"] = appearance is null ? null : EquipmentSignature(appearance.Equipment),
             ["revision"] = revision,
             ["baseModelCharaId"] = baseModelId,
         };
@@ -354,5 +355,23 @@ public sealed class AppearanceApplyService : IDisposable
             OperationId = operationId is { } id ? $"redraw-{id:N}" : null,
             Properties = properties,
         });
+    }
+
+    private static string EquipmentSignature(IEnumerable<ulong> equipment)
+    {
+        const ulong offset = 14695981039346656037;
+        const ulong prime = 1099511628211;
+        var hash = offset;
+        foreach (var value in equipment)
+        {
+            var remaining = value;
+            for (var index = 0; index < sizeof(ulong); ++index)
+            {
+                hash ^= (byte)remaining;
+                hash *= prime;
+                remaining >>= 8;
+            }
+        }
+        return hash.ToString("X16");
     }
 }

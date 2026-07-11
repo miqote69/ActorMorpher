@@ -27,6 +27,26 @@ public sealed class RedrawCoordinatorTests
     }
 
     [Fact]
+    public void FinalizesRenderedEquipmentBeforeCompleting()
+    {
+        var fixture = new Fixture();
+        fixture.Memory.RequireFinalization = true;
+        fixture.Memory.FinalizeFailuresRemaining = 1;
+        using var coordinator = fixture.CreateCoordinator();
+        coordinator.Enqueue(fixture.Operation());
+
+        for (var i = 0; i < 7; ++i)
+            coordinator.ProcessNextFrame();
+
+        Assert.Null(coordinator.LastResult);
+        Assert.Equal(2, fixture.Memory.FinalizeCount);
+
+        coordinator.ProcessNextFrame();
+
+        Assert.Equal(RedrawStage.Completed, coordinator.LastResult?.Stage);
+    }
+
+    [Fact]
     public void ActorLossCancelsWithoutWritingToStaleRepresentation()
     {
         var fixture = new Fixture();
@@ -93,10 +113,13 @@ public sealed class RedrawCoordinatorTests
         }
     }
 
-    private sealed class FakeMemory : IAppearanceMemory
+    private sealed class FakeMemory : IAppearanceMemory, IAppearanceFinalizer
     {
         public AppearanceData Desired { get; set; } = null!;
         public bool FailDesired { get; set; }
+        public bool RequireFinalization { get; set; }
+        public int FinalizeFailuresRemaining { get; set; }
+        public int FinalizeCount { get; private set; }
         public List<AppearanceData> Writes { get; } = new();
 
         public bool TryCapture(ActorSnapshot actor, out AppearanceData appearance)
@@ -112,7 +135,16 @@ public sealed class RedrawCoordinatorTests
         }
 
         public bool IsApplied(ActorSnapshot actor, AppearanceData appearance)
-            => true;
+            => !RequireFinalization || FinalizeCount > 0;
+
+        public bool TryFinalize(ActorSnapshot actor, AppearanceData appearance)
+        {
+            FinalizeCount++;
+            if (FinalizeFailuresRemaining <= 0)
+                return true;
+            FinalizeFailuresRemaining--;
+            return false;
+        }
     }
 
     private sealed class FakeBackend : IRedrawBackend

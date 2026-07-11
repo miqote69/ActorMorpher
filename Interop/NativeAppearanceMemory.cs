@@ -3,7 +3,7 @@ using FFXIVClientStructs.FFXIV.Client.Game.Character;
 
 namespace ActorMorpher.Interop;
 
-public sealed unsafe class NativeAppearanceMemory : IAppearanceMemory, IAppearanceBackingStore
+public sealed unsafe class NativeAppearanceMemory : IAppearanceMemory, IAppearanceBackingStore, IAppearanceFinalizer
 {
     private readonly IObjectTable objectTable;
     private readonly IHumanModelClassifier humanModelClassifier;
@@ -62,6 +62,26 @@ public sealed unsafe class NativeAppearanceMemory : IAppearanceMemory, IAppearan
 
     public bool TryNormalizeBacking(ActorSnapshot actor, AppearanceData appearance)
         => TryWrite(actor, appearance);
+
+    public bool TryFinalize(ActorSnapshot actor, AppearanceData appearance)
+    {
+        if (appearance.Category != ModelCategory.Human || appearance.Equipment.IsDefaultOrEmpty)
+            return true;
+        if (!TryResolve(actor, out var character)
+            || !humanModelClassifier.IsHuman(checked((uint)character->ModelContainer.ModelCharaId))
+            || appearance.Equipment.Length != character->DrawData.EquipmentModelIds.Length)
+            return false;
+
+        // Rewriting DrawData alone does not guarantee that a newly-created Human draw object
+        // reloads its equipment after one or more non-Human models. Force every slot through
+        // the game's equipment loader before the redraw is considered complete.
+        for (var index = 0; index < appearance.Equipment.Length; ++index)
+        {
+            var model = new EquipmentModelId { Value = appearance.Equipment[index] };
+            character->DrawData.LoadEquipment((DrawDataContainer.EquipmentSlot)index, &model, true);
+        }
+        return true;
+    }
 
     public bool IsApplied(ActorSnapshot actor, AppearanceData appearance)
     {

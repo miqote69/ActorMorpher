@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
-    <Version>0.0.0.16</Version>
+    <Version>0.0.0.17</Version>
     <PackageProjectUrl>https://github.com/miqote69/ActorMorpher</PackageProjectUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <IsPackable>false</IsPackable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <IconUrl>https://raw.githubusercontent.com/miqote69/ActorMorpher/main/images/icon.png?v=16</IconUrl>
+    <IconUrl>https://raw.githubusercontent.com/miqote69/ActorMorpher/main/images/icon-v17.png</IconUrl>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="LuminaSupplemental.Excel" Version="4.3.7" />
