@@ -79,8 +79,17 @@ public sealed class AppearanceApplyService : IDisposable
 
         store.TryGet(key, out var previous);
         var state = store.SetDesired(key, current, desired);
-        var operation = RedrawOperation.Create(key, desired, current, state.Revision, context.TerritoryId);
-        pending[operation.OperationId] = new PendingChange(key, previous, false);
+        var cleanHumanTransition = previous is not null
+            && previous.DesiredData.Category == ModelCategory.Human
+            && desired.Category == ModelCategory.Human;
+        var firstDesired = cleanHumanTransition ? state.BaseData : desired;
+        var operation = RedrawOperation.Create(key, firstDesired, current, state.Revision, context.TerritoryId);
+        pending[operation.OperationId] = new PendingChange(
+            key,
+            previous,
+            false,
+            cleanHumanTransition ? desired : null,
+            state.Revision);
         if (!redraw.Enqueue(operation))
         {
             pending.Remove(operation.OperationId);
@@ -92,7 +101,9 @@ public sealed class AppearanceApplyService : IDisposable
         WriteMorphLog(DiagnosticEventIds.MorphOperationStarted, "Appearance operation queued.", key, desired.ModelCharaId, operation.OperationId, desired, state.Revision, state.BaseData.ModelCharaId);
         WriteMorphLog(DiagnosticEventIds.MorphDesiredUpdated, "Desired appearance state updated.", key, desired.ModelCharaId, operation.OperationId, desired, state.Revision, state.BaseData.ModelCharaId);
 
-        message = $"Applying Model ID {desired.ModelCharaId}.";
+        message = cleanHumanTransition
+            ? $"Preparing a clean Human transition to Model ID {desired.ModelCharaId}."
+            : $"Applying Model ID {desired.ModelCharaId}.";
         LastStatus = message;
         return true;
     }
@@ -121,7 +132,7 @@ public sealed class AppearanceApplyService : IDisposable
         }
 
         var operation = RedrawOperation.Create(key, state.BaseData, current, state.Revision + 1, context.TerritoryId);
-        pending[operation.OperationId] = new PendingChange(key, state, true);
+        pending[operation.OperationId] = new PendingChange(key, state, true, null, state.Revision + 1);
         if (!redraw.Enqueue(operation))
         {
             pending.Remove(operation.OperationId);
@@ -143,7 +154,7 @@ public sealed class AppearanceApplyService : IDisposable
                 || !memory.TryCapture(actor, out var current))
                 continue;
             var operation = RedrawOperation.Create(key, state.DesiredData, current, state.Revision, context.TerritoryId);
-            pending[operation.OperationId] = new PendingChange(key, state, false);
+            pending[operation.OperationId] = new PendingChange(key, state, false, null, state.Revision);
             if (!redraw.Enqueue(operation))
                 pending.Remove(operation.OperationId);
         }
@@ -179,8 +190,51 @@ public sealed class AppearanceApplyService : IDisposable
             return;
         if (operation.Stage == RedrawStage.Completed)
         {
+            if (change.FinalDesired is { } finalDesired)
+            {
+                if (!resolver.TryResolve(change.Actor, out var actor)
+                    || !memory.TryCapture(actor, out _))
+                {
+                    store.RestoreState(change.Actor, change.PreviousState);
+                    LastStatus = "The actor became unavailable during the Human transition.";
+                    OperationCompleted?.Invoke(change.Actor, finalDesired.ModelCharaId, false, false);
+                    return;
+                }
+
+                var rollback = change.PreviousState?.DesiredData ?? operation.Desired;
+                var continuation = RedrawOperation.Create(
+                    change.Actor,
+                    finalDesired,
+                    rollback,
+                    change.Revision,
+                    context.TerritoryId);
+                pending[continuation.OperationId] = change with { FinalDesired = null };
+                if (!redraw.Enqueue(continuation))
+                {
+                    pending.Remove(continuation.OperationId);
+                    store.RestoreState(change.Actor, change.PreviousState);
+                    LastStatus = "The final Human transition could not be queued.";
+                    OperationCompleted?.Invoke(change.Actor, finalDesired.ModelCharaId, false, false);
+                    return;
+                }
+
+                WriteMorphLog(
+                    DiagnosticEventIds.MorphOperationStarted,
+                    "Clean Human transition reset completed; final appearance queued.",
+                    change.Actor,
+                    finalDesired.ModelCharaId,
+                    continuation.OperationId,
+                    finalDesired,
+                    change.Revision,
+                    store.TryGet(change.Actor, out var state) ? state.BaseData.ModelCharaId : null);
+                LastStatus = $"Applying Model ID {finalDesired.ModelCharaId}.";
+                return;
+            }
+
             if (change.IsRestore)
                 store.CompleteRestore(change.Actor);
+            else
+                NormalizeSpecialBodyBacking(change.Actor, operation.Desired);
             LastStatus = change.IsRestore ? "Original appearance restored." : "Appearance applied.";
             WriteMorphLog(
                 change.IsRestore ? DiagnosticEventIds.MorphRestored : DiagnosticEventIds.MorphApplied,
@@ -193,7 +247,11 @@ public sealed class AppearanceApplyService : IDisposable
         }
 
         if (!change.IsRestore)
+        {
             store.RestoreState(change.Actor, change.PreviousState);
+            if (change.PreviousState is { } previous)
+                NormalizeSpecialBodyBacking(change.Actor, previous.DesiredData);
+        }
         LastStatus = operation.Error ?? "Appearance operation failed and was rolled back.";
         diagnostics.Write(new DiagnosticLogEntry
         {
@@ -209,6 +267,34 @@ public sealed class AppearanceApplyService : IDisposable
 
     private void OnFrameworkUpdate(IFramework _)
         => ProcessContext();
+
+    private void NormalizeSpecialBodyBacking(LogicalActorKey key, AppearanceData desired)
+    {
+        if (desired.Category != ModelCategory.Human
+            || desired.Customize.Length <= 2
+            || desired.Customize[2] == (byte)NpcAge.Normal
+            || memory is not IAppearanceBackingStore backing
+            || !store.TryGet(key, out var state)
+            || !resolver.TryResolve(key, out var actor))
+            return;
+
+        if (backing.TryNormalizeBacking(actor, state.BaseData))
+        {
+            diagnostics.Write(new DiagnosticLogEntry
+            {
+                EventId = DiagnosticEventIds.MorphDesiredUpdated,
+                Category = DiagnosticCategory.Safety,
+                Message = "Special-body backing data normalized after draw object creation.",
+                ActorKey = DiagnosticActorKeys.Format(diagnostics, key),
+                Properties = new Dictionary<string, object?>
+                {
+                    ["desiredBodyType"] = desired.Customize[2],
+                    ["backingBodyType"] = state.BaseData.Customize.Length > 2 ? state.BaseData.Customize[2] : null,
+                    ["reason"] = "External redraw compatibility",
+                },
+            });
+        }
+    }
 
     public void ProcessContext()
     {
@@ -233,7 +319,9 @@ public sealed class AppearanceApplyService : IDisposable
     private sealed record PendingChange(
         LogicalActorKey Actor,
         AppearanceOverrideState? PreviousState,
-        bool IsRestore);
+        bool IsRestore,
+        AppearanceData? FinalDesired,
+        long Revision);
 
     private void WriteMorphLog(
         string eventId,

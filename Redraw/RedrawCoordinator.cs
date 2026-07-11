@@ -193,9 +193,9 @@ public sealed class RedrawCoordinator : IDisposable
             $"Redraw operation {operation.Stage}.",
             operation.Stage is RedrawStage.Failed ? DiagnosticLogLevel.Error : DiagnosticLogLevel.Information,
             operation.Error));
-        OperationFinished?.Invoke(operation);
         current = null;
         activeRepresentation = null;
+        OperationFinished?.Invoke(operation);
     }
 
     private DiagnosticLogEntry CreateEntry(

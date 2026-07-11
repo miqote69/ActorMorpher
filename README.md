@@ -152,6 +152,8 @@ Human Model Search details include equipment model numbers and localized matchin
 
 The Model Search preview surface currently reports an unavailable state instead of allocating a native CharaView unsafely. The current APIs do not expose exclusive CharaView slot ownership or verified native texture lifetime rules. See [preview research](docs/MODEL_PREVIEW_RESEARCH.md) and [preview architecture](docs/MODEL_PREVIEW.md).
 
+Special Human Body Types use normalized backing data after their visible draw object is created. This prevents later Penumbra redraws from starting with stale Young NPC skeleton and equipment data. See [Penumbra compatibility](docs/PENUMBRA_COMPATIBILITY.md).
+
 Native appearance features use the current Dalamud and FFXIVClientStructs APIs without guessed offsets, signatures, VTable indexes, or ObjectKind writes. These new write paths still require FF14 testing against the current client; enable diagnostics before testing and report any crash pack with the session log.
 
 - Actor listing and filtering

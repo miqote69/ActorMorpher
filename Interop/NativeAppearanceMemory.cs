@@ -3,7 +3,7 @@ using FFXIVClientStructs.FFXIV.Client.Game.Character;
 
 namespace ActorMorpher.Interop;
 
-public sealed unsafe class NativeAppearanceMemory : IAppearanceMemory
+public sealed unsafe class NativeAppearanceMemory : IAppearanceMemory, IAppearanceBackingStore
 {
     private readonly IObjectTable objectTable;
     private readonly IHumanModelClassifier humanModelClassifier;
@@ -59,6 +59,9 @@ public sealed unsafe class NativeAppearanceMemory : IAppearanceMemory
         }
         return true;
     }
+
+    public bool TryNormalizeBacking(ActorSnapshot actor, AppearanceData appearance)
+        => TryWrite(actor, appearance);
 
     public bool IsApplied(ActorSnapshot actor, AppearanceData appearance)
     {

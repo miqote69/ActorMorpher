@@ -62,6 +62,63 @@ public sealed class ApplyServicesTests
     }
 
     [Fact]
+    public void HumanToHumanApplyPerformsCleanBaseTransitionBeforeFinalAppearance()
+    {
+        var actor = Snapshot(1);
+        var original = HumanAppearance(1, (byte)NpcAge.Normal);
+        var first = HumanAppearance(2, (byte)NpcAge.Young);
+        var second = HumanAppearance(3, (byte)NpcAge.Young);
+        var memory = new FakeAppearanceMemory(original);
+        var resolver = new FakeResolver(actor);
+        using var redraw = new RedrawCoordinator(resolver, memory, new FakeRedrawBackend(), new FakeContext());
+        using var service = new AppearanceApplyService(
+            resolver,
+            memory,
+            new FakeContext(),
+            redraw,
+            new AppearanceOverrideStore(),
+            NullDiagnosticLog.Instance);
+
+        Assert.True(service.TryApply(actor.LogicalKey, first, out _));
+        Process(redraw, 7);
+        memory.Writes.Clear();
+
+        Assert.True(service.TryApply(actor.LogicalKey, second, out _));
+        Process(redraw, 14);
+
+        Assert.Same(second, memory.Current);
+        Assert.Contains(original, memory.Writes);
+        Assert.Same(second, memory.Writes[^1]);
+    }
+
+    [Fact]
+    public void SpecialHumanBodyNormalizesBackingToOriginalAfterVisibleApply()
+    {
+        var actor = Snapshot(1);
+        var original = HumanAppearance(1, (byte)NpcAge.Normal);
+        var youngNpc = HumanAppearance(2, (byte)NpcAge.Young);
+        var memory = new FakeAppearanceMemory(original) { NormalizeBacking = true };
+        var resolver = new FakeResolver(actor);
+        var store = new AppearanceOverrideStore();
+        using var redraw = new RedrawCoordinator(resolver, memory, new FakeRedrawBackend(), new FakeContext());
+        using var service = new AppearanceApplyService(
+            resolver,
+            memory,
+            new FakeContext(),
+            redraw,
+            store,
+            NullDiagnosticLog.Instance);
+
+        Assert.True(service.TryApply(actor.LogicalKey, youngNpc, out _));
+        Process(redraw, 7);
+
+        Assert.Same(original, memory.Current);
+        Assert.Same(original, memory.NormalizedAppearance);
+        Assert.True(store.TryGet(actor.LogicalKey, out var state));
+        Assert.Same(youngNpc, state.DesiredData);
+    }
+
+    [Fact]
     public void BulkApplyProcessesOneActorPerFrameAndRestoreUsesStoredTargets()
     {
         var sourceActor = Snapshot(1);
@@ -206,6 +263,22 @@ public sealed class ApplyServicesTests
             modelId == 0 ? [marker] : [],
             modelId == 0 ? [(ulong)marker] : []);
 
+    private static AppearanceData HumanAppearance(byte marker, byte bodyType)
+    {
+        var customize = Enumerable.Repeat(marker, 26).ToArray();
+        customize[0] = 1;
+        customize[1] = 1;
+        customize[2] = bodyType;
+        customize[4] = 1;
+        return AppearanceData.Create(
+            0,
+            ModelCategory.Human,
+            marker,
+            AppearanceCompleteness.Complete,
+            customize,
+            Enumerable.Repeat((ulong)marker, 10));
+    }
+
     private static OutfitData Outfit(ushort marker)
         => OutfitData.Create(
             Enum.GetValues<OutfitSlot>().Select(slot => new ArmorAppearance(
@@ -225,10 +298,13 @@ public sealed class ApplyServicesTests
             => actors.TryGetValue(key, out actor!);
     }
 
-    private sealed class FakeAppearanceMemory(AppearanceData current) : IAppearanceMemory
+    private sealed class FakeAppearanceMemory(AppearanceData current) : IAppearanceMemory, IAppearanceBackingStore
     {
         public AppearanceData Current { get; private set; } = current;
         public AppearanceData? FailedAppearance { get; init; }
+        public List<AppearanceData> Writes { get; } = [];
+        public bool NormalizeBacking { get; init; }
+        public AppearanceData? NormalizedAppearance { get; private set; }
 
         public bool TryCapture(ActorSnapshot actor, out AppearanceData appearance)
         {
@@ -241,11 +317,21 @@ public sealed class ApplyServicesTests
             if (ReferenceEquals(appearance, FailedAppearance))
                 return false;
             Current = appearance;
+            Writes.Add(appearance);
             return true;
         }
 
         public bool IsApplied(ActorSnapshot actor, AppearanceData appearance)
             => ReferenceEquals(Current, appearance);
+
+        public bool TryNormalizeBacking(ActorSnapshot actor, AppearanceData appearance)
+        {
+            if (!NormalizeBacking)
+                return false;
+            Current = appearance;
+            NormalizedAppearance = appearance;
+            return true;
+        }
     }
 
     private sealed class FakeOutfitMemory(Dictionary<LogicalActorKey, OutfitData> current) : IOutfitMemory

@@ -19,7 +19,6 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
         hook = interop.HookFromAddress<CreateCharacterBaseDelegate>(
             (nint)CharacterBase.MemberFunctionPointers.Create,
             CreateCharacterBaseDetour);
-        hook.Enable();
     }
 
     public void Invoke(ActorSnapshot actor, AppearanceData appearance, GameObject* gameObject)
@@ -27,6 +26,7 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
         if (disposed || active is not null)
             throw new InvalidOperationException("Draw object injection is unavailable or already active.");
 
+        hook.Enable();
         active = new InjectionContext(actor.LogicalKey, appearance);
         try
         {
@@ -35,6 +35,7 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
         finally
         {
             active = null;
+            hook.Disable();
         }
     }
 
