@@ -549,6 +549,7 @@ public sealed class MainWindow : Window, IDisposable
                     {
                         selectedModel = model;
                         var previewAssets = plugin.GetModelPreviewAssets(model);
+                        var previewSupport = plugin.GetModelPreviewSupport(model);
                         plugin.Diagnostics.Log.Write(new DiagnosticLogEntry
                         {
                             EventId = DiagnosticEventIds.UserActionRequested,
@@ -566,6 +567,10 @@ public sealed class MainWindow : Window, IDisposable
                                 ["previewAssetsPresent"] = previewAssets.PresentCount,
                                 ["previewAssetsMissing"] = previewAssets.MissingCount,
                                 ["previewAssetsNotUsed"] = previewAssets.OptionalMissingCount,
+                                ["previewBackend"] = previewSupport.PreferredBackend,
+                                ["previewCompleteness"] = previewSupport.Completeness,
+                                ["previewSupported"] = previewSupport.CanPreview,
+                                ["previewSupportReason"] = previewSupport.Reason,
                             },
                         });
                         plugin.Diagnostics.Log.Write(new DiagnosticLogEntry
@@ -585,6 +590,10 @@ public sealed class MainWindow : Window, IDisposable
                                 ["presentAssets"] = previewAssets.PresentCount,
                                 ["missingAssets"] = previewAssets.MissingCount,
                                 ["notUsedAssets"] = previewAssets.OptionalMissingCount,
+                                ["preferredBackend"] = previewSupport.PreferredBackend,
+                                ["previewCompleteness"] = previewSupport.Completeness,
+                                ["previewSupported"] = previewSupport.CanPreview,
+                                ["supportReason"] = previewSupport.Reason,
                                 ["assetPaths"] = previewAssets.Assets.Select(static asset => $"{asset.Label}:{asset.IsRequired}:{asset.IsPresent}:{asset.Path}").ToArray(),
                             },
                         });
@@ -729,10 +738,36 @@ public sealed class MainWindow : Window, IDisposable
             ModelPreviewState.Idle => T(TextKey.PreviewSelectModel),
             ModelPreviewState.Suspended => T(TextKey.PreviewSuspended),
             ModelPreviewState.Loading => T(TextKey.PreviewLoading),
+            ModelPreviewState.Unsupported when selectedModel is { } model
+                => GetPreviewSupportStatus(plugin.GetModelPreviewSupport(model)),
             ModelPreviewState.Unsupported => T(TextKey.PreviewUnavailable),
             ModelPreviewState.Failed => T(TextKey.PreviewFailed),
             _ => preview.Status,
         };
+
+    private string GetPreviewSupportStatus(ModelPreviewSupport support)
+    {
+        var backend = support.PreferredBackend switch
+        {
+            ModelPreviewBackendKind.CharaView => "CharaView",
+            ModelPreviewBackendKind.AssetRenderer => "Asset Renderer",
+            _ => T(TextKey.None),
+        };
+        var reason = support.Reason switch
+        {
+            ModelPreviewSupportReason.InvalidHumanData => T(TextKey.PreviewInputInvalid),
+            ModelPreviewSupportReason.MissingModel => T(TextKey.PreviewModelMissing),
+            ModelPreviewSupportReason.MissingSkeleton => T(TextKey.PreviewSkeletonMissing),
+            ModelPreviewSupportReason.MissingModelAndSkeleton => T(TextKey.PreviewModelAndSkeletonMissing),
+            ModelPreviewSupportReason.CharaViewSlotOwnershipUnavailable
+                or ModelPreviewSupportReason.CharaViewTextureOwnershipUnavailable
+                or ModelPreviewSupportReason.CharaViewSlotAndTextureOwnershipUnavailable
+                => T(TextKey.PreviewCharaViewUnsafe),
+            ModelPreviewSupportReason.AssetRendererUnavailable => T(TextKey.PreviewAssetRendererUnavailable),
+            _ => T(TextKey.PreviewUnavailable),
+        };
+        return $"{T(TextKey.PreviewBackend, backend)}\n{reason}";
+    }
 
     private void DrawPreviewAssetReport(ModelPreviewAssetReport report)
     {

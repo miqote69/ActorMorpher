@@ -40,6 +40,13 @@ public sealed class Localizer
 
     private static readonly IReadOnlyDictionary<TextKey, string> English = new Dictionary<TextKey, string>
     {
+        [TextKey.PreviewBackend] = "Preview backend: {0}",
+        [TextKey.PreviewInputInvalid] = "Preview input data is incomplete or inconsistent.",
+        [TextKey.PreviewCharaViewUnsafe] = "Human data is ready, but Dalamud does not provide exclusive CharaView slot and texture ownership.",
+        [TextKey.PreviewAssetRendererUnavailable] = "Static assets are ready, but the standalone asset renderer is not implemented.",
+        [TextKey.PreviewModelMissing] = "Static preview unavailable: model file not found.",
+        [TextKey.PreviewSkeletonMissing] = "Static preview unavailable: skeleton file not found.",
+        [TextKey.PreviewModelAndSkeletonMissing] = "Static preview unavailable: model and skeleton files not found.",
         [TextKey.PreviewSelectModel] = "Select a model to preview.",
         [TextKey.PreviewLoading] = "Preparing the selected model preview...",
         [TextKey.PreviewSuspended] = "Preview is paused while this view is inactive.",
@@ -66,6 +73,13 @@ public sealed class Localizer
         [UiLanguage.English] = English,
         [UiLanguage.Japanese] = Translate(new Dictionary<TextKey, string>
         {
+            [TextKey.PreviewBackend] = "\u30d7\u30ec\u30d3\u30e5\u30fcBackend: {0}",
+            [TextKey.PreviewInputInvalid] = "\u30d7\u30ec\u30d3\u30e5\u30fc\u5165\u529b\u30c7\u30fc\u30bf\u304c\u4e0d\u5b8c\u5168\u3001\u307e\u305f\u306f\u6574\u5408\u3057\u3066\u3044\u307e\u305b\u3093\u3002",
+            [TextKey.PreviewCharaViewUnsafe] = "Human\u30c7\u30fc\u30bf\u306f\u6e96\u5099\u5b8c\u4e86\u3067\u3059\u304c\u3001Dalamud\u306bCharaView\u67a0\u3068\u30c6\u30af\u30b9\u30c1\u30e3\u306e\u6392\u4ed6\u7684\u306a\u6240\u6709API\u304c\u3042\u308a\u307e\u305b\u3093\u3002",
+            [TextKey.PreviewAssetRendererUnavailable] = "\u9759\u6b62\u30a2\u30bb\u30c3\u30c8\u306f\u6e96\u5099\u5b8c\u4e86\u3067\u3059\u304c\u3001\u72ec\u7acbAsset Renderer\u306f\u672a\u5b9f\u88c5\u3067\u3059\u3002",
+            [TextKey.PreviewModelMissing] = "\u9759\u6b623D\u30d7\u30ec\u30d3\u30e5\u30fc\u4e0d\u53ef: \u30e2\u30c7\u30eb\u30d5\u30a1\u30a4\u30eb\u304c\u3042\u308a\u307e\u305b\u3093\u3002",
+            [TextKey.PreviewSkeletonMissing] = "\u9759\u6b623D\u30d7\u30ec\u30d3\u30e5\u30fc\u4e0d\u53ef: \u30b9\u30b1\u30eb\u30c8\u30f3\u30d5\u30a1\u30a4\u30eb\u304c\u3042\u308a\u307e\u305b\u3093\u3002",
+            [TextKey.PreviewModelAndSkeletonMissing] = "\u9759\u6b623D\u30d7\u30ec\u30d3\u30e5\u30fc\u4e0d\u53ef: \u30e2\u30c7\u30eb\u3068\u30b9\u30b1\u30eb\u30c8\u30f3\u30d5\u30a1\u30a4\u30eb\u304c\u3042\u308a\u307e\u305b\u3093\u3002",
             [TextKey.PreviewSelectModel] = "\u30d7\u30ec\u30d3\u30e5\u30fc\u3059\u308b\u30e2\u30c7\u30eb\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
             [TextKey.PreviewLoading] = "\u9078\u629e\u3057\u305f\u30e2\u30c7\u30eb\u306e\u30d7\u30ec\u30d3\u30e5\u30fc\u3092\u6e96\u5099\u4e2d...",
             [TextKey.PreviewSuspended] = "\u3053\u306e\u753b\u9762\u304c\u975e\u8868\u793a\u306e\u305f\u3081\u30d7\u30ec\u30d3\u30e5\u30fc\u3092\u4e00\u6642\u505c\u6b62\u3057\u3066\u3044\u307e\u3059\u3002",

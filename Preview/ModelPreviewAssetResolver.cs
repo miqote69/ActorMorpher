@@ -13,9 +13,13 @@ public sealed class ModelPreviewAssetResolver
     ];
 
     private readonly Func<string, bool> fileExists;
+    private readonly HumanPreviewDataBuilder humanBuilder;
 
-    public ModelPreviewAssetResolver(Func<string, bool> fileExists)
-        => this.fileExists = fileExists;
+    public ModelPreviewAssetResolver(Func<string, bool> fileExists, HumanPreviewDataBuilder? humanBuilder = null)
+    {
+        this.fileExists = fileExists;
+        this.humanBuilder = humanBuilder ?? new HumanPreviewDataBuilder();
+    }
 
     public ModelPreviewAssetReport Resolve(ModelSearchEntry model)
         => model.Category switch
@@ -26,10 +30,9 @@ public sealed class ModelPreviewAssetResolver
             _ => Invalid(model),
         };
 
-    private static ModelPreviewAssetReport ResolveHuman(ModelSearchEntry model)
+    private ModelPreviewAssetReport ResolveHuman(ModelSearchEntry model)
     {
-        var ready = model.HumanAppearance is not null
-            && model.ModelAppearance is { Completeness: AppearanceCompleteness.Complete };
+        var ready = humanBuilder.TryBuild(model, out _, out _);
         return new ModelPreviewAssetReport(
             model.ModelId,
             model.Category,

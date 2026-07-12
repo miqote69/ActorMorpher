@@ -66,3 +66,5 @@ Actor Morpher remains MIT licensed. Since no third-party implementation code was
 ## Model preview lifetime
 
 `ModelPreviewController` is the sole owner of preview backend selection and release. It debounces selection for 200 ms, distinguishes entries by row/category/source/source-row, and ignores superseded generations. Backend resources are released when Model Search becomes inactive, its UI heartbeat expires, logout or territory change occurs, or the plugin is disposed. All backend lifecycle exceptions are contained and diagnosed before a future native renderer is enabled.
+
+Human preview preparation clones 26 Customize bytes, ten equipment models, main/off-hand plus an empty third weapon slot, two empty glasses slots, and visibility/visor flags into immutable managed data. It rejects mismatched ModelChara ID, source row, payload lengths, Customize, or equipment. The current safe capability profile deliberately reports both exclusive CharaView slot ownership and native texture ownership as unavailable.

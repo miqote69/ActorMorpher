@@ -44,11 +44,14 @@ public sealed class Plugin : IDalamudPlugin
     private readonly NativeDrawObjectInjector drawObjectInjector;
     private readonly HashSet<LogicalActorKey> combinedRestorePending = new();
     private readonly ModelPreviewController modelPreview;
+    private readonly HumanPreviewDataBuilder humanPreviewDataBuilder = new();
+    private readonly ModelPreviewSupportResolver modelPreviewSupportResolver;
     private readonly ModelPreviewAssetResolver modelPreviewAssetResolver;
     private readonly BulkOutfitTargetResolver bulkOutfitTargetResolver = new();
     private readonly Dictionary<ClientLanguage, IReadOnlyList<ModelSearchEntry>> modelSearchCaches = new();
     private readonly Dictionary<ClientLanguage, IReadOnlyDictionary<uint, string>> equipmentNameCaches = new();
-    private readonly Dictionary<(byte Type, ushort Model, ushort Base, byte Variant), ModelPreviewAssetReport> previewAssetCaches = new();
+    private readonly Dictionary<(uint RowId, ModelCategory Category, ModelSource Source, uint SourceId), ModelPreviewAssetReport> previewAssetCaches = new();
+    private readonly Dictionary<(uint RowId, ModelCategory Category, ModelSource Source, uint SourceId), ModelPreviewSupport> previewSupportCaches = new();
 
     public Configuration Configuration { get; }
     public Localizer Localizer { get; }
@@ -85,7 +88,8 @@ public sealed class Plugin : IDalamudPlugin
             isDev);
         diagnosticController.Start();
         humanModelClassifier = new HumanModelClassifier(DataManager);
-        modelPreviewAssetResolver = new ModelPreviewAssetResolver(DataManager.FileExists);
+        modelPreviewAssetResolver = new ModelPreviewAssetResolver(DataManager.FileExists, humanPreviewDataBuilder);
+        modelPreviewSupportResolver = new ModelPreviewSupportResolver(humanPreviewDataBuilder);
         actorRegistry = new ActorRegistry(ObjectTable, ClientState, Framework, humanModelClassifier, diagnosticRouter);
         actorIdentity = new ActorIdentityService(diagnosticRouter);
         var clientContext = new DalamudClientContext(ClientState);
@@ -364,7 +368,7 @@ public sealed class Plugin : IDalamudPlugin
     public void ResetModelPreviewCamera() => modelPreview.ResetCamera();
     public ModelPreviewAssetReport GetModelPreviewAssets(ModelSearchEntry model)
     {
-        var key = (model.Type, model.Model, model.Base, model.Variant);
+        var key = PreviewCacheKey(model);
         if (!previewAssetCaches.TryGetValue(key, out var report))
         {
             report = modelPreviewAssetResolver.Resolve(model);
@@ -372,6 +376,20 @@ public sealed class Plugin : IDalamudPlugin
         }
         return report;
     }
+
+    public ModelPreviewSupport GetModelPreviewSupport(ModelSearchEntry model)
+    {
+        var key = PreviewCacheKey(model);
+        if (!previewSupportCaches.TryGetValue(key, out var support))
+        {
+            support = modelPreviewSupportResolver.Resolve(model, GetModelPreviewAssets(model));
+            previewSupportCaches.Add(key, support);
+        }
+        return support;
+    }
+
+    private static (uint RowId, ModelCategory Category, ModelSource Source, uint SourceId) PreviewCacheKey(ModelSearchEntry model)
+        => (model.RowId, model.Category, model.Source, model.SourceId);
 
     private static bool FailUnsupported(out string message)
     {
