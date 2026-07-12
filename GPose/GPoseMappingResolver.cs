@@ -1,7 +1,11 @@
+using Dalamud.Game.ClientState.Objects.Enums;
+
 namespace ActorMorpher.GPose;
 
 public sealed class GPoseMappingResolver
 {
+    private const ushort GPoseLocalPlayerIndex = 201;
+
     public IReadOnlyDictionary<ActorRepresentationKey, LogicalActorKey> Resolve(
         IReadOnlyList<ActorEntry> normalActors,
         IReadOnlyList<ActorEntry> currentActors)
@@ -17,7 +21,12 @@ public sealed class GPoseMappingResolver
                 .Where(candidate => !result.ContainsKey(candidate.RepresentationKey))
                 .ToArray();
 
-            var match = Unique(available, candidate => source.Key.GameObjectId != 0
+            var match = source.IsLocalPlayer
+                ? Unique(available, static candidate =>
+                    candidate.RepresentationKey.ObjectIndex == GPoseLocalPlayerIndex
+                    && candidate.ObjectKind == ObjectKind.Pc)
+                : null;
+            match ??= Unique(available, candidate => source.Key.GameObjectId != 0
                     && candidate.RepresentationKey.GameObjectId == source.Key.GameObjectId)
                 ?? Unique(available, candidate => source.Key.EntityId is not 0 and not 0xE0000000
                     && candidate.RepresentationKey.EntityId == source.Key.EntityId)

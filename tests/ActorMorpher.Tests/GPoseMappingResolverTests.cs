@@ -32,13 +32,37 @@ public sealed class GPoseMappingResolverTests
         Assert.Empty(result);
     }
 
+    [Fact]
+    public void MapsLocalPlayerToValidatedGPosePlayerSlot()
+    {
+        var source = Entry(1, 100, 10, 0, "Source", isLocalPlayer: true);
+        var copy = Entry(201, 900, 0xE0000000, 0, "GPose Copy");
+
+        var result = new GPoseMappingResolver().Resolve([source], [source, copy]);
+
+        Assert.Single(result);
+        Assert.Equal(source.Key, result[copy.Current.RepresentationKey]);
+    }
+
+    [Fact]
+    public void DoesNotUseGPosePlayerSlotForNonPlayerObjects()
+    {
+        var source = Entry(1, 100, 10, 20, "Source", isLocalPlayer: true);
+        var copy = Entry(201, 900, 0xE0000000, 20, "Copy", ObjectKind.EventNpc);
+
+        var result = new GPoseMappingResolver().Resolve([source], [source, copy]);
+
+        Assert.Empty(result);
+    }
+
     private static ActorEntry Entry(
         ushort index,
         ulong gameObjectId,
         uint entityId,
         uint baseId,
         string name,
-        ObjectKind kind = ObjectKind.Pc)
+        ObjectKind kind = ObjectKind.Pc,
+        bool isLocalPlayer = false)
     {
         var logical = new LogicalActorKey(index, gameObjectId, entityId, baseId, kind, 30);
         var representation = new ActorRepresentationKey(index, gameObjectId, entityId, false);
@@ -55,6 +79,6 @@ public sealed class GPoseMappingResolverTests
             0,
             0,
             false);
-        return new ActorEntry(logical, name, kind, false, new List<ActorSnapshot> { snapshot });
+        return new ActorEntry(logical, name, kind, isLocalPlayer, new List<ActorSnapshot> { snapshot });
     }
 }

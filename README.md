@@ -56,6 +56,7 @@ Restoration is not guaranteed. FFXIV object recreation, territory changes, actor
 - Attempts to match normal-world actors with their GPose representations.
 - Uses multiple identity values instead of relying only on actor names or fixed object indexes.
 - Skips ambiguous matches rather than applying changes to an uncertain target.
+- Rejects GPose operations when no mapped GPose representation exists instead of falling back to the hidden field actor.
 
 GPose support is intentionally conservative and remains under active testing.
 

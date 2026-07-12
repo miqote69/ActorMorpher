@@ -6,13 +6,17 @@ public sealed class RegistryActorResolver(ActorRegistry registry, IClientContext
     {
         if (registry.TryGet(key, out var actor))
         {
-            snapshot = context?.IsGPosing == true
-                ? actor.Representations.FirstOrDefault(static representation => representation.RepresentationKey.IsGPoseRepresentation) ?? actor.Current
-                : actor.Representations.FirstOrDefault(static representation => !representation.RepresentationKey.IsGPoseRepresentation) ?? actor.Current;
-            return true;
+            snapshot = SelectRepresentation(actor, context?.IsGPosing == true)!;
+            return snapshot is not null;
         }
 
         snapshot = null!;
         return false;
     }
+
+    public static ActorSnapshot? SelectRepresentation(ActorEntry actor, bool isGPosing)
+        => isGPosing
+            ? actor.Representations.FirstOrDefault(static representation => representation.RepresentationKey.IsGPoseRepresentation)
+            : actor.Representations.FirstOrDefault(static representation => !representation.RepresentationKey.IsGPoseRepresentation)
+                ?? actor.Current;
 }

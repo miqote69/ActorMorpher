@@ -43,6 +43,8 @@ Human-to-Human restoration performs two complete redraws with the original BaseD
 
 `IClientState.IsGPosing` is monitored on Framework Update. Entry waits for representations before mapping. Mapping does not use a fixed GPose index range or name-only matching. It tries unique GameObject ID, network Entity ID, Base ID plus ObjectKind, then a strict composite match. Ambiguous copies are skipped.
 
+The local player additionally accepts the current client-defined GPose player slot at Object Table index 201, but only when the source is the local player and the candidate is a PC. Other actors continue to use identity matching. While GPose is active, resolver failure never falls back to a normal-world representation; the operation is rejected instead of redrawing a hidden field actor.
+
 ## Bulk Outfit
 
 Outfit data contains exactly ten armor/accessory slots: Head, Body, Hands, Legs, Feet, Ears, Neck, Wrists, Right Ring, and Left Ring. Each slot stores Set, Variant, Stain 1, and Stain 2. Facewear, hat visibility, and visor state are separate. Weapons, job, level, customize, ModelChara ID, and weapon visibility are not part of the outfit model.
