@@ -44,7 +44,19 @@ public sealed class ModelPreviewTextureSource(IDataManager dataManager)
             var normal = normalPath is null ? null : dataManager.GetFile<TexFile>(normalPath);
             var mask = maskPath is null ? null : dataManager.GetFile<TexFile>(maskPath);
             if (normal is not null && mask is not null)
-                return ModelPreviewTextureComposer.ComposeHairBaseColor(context, normal, mask);
+            {
+                var hairContext = context.ForHairMaterial(material);
+                return ModelPreviewTextureComposer.ComposeHairBaseColor(hairContext, normal, mask);
+            }
+        }
+        if (string.Equals(material.ShaderPackage, "skin.shpk", StringComparison.OrdinalIgnoreCase))
+        {
+            var diffusePath = material.FindTexture(SamplerDiffuse, "_d.tex", "_base.tex");
+            var normalPath = material.FindTexture(SamplerNormal, "_n.tex", "_norm.tex");
+            var skinDiffuse = diffusePath is null ? null : dataManager.GetFile<TexFile>(diffusePath);
+            var normal = normalPath is null ? null : dataManager.GetFile<TexFile>(normalPath);
+            if (skinDiffuse is not null && normal is not null)
+                return ModelPreviewTextureComposer.ComposeSkinBaseColor(context, skinDiffuse, normal);
         }
         var diffuse = material.FindTexture(
             SamplerDiffuse,
@@ -75,11 +87,19 @@ public sealed class ModelPreviewTextureSource(IDataManager dataManager)
 
 }
 
-public sealed record ModelPreviewTextureContext(Vector4 HairColor, Vector4 HairHighlightColor)
+public sealed record ModelPreviewTextureContext(
+    Vector4 HairColor,
+    Vector4 HairHighlightColor,
+    Vector4 SkinColor,
+    bool UseMaterialHairColor)
 {
+    private const uint DiffuseColorConstant = 0x2C2A34DD;
+
     public static ModelPreviewTextureContext Default { get; } = new(
         new Vector4(130, 64, 13, 255) / 255.0f,
-        new Vector4(77, 126, 240, 255) / 255.0f);
+        new Vector4(77, 126, 240, 255) / 255.0f,
+        Vector4.One,
+        false);
 
     public static ModelPreviewTextureContext FromModel(ModelSearchEntry? model, byte[]? humanCmp)
     {
@@ -91,19 +111,46 @@ public sealed record ModelPreviewTextureContext(Vector4 HairColor, Vector4 HairH
                 => demihuman.ModelAppearance.Customize,
             _ => null,
         };
-        if (customize is null
-            || humanCmp is null
-            || !HumanCmpPreviewPalette.TryGetHairColors(
+        var useMaterialHairColor = model?.Category == ModelCategory.Demihuman;
+        var fallback = Default with { UseMaterialHairColor = useMaterialHairColor };
+        if (customize is null || humanCmp is null)
+            return fallback;
+
+        var hair = fallback.HairColor;
+        var highlight = fallback.HairHighlightColor;
+        var skin = fallback.SkinColor;
+        if (!HumanCmpPreviewPalette.TryGetHairColors(
                 humanCmp,
                 customize[4],
                 customize[1],
                 customize[10],
                 customize[11],
-                out var hair,
-                out var highlight))
-            return Default;
+                out hair,
+                out highlight))
+            return fallback;
         if (customize[7] == 0)
             highlight = hair;
-        return new ModelPreviewTextureContext(hair, highlight);
+        HumanCmpPreviewPalette.TryGetSkinColor(
+            humanCmp,
+            customize[4],
+            customize[1],
+            customize[8],
+            out skin);
+        if (skin == default)
+            skin = fallback.SkinColor;
+        return new ModelPreviewTextureContext(hair, highlight, skin, useMaterialHairColor);
+    }
+
+    public ModelPreviewTextureContext ForHairMaterial(MtrlPreviewData material)
+    {
+        if (!UseMaterialHairColor
+            || !material.TryGetConstantVector3(DiffuseColorConstant, out var diffuseColor))
+            return this;
+        var materialColor = new Vector4(diffuseColor, 1.0f);
+        return this with
+        {
+            HairColor = materialColor,
+            HairHighlightColor = materialColor,
+        };
     }
 }

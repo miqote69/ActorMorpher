@@ -74,5 +74,39 @@ public sealed class HumanCmpPreviewPaletteTests
 
         Assert.Equal(new Vector4(5, 10, 30, 255) / 255.0f, context.HairColor);
         Assert.Equal(new Vector4(20, 30, 50, 255) / 255.0f, context.HairHighlightColor);
+        Assert.True(context.UseMaterialHairColor);
+    }
+
+    [Fact]
+    public void ReadsAuraFemaleSkinColorForSkinShaderComposition()
+    {
+        var data = new byte[18432 + 32 * 5120];
+        var skinOffset = 18432 + 23 * 5120 + 124 * 4;
+        data[skinOffset] = 142;
+        data[skinOffset + 1] = 165;
+        data[skinOffset + 2] = 179;
+        data[skinOffset + 3] = 255;
+
+        var result = HumanCmpPreviewPalette.TryGetSkinColor(data, 12, 1, 124, out var skin);
+
+        Assert.True(result);
+        Assert.Equal(new Vector4(142, 165, 179, 255) / 255.0f, skin);
+
+        var customize = new byte[26];
+        customize[0] = 6;
+        customize[1] = 1;
+        customize[4] = 12;
+        customize[8] = 124;
+        var human = new HumanAppearance(customize, new ulong[10], 0, 0, false);
+        var appearance = AppearanceData.Create(
+            0, ModelCategory.Human, 1031878, AppearanceCompleteness.Complete, customize, new ulong[10]);
+        var model = new ModelSearchEntry(
+            0, ModelCategory.Human, ModelSource.EventNpc, 1031878, "Aura Young", 1, 0, 1, 1,
+            6, 1, (byte)NpcAge.Young, human, AppearanceCompleteness.Complete, appearance);
+
+        var context = ModelPreviewTextureContext.FromModel(model, data);
+
+        Assert.Equal(skin, context.SkinColor);
+        Assert.False(context.UseMaterialHairColor);
     }
 }

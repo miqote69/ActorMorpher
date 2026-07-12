@@ -66,8 +66,8 @@ public sealed class ModelPreviewAssetResolver
             FirstPresent(
                 ModelPreviewAssetKind.Model,
                 "Face",
-                modelCodes.Select(code =>
-                    $"chara/human/{code}/obj/face/f{faceId:D4}/model/{code}f{faceId:D4}_fac.mdl"),
+                modelCodes.SelectMany(code => FaceIds(faceId).Select(id =>
+                    $"chara/human/{code}/obj/face/f{id:D4}/model/{code}f{id:D4}_fac.mdl")),
                 true,
                 1),
         };
@@ -167,6 +167,14 @@ public sealed class ModelPreviewAssetResolver
 
     private static IEnumerable<string> Codes(params string[] codes)
         => codes.Distinct(StringComparer.Ordinal);
+
+    private static IEnumerable<byte> FaceIds(byte faceId)
+    {
+        yield return faceId;
+        var normalized = (byte)(faceId % 100);
+        if (faceId > 100 && normalized > 0)
+            yield return normalized;
+    }
 
     private static IReadOnlyList<string> ModelCodes(
         string specificCode,

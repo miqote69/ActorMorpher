@@ -171,6 +171,45 @@ public sealed class ModelPreviewAssetResolverTests
     }
 
     [Fact]
+    public void YoungAuraNpcNormalizesNpcFaceValueToExistingFaceModelId()
+    {
+        var customize = new byte[26];
+        customize[0] = 6;
+        customize[1] = 1;
+        customize[2] = (byte)NpcAge.Young;
+        customize[4] = 12;
+        customize[5] = 102;
+        customize[6] = 1;
+        var equipment = new ulong[10];
+        equipment[(int)OutfitSlot.Body] = 0x00010170;
+        var appearance = new HumanAppearance(customize, equipment, 0, 0, false);
+        var modelAppearance = AppearanceData.Create(
+            0, ModelCategory.Human, 1031878, AppearanceCompleteness.Complete, customize, equipment);
+        var entry = Entry(ModelCategory.Human, 1, 0, 1) with
+        {
+            RowId = 0,
+            Source = ModelSource.EventNpc,
+            SourceId = 1031878,
+            HumanAppearance = appearance,
+            ModelAppearance = modelAppearance,
+        };
+        var present = new HashSet<string>
+        {
+            "chara/human/c1404/obj/face/f0002/model/c1404f0002_fac.mdl",
+            "chara/human/c1404/obj/hair/h0001/model/c1404h0001_hir.mdl",
+            "chara/equipment/e0368/model/c0101e0368_top.mdl",
+        };
+
+        var report = new ModelPreviewAssetResolver(present.Contains).Resolve(entry);
+
+        Assert.Equal(ModelPreviewReadiness.AssetsComplete, report.Readiness);
+        Assert.Equal((ushort)1404, report.HumanTargetCode);
+        Assert.Contains(report.Assets, asset => asset.Label == "Face"
+            && asset.Path == "chara/human/c1404/obj/face/f0002/model/c1404f0002_fac.mdl"
+            && asset.IsPresent);
+    }
+
+    [Fact]
     public void MissingEquippedHandsAndFeetFallBackToSharedBareModels()
     {
         var customize = new byte[26];

@@ -33,6 +33,33 @@ public static class ModelPreviewTextureComposer
         return ModelPreviewTexturePayload.FromBgra(width, height, output);
     }
 
+    public static ModelPreviewTexturePayload ComposeSkinBaseColor(
+        ModelPreviewTextureContext context,
+        TexFile diffuse,
+        TexFile normal)
+    {
+        var width = diffuse.Header.Width;
+        var height = diffuse.Header.Height;
+        ValidateDimensions(width, height);
+        var output = new byte[checked(width * height * 4)];
+        for (var y = 0; y < height; ++y)
+        {
+            for (var x = 0; x < width; ++x)
+            {
+                var targetOffset = (y * width + x) * 4;
+                var diffuseOffset = SampleOffset(diffuse, x, y, width, height);
+                var normalOffset = SampleOffset(normal, x, y, width, height);
+                var influence = normal.ImageData[normalOffset] / 255.0f;
+                var tint = Vector4.Lerp(Vector4.One, context.SkinColor, influence);
+                output[targetOffset] = ToByte(diffuse.ImageData[diffuseOffset] / 255.0f * tint.Z);
+                output[targetOffset + 1] = ToByte(diffuse.ImageData[diffuseOffset + 1] / 255.0f * tint.Y);
+                output[targetOffset + 2] = ToByte(diffuse.ImageData[diffuseOffset + 2] / 255.0f * tint.X);
+                output[targetOffset + 3] = diffuse.ImageData[diffuseOffset + 3];
+            }
+        }
+        return ModelPreviewTexturePayload.FromBgra(width, height, output);
+    }
+
     public static ModelPreviewTexturePayload? ComposeCharacterBaseColor(
         MtrlPreviewData material,
         TexFile index,

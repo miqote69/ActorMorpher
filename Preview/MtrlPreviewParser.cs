@@ -41,6 +41,7 @@ public sealed class MtrlPreviewParser
         var dataSet = reader.Bytes(dataSetSize);
 
         var samplers = new List<MtrlPreviewSampler>();
+        var constants = new List<MtrlPreviewConstant>();
         if (reader.Remaining >= ShaderHeaderSize)
         {
             var shaderValueListSize = reader.UInt16();
@@ -49,7 +50,9 @@ public sealed class MtrlPreviewParser
             var samplerCount = reader.UInt16();
             reader.Skip(4);
             reader.Skip(checked(shaderKeyCount * ShaderKeySize));
-            reader.Skip(checked(constantCount * ConstantSize));
+            var constantHeaders = new (uint Id, ushort Offset, ushort Size)[constantCount];
+            for (var index = 0; index < constantHeaders.Length; ++index)
+                constantHeaders[index] = (reader.UInt32(), reader.UInt16(), reader.UInt16());
             for (var index = 0; index < samplerCount; ++index)
             {
                 var samplerId = reader.UInt32();
@@ -59,7 +62,21 @@ public sealed class MtrlPreviewParser
                 if (textureIndex < texturePaths.Length)
                     samplers.Add(new MtrlPreviewSampler(samplerId, texturePaths[textureIndex]));
             }
-            reader.Skip(shaderValueListSize);
+            var shaderValues = reader.Bytes(shaderValueListSize);
+            foreach (var header in constantHeaders)
+            {
+                if (header.Size % sizeof(float) != 0
+                    || header.Offset > shaderValues.Length - header.Size)
+                    throw new InvalidDataException("MTRL constant data is invalid.");
+                var values = new float[header.Size / sizeof(float)];
+                for (var index = 0; index < values.Length; ++index)
+                {
+                    var offset = header.Offset + index * sizeof(float);
+                    values[index] = BitConverter.Int32BitsToSingle(
+                        BinaryPrimitives.ReadInt32LittleEndian(shaderValues.AsSpan(offset)));
+                }
+                constants.Add(new MtrlPreviewConstant(header.Id, values));
+            }
         }
 
         return new MtrlPreviewData(
@@ -67,6 +84,7 @@ public sealed class MtrlPreviewParser
             shaderPackage,
             texturePaths,
             samplers,
+            constants,
             ReadDiffuseRows(dataSet));
     }
 
@@ -130,11 +148,25 @@ public sealed record MtrlPreviewData(
     string ShaderPackage,
     IReadOnlyList<string> TexturePaths,
     IReadOnlyList<MtrlPreviewSampler> Samplers,
+    IReadOnlyList<MtrlPreviewConstant> Constants,
     IReadOnlyList<Vector3> DiffuseRows)
 {
     public string? FindTexture(uint samplerId, params string[] suffixes)
         => Samplers.FirstOrDefault(sampler => sampler.SamplerId == samplerId)?.TexturePath
             ?? TexturePaths.FirstOrDefault(path => suffixes.Any(suffix => path.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)));
+
+    public bool TryGetConstantVector3(uint constantId, out Vector3 value)
+    {
+        var values = Constants.FirstOrDefault(constant => constant.ConstantId == constantId)?.Values;
+        if (values is not { Count: >= 3 })
+        {
+            value = default;
+            return false;
+        }
+        value = new Vector3(values[0], values[1], values[2]);
+        return float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z);
+    }
 }
 
 public sealed record MtrlPreviewSampler(uint SamplerId, string TexturePath);
+public sealed record MtrlPreviewConstant(uint ConstantId, IReadOnlyList<float> Values);
