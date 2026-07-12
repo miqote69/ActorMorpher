@@ -27,7 +27,8 @@ public sealed record ModelFileGeometry(
     long VertexCount,
     long IndexCount,
     int LodCount,
-    ModelPreviewBounds Bounds);
+    ModelPreviewBounds Bounds,
+    int SkippedMeshCount = 0);
 
 public enum ModelPreviewGeometryPartState
 {
@@ -60,7 +61,8 @@ public sealed record ModelPreviewGeometryReport(
     long IndexCount,
     int MaximumLodCount,
     ModelPreviewBounds? Bounds,
-    ModelPreviewCameraFrame? AutoFrame)
+    ModelPreviewCameraFrame? AutoFrame,
+    int SkippedMeshCount = 0)
 {
     public long TriangleCount => IndexCount / 3;
     public int ReadyPartCount => Parts.Count(static part => part.State == ModelPreviewGeometryPartState.Ready);

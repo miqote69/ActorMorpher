@@ -32,13 +32,15 @@ Actor Morpher therefore continues to reject native preview allocation. A crash l
 
 `ModelPreviewSupportResolver` separates input completeness from backend availability. Human data can report `StaticReady` while remaining blocked by missing CharaView slot/texture ownership. Demihuman and Monster data separately report missing model, missing skeleton, or a ready static asset set blocked only by the unimplemented standalone renderer.
 
-## Static geometry inspection
+## Static geometry extraction
 
-The installed Lumina API exposes MDL mesh records, vertex and index counts, LOD records, and model bounding boxes without native game memory access. `LuminaModelGeometrySource` now reads only those public fields through `IDataManager.GetFile<MdlFile>`. `ModelPreviewGeometryInspector` contains file-local failures, combines bounds across available Demihuman parts, and emits aggregate mesh, vertex, index, triangle, and LOD counts as diagnostic event `AM7104`.
+The installed Lumina assembly is version 7.5.0 at commit `efef7038ddfe3036cc3ca36907be2771b009ca1d`. Its assembly metadata identifies `https://github.com/NotAdam/Lumina` as the source repository. The matching official source and installed DLL both expose `Lumina.Models.Models.Mesh.Vertices` and `Mesh.Indices` as public fields. Actor Morpher therefore uses Lumina's structured model parser and does not duplicate the MDL binary layout, parse OBJ text, or reflect private members.
 
-`ModelPreviewCameraFraming` calculates a square-preview target, distance, and near/far planes from the combined bounds using a validated field of view and padding. Geometry inspection starts only after the 200 ms preview selection debounce settles, so rapidly scrolling the model list does not synchronously parse every intermediate MDL.
+`LuminaModelGeometrySource.LoadCpuModel` preflights MDL mesh, vertex, and index totals before Lumina expands High LOD data. It selects Main meshes when present and converts public Position, Normal, UV, Color, MaterialPath, and 16-bit triangle indices into managed CPU data. Positions and indices are required and finite; missing or invalid normals are generated from adjacent triangles; absent UV and color values receive deterministic defaults. A malformed mesh is isolated from valid meshes and counted as skipped. A file with no valid mesh fails as a unit.
 
-This phase does not access raw vertex buffers, compile shaders, create a Direct3D resource, or claim that metadata readiness is a rendered frame. Lumina's high-level `Mesh` type does not expose its vertex and index arrays as public properties in the installed build, so a renderer still requires a separately reviewed vertex extraction strategy.
+`ModelPreviewGeometryInspector` contains file-local failures, combines actual decoded vertex bounds across available Demihuman parts, and emits aggregate mesh, skipped mesh, vertex, index, triangle, and LOD counts as diagnostic event `AM7104`. Any skipped mesh marks the result partial. `ModelPreviewCameraFraming` calculates a square-preview target, distance, and near/far planes from those combined bounds. Extraction starts only after the 200 ms preview selection debounce settles, so rapidly scrolling the model list does not parse every intermediate MDL.
+
+This phase does not compile shaders, create a Direct3D resource, upload a GPU buffer, load material textures, apply skeletal animation, or claim that CPU geometry readiness is a rendered frame.
 
 ## Conditions to continue
 

@@ -3,6 +3,8 @@ using Dalamud.Game;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Game.Command;
 using Dalamud.IoC;
+using Dalamud.Interface.Textures;
+using Dalamud.Interface.Textures.TextureWraps;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
@@ -29,6 +31,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] private static IClientState ClientState { get; set; } = null!;
     [PluginService] private static IFramework Framework { get; set; } = null!;
     [PluginService] private static IGameInteropProvider GameInteropProvider { get; set; } = null!;
+    [PluginService] private static ITextureProvider TextureProvider { get; set; } = null!;
 
     private readonly MainWindow mainWindow;
     private readonly WindowSystem windowSystem = new("ActorMorpher");
@@ -48,12 +51,14 @@ public sealed class Plugin : IDalamudPlugin
     private readonly ModelPreviewSupportResolver modelPreviewSupportResolver;
     private readonly ModelPreviewAssetResolver modelPreviewAssetResolver;
     private readonly ModelPreviewGeometryInspector modelPreviewGeometryInspector;
+    private readonly LocalPlayerAppearancePersistence localPlayerAppearancePersistence = new();
     private readonly BulkOutfitTargetResolver bulkOutfitTargetResolver = new();
     private readonly Dictionary<ClientLanguage, IReadOnlyList<ModelSearchEntry>> modelSearchCaches = new();
-    private readonly Dictionary<ClientLanguage, IReadOnlyDictionary<uint, string>> equipmentNameCaches = new();
+    private readonly Dictionary<ClientLanguage, IReadOnlyDictionary<(OutfitSlot Slot, uint ModelKey), EquipmentItemDisplay>> equipmentDisplayCaches = new();
     private readonly Dictionary<(uint RowId, ModelCategory Category, ModelSource Source, uint SourceId), ModelPreviewAssetReport> previewAssetCaches = new();
     private readonly Dictionary<(uint RowId, ModelCategory Category, ModelSource Source, uint SourceId), ModelPreviewSupport> previewSupportCaches = new();
     private readonly Dictionary<(uint RowId, ModelCategory Category, ModelSource Source, uint SourceId), ModelPreviewGeometryReport> previewGeometryCaches = new();
+    private long nextLocalAppearanceReapplyTick;
 
     public Configuration Configuration { get; }
     public Localizer Localizer { get; }
@@ -131,6 +136,7 @@ public sealed class Plugin : IDalamudPlugin
         gposeCoordinator.Exited += OnRepresentationContextChanged;
         appearanceApplyService.OperationCompleted += OnAppearanceOperationCompleted;
         bulkOutfitTargetResolver = new BulkOutfitTargetResolver(diagnosticRouter, () => ClientState.ClientLanguage);
+        localPlayerAppearancePersistence.UpdateContext(ClientState.TerritoryType, ClientState.IsLoggedIn);
         mainWindow = new MainWindow(this);
         windowSystem.AddWindow(mainWindow);
 
@@ -145,10 +151,12 @@ public sealed class Plugin : IDalamudPlugin
 
         PluginInterface.UiBuilder.Draw += windowSystem.Draw;
         PluginInterface.UiBuilder.OpenConfigUi += ToggleMainUi;
+        Framework.Update += OnPluginFrameworkUpdate;
     }
 
     public void Dispose()
     {
+        Framework.Update -= OnPluginFrameworkUpdate;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleMainUi;
         PluginInterface.UiBuilder.Draw -= windowSystem.Draw;
         CommandManager.RemoveHandler(CommandName);
@@ -244,6 +252,32 @@ public sealed class Plugin : IDalamudPlugin
         => bulkOutfitService.Cancel();
 
     public OutfitData? SourceOutfit => bulkOutfitService.SourceOutfit;
+    public IReadOnlyList<EquipmentDisplayEntry> GetSourceOutfitEquipment()
+        => SourceOutfit is { } source
+            ? source.Equipment.Select((armor, index) => CreateEquipmentDisplay(
+                (OutfitSlot)index,
+                armor.Set,
+                armor.Variant,
+                GetEquipmentDisplays(ClientState.ClientLanguage))).ToArray()
+            : Array.Empty<EquipmentDisplayEntry>();
+
+    public bool TryGetIconTexture(uint iconId, out IDalamudTextureWrap? texture)
+    {
+        texture = null;
+        if (iconId == 0)
+            return false;
+        try
+        {
+            texture = TextureProvider.GetFromGameIcon(new GameIconLookup(iconId)).GetWrapOrEmpty();
+            return texture is not null;
+        }
+        catch (Exception exception)
+        {
+            Log.Debug(exception, "Failed to load equipment icon {IconId}.", iconId);
+            return false;
+        }
+    }
+
     public bool CanUseLocalPlayerAsOutfitSource
         => actorRegistry.Entries.FirstOrDefault(static actor => actor.IsLocalPlayer)?.Current.Race is not null;
     public BulkOperation? CurrentBulkOperation => bulkOutfitService.CurrentOperation;
@@ -307,14 +341,12 @@ public sealed class Plugin : IDalamudPlugin
     {
         if (model.HumanAppearance is not { } appearance)
             return Array.Empty<EquipmentDisplayEntry>();
-        var names = GetEquipmentNames(ClientState.ClientLanguage);
+        var displays = GetEquipmentDisplays(ClientState.ClientLanguage);
         return appearance.Equipment.Select((packed, index) =>
         {
-            var modelKey = checked((uint)(packed & 0xFFFFFF));
             var set = checked((ushort)(packed & 0xFFFF));
             var variant = checked((byte)((packed >> 16) & 0xFF));
-            return new EquipmentDisplayEntry((OutfitSlot)index, set, variant,
-                modelKey == 0 ? string.Empty : names.GetValueOrDefault(modelKey, string.Empty));
+            return CreateEquipmentDisplay((OutfitSlot)index, set, variant, displays);
         }).ToArray();
     }
 
@@ -341,18 +373,60 @@ public sealed class Plugin : IDalamudPlugin
     public bool ContainsGameText(string value, string search)
         => GameTextComparison.Contains(value, search, ClientState.ClientLanguage);
 
-    private IReadOnlyDictionary<uint, string> GetEquipmentNames(ClientLanguage language)
+    private IReadOnlyDictionary<(OutfitSlot Slot, uint ModelKey), EquipmentItemDisplay> GetEquipmentDisplays(ClientLanguage language)
     {
-        if (equipmentNameCaches.TryGetValue(language, out var cache))
+        if (equipmentDisplayCaches.TryGetValue(language, out var cache))
             return cache;
-        cache = DataManager.GetExcelSheet<Item>(language)
-            .Where(static item => !item.Name.IsEmpty && item.ModelMain != 0)
-            .GroupBy(static item => checked((uint)(item.ModelMain & 0xFFFFFF)))
+
+        var candidates = new List<((OutfitSlot Slot, uint ModelKey) Key, string Name, uint IconId)>();
+        foreach (var item in DataManager.GetExcelSheet<Item>(language))
+        {
+            if (item.Name.IsEmpty
+                || item.ModelMain == 0
+                || !item.EquipSlotCategory.IsValid
+                || item.EquipSlotCategory.RowId == 0)
+                continue;
+            var modelKey = checked((uint)(item.ModelMain & 0xFFFFFF));
+            var slots = GetOutfitSlots(item.EquipSlotCategory.Value);
+            candidates.AddRange(slots.Select(slot => ((slot, modelKey), item.Name.ToString(), (uint)item.Icon)));
+        }
+
+        cache = candidates
+            .GroupBy(static candidate => candidate.Key)
             .ToDictionary(
                 static group => group.Key,
-                group => string.Join(" / ", group.Select(item => item.Name.ToString()).Distinct(GameTextComparison.GetComparer(language)).Take(3)));
-        equipmentNameCaches[language] = cache;
+                group => new EquipmentItemDisplay(
+                    string.Join(" / ", group.Select(static item => item.Name).Distinct(GameTextComparison.GetComparer(language)).Take(3)),
+                    group.Select(static item => item.IconId).FirstOrDefault(static icon => icon != 0)));
+        equipmentDisplayCaches[language] = cache;
         return cache;
+    }
+
+    private static EquipmentDisplayEntry CreateEquipmentDisplay(
+        OutfitSlot slot,
+        ushort set,
+        byte variant,
+        IReadOnlyDictionary<(OutfitSlot Slot, uint ModelKey), EquipmentItemDisplay> displays)
+    {
+        var modelKey = (uint)set | ((uint)variant << 16);
+        var display = modelKey == 0
+            ? null
+            : displays.GetValueOrDefault((slot, modelKey));
+        return new EquipmentDisplayEntry(slot, set, variant, display?.Name ?? string.Empty, display?.IconId ?? 0);
+    }
+
+    private static IEnumerable<OutfitSlot> GetOutfitSlots(EquipSlotCategory category)
+    {
+        if (category.Head == 1) yield return OutfitSlot.Head;
+        if (category.Body == 1) yield return OutfitSlot.Body;
+        if (category.Gloves == 1) yield return OutfitSlot.Hands;
+        if (category.Legs == 1) yield return OutfitSlot.Legs;
+        if (category.Feet == 1) yield return OutfitSlot.Feet;
+        if (category.Ears == 1) yield return OutfitSlot.Ears;
+        if (category.Neck == 1) yield return OutfitSlot.Neck;
+        if (category.Wrists == 1) yield return OutfitSlot.Wrists;
+        if (category.FingerR == 1) yield return OutfitSlot.RightRing;
+        if (category.FingerL == 1) yield return OutfitSlot.LeftRing;
     }
 
     public bool TryApplyModelToLocalPlayer(ModelSearchEntry model, out string message)
@@ -448,6 +522,7 @@ public sealed class Plugin : IDalamudPlugin
                 ["readyParts"] = report.ReadyPartCount,
                 ["failedParts"] = report.FailedPartCount,
                 ["meshCount"] = report.MeshCount,
+                ["skippedMeshCount"] = report.SkippedMeshCount,
                 ["vertexCount"] = report.VertexCount,
                 ["indexCount"] = report.IndexCount,
                 ["lodCount"] = report.MaximumLodCount,
@@ -474,6 +549,19 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnAppearanceOperationCompleted(LogicalActorKey actor, uint modelCharaId, bool isRestore, bool succeeded)
     {
+        var wasPersistentReapply = localPlayerAppearancePersistence.IsReapplyActor(actor);
+        if (wasPersistentReapply)
+            localPlayerAppearancePersistence.CompleteReapply(actor, succeeded);
+        var isLocalPlayer = wasPersistentReapply
+            || actorRegistry.Entries.Any(entry => entry.IsLocalPlayer && entry.Key == actor);
+        if (succeeded && isLocalPlayer)
+        {
+            if (isRestore)
+                localPlayerAppearancePersistence.RecordRestored();
+            else if (appearanceApplyService.Store.TryGet(actor, out var localState))
+                localPlayerAppearancePersistence.RecordApplied(localState.DesiredData);
+        }
+
         if (!succeeded)
         {
             combinedRestorePending.Remove(actor);
@@ -488,6 +576,40 @@ public sealed class Plugin : IDalamudPlugin
         }
         if (humanModelClassifier.IsHuman(modelCharaId))
             bulkOutfitService.Reapply(actor);
+    }
+
+    private void OnPluginFrameworkUpdate(IFramework framework)
+    {
+        if (localPlayerAppearancePersistence.UpdateContext(ClientState.TerritoryType, ClientState.IsLoggedIn))
+            nextLocalAppearanceReapplyTick = Environment.TickCount64 + 500;
+        if (!ClientState.IsLoggedIn
+            || !localPlayerAppearancePersistence.TryGetPending(out var desired)
+            || Environment.TickCount64 < nextLocalAppearanceReapplyTick)
+            return;
+
+        var local = actorRegistry.Entries.FirstOrDefault(static actor => actor.IsLocalPlayer);
+        if (local is null || appearanceApplyService.IsPending(local.Key))
+            return;
+        if (appearanceApplyService.TryApply(local.Key, desired, out _))
+        {
+            localPlayerAppearancePersistence.MarkReapplyStarted(local.Key);
+            diagnosticRouter.Write(new DiagnosticLogEntry
+            {
+                EventId = DiagnosticEventIds.MorphOperationStarted,
+                Category = DiagnosticCategory.Appearance,
+                Message = "Local player appearance reapply queued after territory change.",
+                ActorKey = DiagnosticActorKeys.Format(diagnosticRouter, local.Key),
+                Properties = new Dictionary<string, object?>
+                {
+                    ["modelCharaId"] = desired.ModelCharaId,
+                    ["territoryId"] = ClientState.TerritoryType,
+                },
+            });
+        }
+        else
+        {
+            nextLocalAppearanceReapplyTick = Environment.TickCount64 + 500;
+        }
     }
 
     private void OnRepresentationContextChanged()

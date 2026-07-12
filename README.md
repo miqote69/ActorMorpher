@@ -152,11 +152,13 @@ Model and NPC names, race names, item names, searching, and sorting follow the a
 
 Human Model Search details include equipment model numbers and localized matching item names. Actor restore now coordinates appearance and Bulk Outfit snapshots so a pre-morph body is not combined with an NPC outfit. Bulk writes skip equipment slots that already match, reducing unnecessary resource reloads and interference with externally modded unequipped appearances.
 
+An appearance successfully applied to the local player is retained across field and territory transitions. Actor Morpher keeps only the desired managed appearance, resolves the newly created local player actor after the transition, captures a fresh restore base, and reapplies through the normal staged redraw path. The retained appearance is cleared on restore or logout. Bulk Outfit's source equipment table resolves each appearance by slot, Set, and Variant and displays localized matching item names with game icons.
+
 Human Model Search can filter by localized Tribe within Race, including Midlander and Highlander for Hyur. Bulk Outfit has independent target and exclusion filters; exclusion takes precedence whenever an actor matches both.
 
 Model Search now resolves and displays preview asset readiness for Human, Demihuman, and Monster entries. Human preview inputs are validated into immutable Customize, equipment, weapon, and visibility data, and the UI distinguishes missing inputs from an unavailable rendering backend. The 3D surface still refuses native CharaView allocation: the current APIs do not expose exclusive CharaView slot ownership or verified native texture lifetime rules. See [preview research](docs/MODEL_PREVIEW_RESEARCH.md) and [preview architecture](docs/MODEL_PREVIEW.md).
 
-Monster and Demihuman details inspect Lumina MDL metadata after selection debounce and show geometry counts, combined bounds, and a calculated Auto Frame distance. This is renderer preparation only; no Direct3D preview resource is created yet.
+Monster and Demihuman details decode High LOD Main meshes through Lumina's public vertex and index API after selection debounce. Position, normal, UV, color, triangle indices, material path, actual vertex bounds, and a calculated Auto Frame distance are prepared as validated managed CPU data. Missing normals are generated from triangle geometry, while malformed meshes are skipped and reported. This is renderer preparation only; no Direct3D preview resource is created yet.
 
 Special Human Body Types use normalized backing data after their visible draw object is created. This prevents later Penumbra redraws from starting with stale Young NPC skeleton and equipment data. See [Penumbra compatibility](docs/PENUMBRA_COMPATIBILITY.md).
 

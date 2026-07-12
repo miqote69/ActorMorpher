@@ -52,14 +52,17 @@ public sealed class ModelPreviewGeometryInspector
             ? frame
             : null;
         return new ModelPreviewGeometryReport(
-            ready.Length == parts.Count ? ModelPreviewGeometryState.Ready : ModelPreviewGeometryState.Partial,
+            ready.Length == parts.Count && ready.All(static geometry => geometry.SkippedMeshCount == 0)
+                ? ModelPreviewGeometryState.Ready
+                : ModelPreviewGeometryState.Partial,
             parts,
             ready.Sum(static geometry => geometry.MeshCount),
             ready.Sum(static geometry => geometry.VertexCount),
             ready.Sum(static geometry => geometry.IndexCount),
             ready.Max(static geometry => geometry.LodCount),
             bounds,
-            autoFrame);
+            autoFrame,
+            ready.Sum(static geometry => geometry.SkippedMeshCount));
     }
 
     private static ModelPreviewGeometryReport Empty(ModelPreviewGeometryState state)

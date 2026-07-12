@@ -264,18 +264,23 @@ public sealed class MainWindow : Window, IDisposable
             plugin.RefreshSourceOutfit(out bulkActionStatus);
 
         var source = plugin.SourceOutfit;
-        if (ImGui.BeginTable("##source-outfit", 5, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
+        var sourceEquipment = plugin.GetSourceOutfitEquipment().ToDictionary(static item => item.Slot);
+        if (ImGui.BeginTable("##source-outfit", 6, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
         {
-            ImGui.TableSetupColumn(T(TextKey.Slot));
-            ImGui.TableSetupColumn(T(TextKey.Set));
-            ImGui.TableSetupColumn(T(TextKey.Variant));
-            ImGui.TableSetupColumn(T(TextKey.Stain1));
-            ImGui.TableSetupColumn(T(TextKey.Stain2));
+            ImGui.TableSetupColumn(T(TextKey.Slot), ImGuiTableColumnFlags.WidthFixed, 80.0f);
+            ImGui.TableSetupColumn(T(TextKey.ItemName), ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn(T(TextKey.Set), ImGuiTableColumnFlags.WidthFixed, 55.0f);
+            ImGui.TableSetupColumn(T(TextKey.Variant), ImGuiTableColumnFlags.WidthFixed, 55.0f);
+            ImGui.TableSetupColumn(T(TextKey.Stain1), ImGuiTableColumnFlags.WidthFixed, 55.0f);
+            ImGui.TableSetupColumn(T(TextKey.Stain2), ImGuiTableColumnFlags.WidthFixed, 55.0f);
+            ImGui.TableHeadersRow();
             foreach (var slot in Enum.GetValues<OutfitSlot>())
             {
                 var armor = source?.Equipment[(int)slot] ?? default;
+                sourceEquipment.TryGetValue(slot, out var item);
                 ImGui.TableNextRow();
                 ImGui.TableNextColumn(); ImGui.TextUnformatted(slot.ToString());
+                ImGui.TableNextColumn(); DrawSourceEquipmentItem(source is not null, item);
                 ImGui.TableNextColumn(); ImGui.TextUnformatted(source is null ? "-" : armor.Set.ToString());
                 ImGui.TableNextColumn(); ImGui.TextUnformatted(source is null ? "-" : armor.Variant.ToString());
                 ImGui.TableNextColumn(); ImGui.TextUnformatted(source is null ? "-" : armor.Stain1.ToString());
@@ -412,6 +417,25 @@ public sealed class MainWindow : Window, IDisposable
         }
         ImGui.SetNextItemWidth(260.0f);
         ImGui.InputTextWithHint($"{T(TextKey.Name)}###bulk-{id}-name", T(TextKey.FilterByName), ref name, 128);
+    }
+
+    private void DrawSourceEquipmentItem(bool sourceAvailable, EquipmentDisplayEntry? item)
+    {
+        var iconSize = new Vector2(32.0f, 32.0f);
+        if (sourceAvailable && item is { IconId: > 0 } && plugin.TryGetIconTexture(item.IconId, out var texture))
+            ImGui.Image(texture!.Handle, iconSize);
+        else
+            ImGui.Dummy(iconSize);
+        ImGui.SameLine();
+        ImGui.AlignTextToFramePadding();
+        var name = !sourceAvailable
+            ? "-"
+            : item is { Set: 0 }
+                ? T(TextKey.NoEquipment)
+                : string.IsNullOrWhiteSpace(item?.Name)
+                    ? T(TextKey.Unavailable)
+                    : item.Name;
+        ImGui.TextWrapped(name);
     }
 
     private void DrawActorsTab()
@@ -881,6 +905,7 @@ public sealed class MainWindow : Window, IDisposable
         ImGui.TableSetupColumn(T(TextKey.Field), ImGuiTableColumnFlags.WidthFixed, 150.0f);
         ImGui.TableSetupColumn(T(TextKey.Value), ImGuiTableColumnFlags.WidthStretch);
         DrawDetailRow(T(TextKey.Meshes), report.MeshCount.ToString());
+        DrawDetailRow(T(TextKey.SkippedMeshes), report.SkippedMeshCount.ToString());
         DrawDetailRow(T(TextKey.Vertices), report.VertexCount.ToString());
         DrawDetailRow(T(TextKey.Indices), report.IndexCount.ToString());
         DrawDetailRow(T(TextKey.Triangles), report.TriangleCount.ToString());

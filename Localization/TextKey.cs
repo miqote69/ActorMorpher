@@ -129,6 +129,7 @@ public enum TextKey
     GeometryPartial,
     GeometryUnavailable,
     Meshes,
+    SkippedMeshes,
     Vertices,
     Indices,
     Triangles,

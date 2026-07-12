@@ -39,6 +39,8 @@ The production memory layer captures ModelChara ID, the generated Customize arra
 
 Human-to-Human restoration performs two complete redraws with the original BaseData. The first redraw invalidates a CharacterBase left by an adult, old, or Young NPC appearance; the second creates the visible Human from the same original Customize and Equipment payload. The override store is removed only after the second redraw succeeds.
 
+The local player's successfully applied Desired appearance is retained separately across territory changes. The old logical key, native object, and restore Base are not retained. Once the new territory's local player is resolvable, Actor Morpher captures that actor's current appearance as a fresh Base and submits the retained Desired data through `AppearanceApplyService`. Failed starts and redraws remain pending for a bounded retry. Restore and logout clear the retained Desired state.
+
 ## GPose
 
 `IClientState.IsGPosing` is monitored on Framework Update. Entry waits for representations before mapping. Mapping does not use a fixed GPose index range or name-only matching. It tries unique GameObject ID, network Entity ID, Base ID plus ObjectKind, then a strict composite match. Ambiguous copies are skipped.
@@ -54,6 +56,8 @@ Outfit data contains exactly ten armor/accessory slots: Head, Body, Hands, Legs,
 Unequip planning requires verified slot-specific Nothing data and a verified no-Facewear value. Missing one value rejects the entire plan; no shared zero block is fabricated.
 
 Bulk writes use `LoadEquipment` for exactly ten slots, `SetGlasses` for Facewear, `HideHeadgear` for hat visibility, and `SetVisor` for visor state. The outfit type contains no weapons, class/job, customize, or ModelChara fields. Batches process one logical actor per Framework Update and continue after an actor-local rollback.
+
+The source outfit table resolves armor and accessories against the localized Item sheet by OutfitSlot plus the packed Set and Variant model key. It displays the representative game icon and up to three distinct item names when several items share one appearance. Unresolved nonzero models are shown as unavailable rather than unequipped.
 
 Apply captures the local player's current Human outfit again when the batch starts, so the operation never relies on a stale preview. Managed failures are isolated per actor: the pre-operation outfit and override-store state are restored, the failure is logged, and the batch advances to the next logical actor. Restore enumerates the store rather than the current UI filter.
 
@@ -73,4 +77,4 @@ Human Model Search exposes the Customize Tribe value as a localized subcategory.
 
 Bulk Outfit targeting applies inclusion first and exclusion second. The exclusion filter has its own actor type, race, gender, and name conditions. An actor must match every enabled exclusion condition to be removed; exclusion always wins when inclusion and exclusion both match. The resolved matching, excluded, eligible, non-Human, and unavailable counts are recorded when an operation is requested.
 
-Monster and Demihuman preview geometry uses Lumina `MdlFile` metadata only. Each present MDL contributes mesh, vertex, index, LOD, and model-bound data. Bounds are validated for finite ordered coordinates, combined across parts, and converted to a square Auto Frame camera distance. File failures are isolated per part and no raw graphics resource or game pointer is retained.
+Monster and Demihuman preview geometry uses Lumina 7.5.0's public High LOD `Model`, `Mesh.Vertices`, and `Mesh.Indices` API. Main meshes are converted to bounded managed CPU arrays containing position, normal, UV, color, material path, and copied triangle indices. Missing normals are generated from triangle faces. Non-finite positions, malformed triangle lists, and out-of-range indices reject only their source mesh; a fully invalid file remains isolated to its model part. Bounds are calculated from decoded positions, combined across parts, and converted to a square Auto Frame camera distance. No raw graphics resource or game pointer is retained.

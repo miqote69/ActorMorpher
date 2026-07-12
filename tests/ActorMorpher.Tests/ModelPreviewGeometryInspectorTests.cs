@@ -31,6 +31,23 @@ public sealed class ModelPreviewGeometryInspectorTests
     }
 
     [Fact]
+    public void MarksGeometryPartialWhenAFileSkippedInvalidMeshes()
+    {
+        var inspector = new ModelPreviewGeometryInspector(_ => new ModelFileGeometry(
+            1,
+            3,
+            3,
+            1,
+            new ModelPreviewBounds(Vector3.Zero, Vector3.One),
+            2));
+
+        var report = inspector.Inspect(Assets(("Body", "body.mdl")));
+
+        Assert.Equal(ModelPreviewGeometryState.Partial, report.State);
+        Assert.Equal(2, report.SkippedMeshCount);
+    }
+
+    [Fact]
     public void ContainsOnePartFailureAndKeepsUsableGeometry()
     {
         var inspector = new ModelPreviewGeometryInspector(path => path == "broken.mdl"
