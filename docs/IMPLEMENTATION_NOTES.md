@@ -59,6 +59,10 @@ Bulk writes use `LoadEquipment` for exactly ten slots, `SetGlasses` for Facewear
 
 The source outfit table resolves armor and accessories against the localized Item sheet by OutfitSlot plus the packed Set and Variant model key. It displays the representative game icon and up to three distinct item names when several items share one appearance. Unresolved nonzero models are shown as unavailable rather than unequipped.
 
+An explicit Model Search apply has priority over an older Bulk Outfit Desired state. The plugin tracks only user-requested model applies; on successful completion it removes that actor's Bulk override and does not reapply the earlier outfit. Internal appearance reapplication for territory changes or GPose is not treated as a new user request, preserving the last explicit operation order.
+
+Successful local-player Bulk operations publish their actual per-actor Desired result. This is important for Unequip All because its Desired outfit is built from the captured actor at processing time. The local Desired outfit is retained independently from the territory-scoped override store. After a territory change, Actor Morpher waits for any retained appearance redraw to complete, captures the new local actor as a fresh outfit restore base, and then reapplies the retained outfit. Bulk restore, explicit Model Search apply, and logout clear this retained outfit.
+
 Apply captures the local player's current Human outfit again when the batch starts, so the operation never relies on a stale preview. Managed failures are isolated per actor: the pre-operation outfit and override-store state are restored, the failure is logged, and the batch advances to the next logical actor. Restore enumerates the store rather than the current UI filter.
 
 ## Reference audit and licenses

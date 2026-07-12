@@ -46,12 +46,14 @@ public sealed class Plugin : IDalamudPlugin
     private readonly IHumanModelClassifier humanModelClassifier;
     private readonly NativeDrawObjectInjector drawObjectInjector;
     private readonly HashSet<LogicalActorKey> combinedRestorePending = new();
+    private readonly HashSet<LogicalActorKey> explicitModelApplyPending = new();
     private readonly ModelPreviewController modelPreview;
     private readonly HumanPreviewDataBuilder humanPreviewDataBuilder = new();
     private readonly ModelPreviewSupportResolver modelPreviewSupportResolver;
     private readonly ModelPreviewAssetResolver modelPreviewAssetResolver;
     private readonly ModelPreviewGeometryInspector modelPreviewGeometryInspector;
     private readonly LocalPlayerAppearancePersistence localPlayerAppearancePersistence = new();
+    private readonly LocalPlayerOutfitPersistence localPlayerOutfitPersistence = new();
     private readonly BulkOutfitTargetResolver bulkOutfitTargetResolver = new();
     private readonly Dictionary<ClientLanguage, IReadOnlyList<ModelSearchEntry>> modelSearchCaches = new();
     private readonly Dictionary<ClientLanguage, IReadOnlyDictionary<(OutfitSlot Slot, uint ModelKey), EquipmentItemDisplay>> equipmentDisplayCaches = new();
@@ -59,6 +61,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly Dictionary<(uint RowId, ModelCategory Category, ModelSource Source, uint SourceId), ModelPreviewSupport> previewSupportCaches = new();
     private readonly Dictionary<(uint RowId, ModelCategory Category, ModelSource Source, uint SourceId), ModelPreviewGeometryReport> previewGeometryCaches = new();
     private long nextLocalAppearanceReapplyTick;
+    private long nextLocalOutfitReapplyTick;
 
     public Configuration Configuration { get; }
     public Localizer Localizer { get; }
@@ -135,8 +138,10 @@ public sealed class Plugin : IDalamudPlugin
         gposeCoordinator.MappingsReady += OnRepresentationContextChanged;
         gposeCoordinator.Exited += OnRepresentationContextChanged;
         appearanceApplyService.OperationCompleted += OnAppearanceOperationCompleted;
+        bulkOutfitService.ActorOperationCompleted += OnBulkOutfitActorOperationCompleted;
         bulkOutfitTargetResolver = new BulkOutfitTargetResolver(diagnosticRouter, () => ClientState.ClientLanguage);
         localPlayerAppearancePersistence.UpdateContext(ClientState.TerritoryType, ClientState.IsLoggedIn);
+        localPlayerOutfitPersistence.UpdateContext(ClientState.TerritoryType, ClientState.IsLoggedIn);
         mainWindow = new MainWindow(this);
         windowSystem.AddWindow(mainWindow);
 
@@ -168,6 +173,7 @@ public sealed class Plugin : IDalamudPlugin
         gposeCoordinator.MappingsReady -= OnRepresentationContextChanged;
         gposeCoordinator.Exited -= OnRepresentationContextChanged;
         appearanceApplyService.OperationCompleted -= OnAppearanceOperationCompleted;
+        bulkOutfitService.ActorOperationCompleted -= OnBulkOutfitActorOperationCompleted;
         bulkOutfitService.Dispose();
         appearanceApplyService.Dispose();
         gposeCoordinator.Dispose();
@@ -441,9 +447,14 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     public bool TryApplyModel(LogicalActorKey actor, ModelSearchEntry model, out string message)
-        => model.ModelAppearance is { } appearance
-            ? appearanceApplyService.TryApply(actor, appearance, out message)
-            : FailUnsupported(out message);
+    {
+        if (model.ModelAppearance is not { } appearance)
+            return FailUnsupported(out message);
+        if (!appearanceApplyService.TryApply(actor, appearance, out message))
+            return false;
+        explicitModelApplyPending.Add(actor);
+        return true;
+    }
 
     public bool TryRestoreActor(LogicalActorKey actor, out string message)
     {
@@ -549,6 +560,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnAppearanceOperationCompleted(LogicalActorKey actor, uint modelCharaId, bool isRestore, bool succeeded)
     {
+        var explicitModelApply = explicitModelApplyPending.Remove(actor);
         var wasPersistentReapply = localPlayerAppearancePersistence.IsReapplyActor(actor);
         if (wasPersistentReapply)
             localPlayerAppearancePersistence.CompleteReapply(actor, succeeded);
@@ -567,48 +579,109 @@ public sealed class Plugin : IDalamudPlugin
             combinedRestorePending.Remove(actor);
             return;
         }
+        if (explicitModelApply)
+        {
+            bulkOutfitService.ForgetOverride(actor);
+            if (isLocalPlayer)
+                localPlayerOutfitPersistence.RecordRestored();
+            return;
+        }
         if (isRestore && combinedRestorePending.Remove(actor))
         {
             // The appearance base snapshot already contains the true pre-morph equipment.
             // Applying a Bulk snapshot captured while morphed would mix NPC gear onto that body.
             bulkOutfitService.ForgetOverride(actor);
+            if (isLocalPlayer)
+                localPlayerOutfitPersistence.RecordRestored();
             return;
         }
         if (humanModelClassifier.IsHuman(modelCharaId))
             bulkOutfitService.Reapply(actor);
     }
 
+    private void OnBulkOutfitActorOperationCompleted(
+        LogicalActorKey actor,
+        BulkOperationType type,
+        OutfitData? desired,
+        bool succeeded)
+    {
+        var wasPersistentReapply = localPlayerOutfitPersistence.IsReapplyActor(actor);
+        if (wasPersistentReapply)
+            localPlayerOutfitPersistence.CompleteReapply(actor, succeeded);
+        var isLocalPlayer = wasPersistentReapply
+            || actorRegistry.Entries.Any(entry => entry.IsLocalPlayer && entry.Key == actor);
+        if (!succeeded || !isLocalPlayer)
+            return;
+        if (type == BulkOperationType.Restore)
+            localPlayerOutfitPersistence.RecordRestored();
+        else if (desired is not null)
+            localPlayerOutfitPersistence.RecordApplied(desired);
+    }
+
     private void OnPluginFrameworkUpdate(IFramework framework)
     {
+        var now = Environment.TickCount64;
         if (localPlayerAppearancePersistence.UpdateContext(ClientState.TerritoryType, ClientState.IsLoggedIn))
-            nextLocalAppearanceReapplyTick = Environment.TickCount64 + 500;
-        if (!ClientState.IsLoggedIn
-            || !localPlayerAppearancePersistence.TryGetPending(out var desired)
-            || Environment.TickCount64 < nextLocalAppearanceReapplyTick)
+            nextLocalAppearanceReapplyTick = now + 500;
+        if (localPlayerOutfitPersistence.UpdateContext(ClientState.TerritoryType, ClientState.IsLoggedIn))
+            nextLocalOutfitReapplyTick = now + 500;
+        if (!ClientState.IsLoggedIn)
             return;
 
         var local = actorRegistry.Entries.FirstOrDefault(static actor => actor.IsLocalPlayer);
-        if (local is null || appearanceApplyService.IsPending(local.Key))
+        if (local is null)
             return;
-        if (appearanceApplyService.TryApply(local.Key, desired, out _))
+        if (localPlayerAppearancePersistence.TryGetPending(out var desired)
+            && now >= nextLocalAppearanceReapplyTick)
         {
-            localPlayerAppearancePersistence.MarkReapplyStarted(local.Key);
+            if (appearanceApplyService.IsPending(local.Key))
+                return;
+            if (appearanceApplyService.TryApply(local.Key, desired, out _))
+            {
+                localPlayerAppearancePersistence.MarkReapplyStarted(local.Key);
+                diagnosticRouter.Write(new DiagnosticLogEntry
+                {
+                    EventId = DiagnosticEventIds.MorphOperationStarted,
+                    Category = DiagnosticCategory.Appearance,
+                    Message = "Local player appearance reapply queued after territory change.",
+                    ActorKey = DiagnosticActorKeys.Format(diagnosticRouter, local.Key),
+                    Properties = new Dictionary<string, object?>
+                    {
+                        ["modelCharaId"] = desired.ModelCharaId,
+                        ["territoryId"] = ClientState.TerritoryType,
+                    },
+                });
+            }
+            else
+            {
+                nextLocalAppearanceReapplyTick = now + 500;
+            }
+            return;
+        }
+
+        if (appearanceApplyService.IsPending(local.Key)
+            || bulkOutfitService.CurrentOperation is not null
+            || !localPlayerOutfitPersistence.TryGetPending(out var outfit)
+            || now < nextLocalOutfitReapplyTick)
+            return;
+        if (bulkOutfitService.StartPersistentApply(local.Key, outfit, out _))
+        {
+            localPlayerOutfitPersistence.MarkReapplyStarted(local.Key);
             diagnosticRouter.Write(new DiagnosticLogEntry
             {
-                EventId = DiagnosticEventIds.MorphOperationStarted,
-                Category = DiagnosticCategory.Appearance,
-                Message = "Local player appearance reapply queued after territory change.",
+                EventId = DiagnosticEventIds.BulkBatchStarted,
+                Category = DiagnosticCategory.BulkOutfit,
+                Message = "Local player outfit reapply queued after territory change.",
                 ActorKey = DiagnosticActorKeys.Format(diagnosticRouter, local.Key),
                 Properties = new Dictionary<string, object?>
                 {
-                    ["modelCharaId"] = desired.ModelCharaId,
                     ["territoryId"] = ClientState.TerritoryType,
                 },
             });
         }
         else
         {
-            nextLocalAppearanceReapplyTick = Environment.TickCount64 + 500;
+            nextLocalOutfitReapplyTick = now + 500;
         }
     }
 

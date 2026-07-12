@@ -51,6 +51,7 @@ public sealed class BulkOutfitService : IDisposable
     public OutfitOverrideStore Store => store;
     public int ModifiedActorCount => store.States.Count;
     public string LastStatus { get; private set; } = string.Empty;
+    public event Action<LogicalActorKey, BulkOperationType, OutfitData?, bool>? ActorOperationCompleted;
 
     public bool RefreshSource(LogicalActorKey localPlayer, out string message)
     {
@@ -96,6 +97,9 @@ public sealed class BulkOutfitService : IDisposable
 
     public bool StartRestore(LogicalActorKey actor, out string message)
         => Start(BulkOperationType.Restore, [actor], null, out message);
+
+    public bool StartPersistentApply(LogicalActorKey actor, OutfitData outfit, out string message)
+        => Start(BulkOperationType.ApplyOutfit, [actor], outfit, out message);
 
     public void ForgetOverride(LogicalActorKey actor)
     {
@@ -221,6 +225,7 @@ public sealed class BulkOutfitService : IDisposable
             {
                 activeOperation.RecordSkip();
                 WriteActorLog(DiagnosticEventIds.OutfitSkipped, "Actor outfit could not be captured.", key, "Skipped");
+                NotifyActorOperationCompleted(key, activeOperation.Type, null, false);
                 return;
             }
             ProcessActor(activeOperation, key, actor, current);
@@ -243,6 +248,7 @@ public sealed class BulkOutfitService : IDisposable
                 Outcome = rolledBack ? "RolledBack" : "RollbackFailed",
                 Exception = DiagnosticExceptionInfo.FromException(exception),
             });
+            NotifyActorOperationCompleted(key, activeOperation.Type, operationOutfit, false);
         }
     }
 
@@ -255,6 +261,7 @@ public sealed class BulkOutfitService : IDisposable
             if (!store.TryGet(key, out var state))
             {
                 activeOperation.RecordSkip();
+                NotifyActorOperationCompleted(key, activeOperation.Type, null, false);
                 return;
             }
             if (memory.TryApply(actor, state.Original) && memory.IsApplied(actor, state.Original))
@@ -262,12 +269,14 @@ public sealed class BulkOutfitService : IDisposable
                 store.CompleteRestore(key);
                 activeOperation.RecordSuccess();
                 WriteActorLog(DiagnosticEventIds.OutfitApplied, "Original actor outfit restored.", key, "Restored");
+                NotifyActorOperationCompleted(key, activeOperation.Type, state.Original, true);
             }
             else
             {
                 var rolledBack = TryRollback(actor, current);
                 activeOperation.RecordFailure();
                 WriteActorLog(DiagnosticEventIds.OutfitRolledBack, "Outfit restore failed and the current outfit was reapplied.", key, rolledBack ? "RolledBack" : "RollbackFailed");
+                NotifyActorOperationCompleted(key, activeOperation.Type, state.Original, false);
             }
             return;
         }
@@ -277,6 +286,7 @@ public sealed class BulkOutfitService : IDisposable
             && !unequipBuilder.TryCreate(current, unequipProvider, out desired, out _))
         {
             activeOperation.RecordFailure();
+            NotifyActorOperationCompleted(key, activeOperation.Type, null, false);
             return;
         }
         if (desired is null && store.TryGet(key, out var stored))
@@ -284,6 +294,7 @@ public sealed class BulkOutfitService : IDisposable
         if (desired is null)
         {
             activeOperation.RecordSkip();
+            NotifyActorOperationCompleted(key, activeOperation.Type, null, false);
             return;
         }
         store.TryGet(key, out var previous);
@@ -292,6 +303,7 @@ public sealed class BulkOutfitService : IDisposable
         {
             activeOperation.RecordSuccess();
             WriteActorLog(DiagnosticEventIds.OutfitApplied, "Desired actor outfit applied.", key, "Success");
+            NotifyActorOperationCompleted(key, activeOperation.Type, desired, true);
         }
         else
         {
@@ -299,6 +311,31 @@ public sealed class BulkOutfitService : IDisposable
             store.RestoreState(key, previous);
             activeOperation.RecordFailure();
             WriteActorLog(DiagnosticEventIds.OutfitRolledBack, "Outfit apply failed and was rolled back.", key, rolledBack ? "RolledBack" : "RollbackFailed");
+            NotifyActorOperationCompleted(key, activeOperation.Type, desired, false);
+        }
+    }
+
+    private void NotifyActorOperationCompleted(
+        LogicalActorKey actor,
+        BulkOperationType type,
+        OutfitData? desired,
+        bool succeeded)
+    {
+        try
+        {
+            ActorOperationCompleted?.Invoke(actor, type, desired, succeeded);
+        }
+        catch (Exception exception)
+        {
+            diagnostics.Write(new DiagnosticLogEntry
+            {
+                Level = DiagnosticLogLevel.Error,
+                EventId = DiagnosticEventIds.HandledException,
+                Category = DiagnosticCategory.BulkOutfit,
+                Message = "Bulk Outfit completion subscriber failed.",
+                ActorKey = DiagnosticActorKeys.Format(diagnostics, actor),
+                Exception = DiagnosticExceptionInfo.FromException(exception),
+            });
         }
     }
 

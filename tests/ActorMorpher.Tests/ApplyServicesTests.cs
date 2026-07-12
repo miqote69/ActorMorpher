@@ -261,6 +261,37 @@ public sealed class ApplyServicesTests
         Assert.True(store.TryGet(second.LogicalKey, out _));
     }
 
+    [Fact]
+    public void UnequipPublishesTheAppliedDesiredOutfit()
+    {
+        var actor = Snapshot(1);
+        var original = Outfit(20);
+        var memory = new FakeOutfitMemory(new Dictionary<LogicalActorKey, OutfitData>
+        {
+            [actor.LogicalKey] = original,
+        });
+        using var service = new BulkOutfitService(
+            new FakeResolver(actor),
+            memory,
+            new FakeContext(),
+            new OutfitOverrideStore(),
+            NullDiagnosticLog.Instance);
+        (LogicalActorKey Actor, BulkOperationType Type, OutfitData? Desired, bool Succeeded)? completed = null;
+        service.ActorOperationCompleted += (key, type, desired, succeeded)
+            => completed = (key, type, desired, succeeded);
+
+        Assert.True(service.StartUnequip([actor.LogicalKey], out _));
+        service.ProcessNextFrame();
+        service.ProcessNextFrame();
+
+        Assert.NotNull(completed);
+        Assert.Equal(actor.LogicalKey, completed.Value.Actor);
+        Assert.Equal(BulkOperationType.UnequipAll, completed.Value.Type);
+        Assert.True(completed.Value.Succeeded);
+        var desired = Assert.IsType<OutfitData>(completed.Value.Desired);
+        Assert.All(desired.Equipment, static armor => Assert.Equal((ushort)0, armor.Set));
+    }
+
     private static void Process(RedrawCoordinator coordinator, int frames)
     {
         for (var frame = 0; frame < frames; ++frame)
