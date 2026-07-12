@@ -16,6 +16,7 @@ public sealed class BulkOutfitService : IDisposable
     private readonly HashSet<LogicalActorKey> pendingReapply = new();
     private BulkOperation? operation;
     private OutfitData? operationOutfit;
+    private bool operationUsesEmptySource;
     private uint lastTerritory;
     private bool disposed;
 
@@ -84,12 +85,12 @@ public sealed class BulkOutfitService : IDisposable
 
     public bool StartApply(IReadOnlyList<LogicalActorKey> targets, out string message)
     {
-        if (SourceOutfit is null)
-        {
-            message = "Refresh the source outfit first.";
-            return false;
-        }
-        return Start(BulkOperationType.ApplyOutfit, targets, SourceOutfit, out message);
+        return Start(
+            BulkOperationType.ApplyOutfit,
+            targets,
+            SourceOutfit,
+            out message,
+            SourceOutfit is null);
     }
 
     public bool StartUnequip(IReadOnlyList<LogicalActorKey> targets, out string message)
@@ -153,12 +154,18 @@ public sealed class BulkOutfitService : IDisposable
             framework.Update -= OnFrameworkUpdate;
         operation = null;
         operationOutfit = null;
+        operationUsesEmptySource = false;
         pendingReapply.Clear();
         SourceOutfit = null;
         store.Clear();
     }
 
-    private bool Start(BulkOperationType type, IReadOnlyList<LogicalActorKey> targets, OutfitData? outfit, out string message)
+    private bool Start(
+        BulkOperationType type,
+        IReadOnlyList<LogicalActorKey> targets,
+        OutfitData? outfit,
+        out string message,
+        bool useEmptySource = false)
     {
         if (disposed)
         {
@@ -177,6 +184,7 @@ public sealed class BulkOutfitService : IDisposable
         }
         operation = new BulkOperation(type, targets.Distinct().ToArray());
         operationOutfit = outfit;
+        operationUsesEmptySource = useEmptySource;
         message = $"Started {type} for {operation.Targets.Count} actors.";
         LastStatus = message;
         var startedEventId = type switch
@@ -210,6 +218,7 @@ public sealed class BulkOutfitService : IDisposable
         {
             operation = null;
             operationOutfit = null;
+            operationUsesEmptySource = false;
             pendingReapply.Clear();
             store.Clear();
             lastTerritory = context.TerritoryId;
@@ -292,7 +301,7 @@ public sealed class BulkOutfitService : IDisposable
         }
 
         OutfitData? desired = operationOutfit;
-        if (activeOperation.Type == BulkOperationType.UnequipAll
+        if ((activeOperation.Type == BulkOperationType.UnequipAll || operationUsesEmptySource)
             && !unequipBuilder.TryCreate(current, unequipProvider, out desired, out _))
         {
             activeOperation.RecordFailure();
@@ -384,6 +393,7 @@ public sealed class BulkOutfitService : IDisposable
         });
         operation = null;
         operationOutfit = null;
+        operationUsesEmptySource = false;
         TryStartPendingReapply();
     }
 

@@ -6,7 +6,7 @@ namespace ActorMorpher;
 [Serializable]
 public sealed class Configuration : IPluginConfiguration
 {
-    public int Version { get; set; } = 3;
+    public int Version { get; set; } = 4;
     public UiLanguage UiLanguage { get; set; } = UiLanguage.Automatic;
     public FileDiagnosticMode FileDiagnosticMode { get; set; }
     public bool IncludeActorNamesInDiagnostics { get; set; }
@@ -16,6 +16,7 @@ public sealed class Configuration : IPluginConfiguration
     public int DiagnosticMaximumSessions { get; set; } = 10;
     public int DiagnosticMaximumFileSizeMb { get; set; } = 10;
     public int DiagnosticMaximumTotalSizeMb { get; set; } = 100;
+    public List<PinnedOutfitConfiguration> PinnedOutfits { get; set; } = [];
 
     public static Configuration Create(bool isDev)
         => new()
@@ -37,6 +38,8 @@ public sealed class Configuration : IPluginConfiguration
             UiLanguage = UiLanguage.Automatic;
             Version = 3;
         }
+        if (Version < 4)
+            Version = 4;
 
         if (!Enum.IsDefined(UiLanguage))
             UiLanguage = UiLanguage.Automatic;
@@ -46,5 +49,6 @@ public sealed class Configuration : IPluginConfiguration
         DiagnosticMaximumSessions = Math.Clamp(DiagnosticMaximumSessions, 1, 100);
         DiagnosticMaximumFileSizeMb = Math.Clamp(DiagnosticMaximumFileSizeMb, 1, 100);
         DiagnosticMaximumTotalSizeMb = Math.Clamp(DiagnosticMaximumTotalSizeMb, 10, 1000);
+        PinnedOutfitStore.Normalize(this);
     }
 }

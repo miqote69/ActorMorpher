@@ -1,4 +1,5 @@
 using Dalamud.Interface.Windowing;
+using Dalamud.Interface;
 using Dalamud.Bindings.ImGui;
 using System.Numerics;
 using ActorMorpher.Localization;
@@ -307,7 +308,6 @@ public sealed class MainWindow : Window, IDisposable
         ImGui.Spacing();
         var operationRunning = plugin.CurrentBulkOperation is not null;
         var canApply = !operationRunning
-            && plugin.CanUseLocalPlayerAsOutfitSource
             && preview.EligibleHumanActors > 0;
         if (!canApply)
             ImGui.BeginDisabled();
@@ -509,9 +509,21 @@ public sealed class MainWindow : Window, IDisposable
                 foreach (var actor in actors)
                 {
                     var selected = selectedActorKey == actor.Key;
+                    var modified = plugin.HasOutfitOverride(actor.Key);
+                    var pinned = plugin.IsOutfitPinned(actor.Key);
                     var localPlayerLabel = actor.IsLocalPlayer ? $" ({T(TextKey.IncludeYourself)})" : string.Empty;
                     var label = $"{actor.Name}{localPlayerLabel}##actor-{actor.Key.GetHashCode()}";
-                    if (ImGui.Selectable(label, selected))
+                    if (modified || pinned)
+                        ImGui.PushStyleColor(ImGuiCol.Text, pinned
+                            ? new Vector4(1.0f, 0.74f, 0.25f, 1.0f)
+                            : new Vector4(0.35f, 0.86f, 0.55f, 1.0f));
+                    var activated = ImGui.Selectable(label, selected);
+                    var hovered = ImGui.IsItemHovered();
+                    if (modified || pinned)
+                        ImGui.PopStyleColor();
+                    if (hovered && (modified || pinned))
+                        ImGui.SetTooltip(T(pinned ? TextKey.PinnedOutfit : TextKey.ModifiedOutfit));
+                    if (activated)
                     {
                         selectedActorKey = actor.Key;
                         plugin.Diagnostics.Log.Write(new DiagnosticLogEntry
@@ -568,18 +580,46 @@ public sealed class MainWindow : Window, IDisposable
                 DrawDetailRow(T(TextKey.IsLocalPlayer), current.IsLocalPlayer ? T(TextKey.Yes) : T(TextKey.No));
                 var hasMorph = plugin.TryGetAppearanceOverride(actor.Key, out var morphState);
                 DrawDetailRow(T(TextKey.CurrentMorph), hasMorph ? $"Model ID {morphState.DesiredData.ModelCharaId}" : T(TextKey.None));
-                DrawDetailRow(T(TextKey.BulkOutfitModified), plugin.HasOutfitOverride(actor.Key) ? T(TextKey.Yes) : T(TextKey.No));
+                DrawDetailRow(
+                    T(TextKey.BulkOutfitModified),
+                    plugin.HasOutfitOverride(actor.Key) || plugin.IsOutfitPinned(actor.Key)
+                        ? T(TextKey.Yes)
+                        : T(TextKey.No));
                 DrawDetailRow(T(TextKey.SnapshotAvailable), hasMorph ? T(TextKey.Yes) : T(TextKey.No));
                 DrawDetailRow(T(TextKey.GPoseRepresentation), current.RepresentationKey.IsGPoseRepresentation ? T(TextKey.Yes) : T(TextKey.No));
                 ImGui.EndTable();
             }
 
             ImGui.Spacing();
-            ImGui.TextUnformatted(T(TextKey.Equipment));
-            if (current.Race is not null && plugin.TryGetActorOutfit(actor.Key, out var actorOutfit))
-                DrawOutfitDisplay($"actor-outfit-{actor.Key.GetHashCode()}", actorOutfit);
+            var hasOutfitOverride = plugin.TryGetOutfitOverride(actor.Key, out var outfitState);
+            var isPinned = plugin.IsOutfitPinned(actor.Key);
+            if (hasOutfitOverride)
+            {
+                ImGui.TextUnformatted(T(TextKey.OriginalEquipment));
+                DrawOutfitDisplay($"actor-original-outfit-{actor.Key.GetHashCode()}", outfitState.Original);
+                ImGui.Spacing();
+                ImGui.TextUnformatted(T(TextKey.AppliedEquipment));
+                ImGui.SameLine();
+                DrawOutfitPinButton(actor.Key, isPinned, true);
+                DrawOutfitDisplay($"actor-applied-outfit-{actor.Key.GetHashCode()}", outfitState.Desired);
+            }
             else
-                ImGui.TextDisabled(T(TextKey.Unavailable));
+            {
+                ImGui.TextUnformatted(T(TextKey.Equipment));
+                if (current.Race is not null && plugin.TryGetActorOutfit(actor.Key, out var actorOutfit))
+                    DrawOutfitDisplay($"actor-outfit-{actor.Key.GetHashCode()}", actorOutfit);
+                else
+                    ImGui.TextDisabled(T(TextKey.Unavailable));
+
+                if (plugin.TryGetPinnedOutfit(actor.Key, out var pinnedOutfit))
+                {
+                    ImGui.Spacing();
+                    ImGui.TextUnformatted(T(TextKey.AppliedEquipment));
+                    ImGui.SameLine();
+                    DrawOutfitPinButton(actor.Key, true, true);
+                    DrawOutfitDisplay($"actor-pinned-outfit-{actor.Key.GetHashCode()}", pinnedOutfit);
+                }
+            }
 
             ImGui.Spacing();
             var canRestore = (plugin.HasAppearanceOverride(actor.Key) || plugin.HasOutfitOverride(actor.Key))
@@ -596,6 +636,18 @@ public sealed class MainWindow : Window, IDisposable
         }
 
         ImGui.EndChild();
+    }
+
+    private void DrawOutfitPinButton(LogicalActorKey actor, bool pinned, bool canPin)
+    {
+        if (!canPin)
+            ImGui.BeginDisabled();
+        var icon = FontAwesomeIcon.Thumbtack.ToIconString();
+        var label = pinned ? T(TextKey.UnpinOutfit) : T(TextKey.PinOutfit);
+        if (ImGui.SmallButton($"{icon} {label}###outfit-pin-{actor.GetHashCode()}"))
+            applySucceeded = plugin.TrySetOutfitPinned(actor, !pinned, out applyStatus);
+        if (!canPin)
+            ImGui.EndDisabled();
     }
 
     private void DrawActorRaceFilter()
@@ -759,23 +811,7 @@ public sealed class MainWindow : Window, IDisposable
             {
                 ImGui.Spacing();
                 ImGui.TextUnformatted(T(TextKey.Equipment));
-                if (ImGui.BeginTable("##model-equipment", 4, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
-                {
-                    ImGui.TableSetupColumn(T(TextKey.Slot), ImGuiTableColumnFlags.WidthFixed, 85.0f);
-                    ImGui.TableSetupColumn(T(TextKey.Set), ImGuiTableColumnFlags.WidthFixed, 65.0f);
-                    ImGui.TableSetupColumn(T(TextKey.Variant), ImGuiTableColumnFlags.WidthFixed, 65.0f);
-                    ImGui.TableSetupColumn(T(TextKey.ItemName), ImGuiTableColumnFlags.WidthStretch);
-                    ImGui.TableHeadersRow();
-                    foreach (var item in plugin.GetHumanEquipment(model))
-                    {
-                        ImGui.TableNextRow();
-                        ImGui.TableNextColumn(); ImGui.TextUnformatted(item.Slot.ToString());
-                        ImGui.TableNextColumn(); ImGui.TextUnformatted(item.Set.ToString());
-                        ImGui.TableNextColumn(); ImGui.TextUnformatted(item.Variant.ToString());
-                        ImGui.TableNextColumn(); ImGui.TextUnformatted(string.IsNullOrEmpty(item.Name) ? T(TextKey.NoEquipment) : item.Name);
-                    }
-                    ImGui.EndTable();
-                }
+                DrawOutfitDisplay("model-equipment", plugin.GetHumanOutfit(model));
             }
 
             ImGui.Spacing();

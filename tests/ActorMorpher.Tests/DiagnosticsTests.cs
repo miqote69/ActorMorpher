@@ -33,7 +33,7 @@ public sealed class DiagnosticsTests
         };
         configuration.MigrateAndValidate(false);
 
-        Assert.Equal(3, configuration.Version);
+        Assert.Equal(4, configuration.Version);
         Assert.Equal(UiLanguage.Automatic, configuration.UiLanguage);
         Assert.Equal(FileDiagnosticMode.ErrorsOnly, configuration.FileDiagnosticMode);
         Assert.True(configuration.IncludeActorNamesInDiagnostics);

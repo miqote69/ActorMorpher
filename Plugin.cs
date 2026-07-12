@@ -43,6 +43,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly GPoseCoordinator gposeCoordinator;
     private readonly AppearanceApplyService appearanceApplyService;
     private readonly BulkOutfitService bulkOutfitService;
+    private readonly PinnedOutfitStore pinnedOutfitStore;
     private readonly IHumanModelClassifier humanModelClassifier;
     private readonly NativeDrawObjectInjector drawObjectInjector;
     private readonly HashSet<LogicalActorKey> combinedRestorePending = new();
@@ -63,6 +64,8 @@ public sealed class Plugin : IDalamudPlugin
     private readonly Dictionary<(uint RowId, ModelCategory Category, ModelSource Source, uint SourceId), ModelPreviewGeometryReport> previewGeometryCaches = new();
     private long nextLocalAppearanceReapplyTick;
     private long nextLocalOutfitReapplyTick;
+    private long nextPinnedOutfitScanTick;
+    private LogicalActorKey? pinnedOutfitOperationActor;
 
     public Configuration Configuration { get; }
     public Localizer Localizer { get; }
@@ -85,6 +88,9 @@ public sealed class Plugin : IDalamudPlugin
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? Configuration.Create(isDev);
         Configuration.MigrateAndValidate(isDev);
         PluginInterface.SavePluginConfig(Configuration);
+        pinnedOutfitStore = new PinnedOutfitStore(
+            Configuration,
+            () => PluginInterface.SavePluginConfig(Configuration));
         Localizer = new Localizer(Configuration, ClientState);
         diagnosticRouter = new DiagnosticLogRouter(
             PluginInterface.ConfigDirectory.FullName,
@@ -240,11 +246,6 @@ public sealed class Plugin : IDalamudPlugin
             LogBulkTargetPreview(preview, BulkOperationType.ApplyOutfit, false);
             return false;
         }
-        if (!RefreshSourceOutfit(out message))
-        {
-            LogBulkTargetPreview(preview, BulkOperationType.ApplyOutfit, false);
-            return false;
-        }
         var started = bulkOutfitService.StartApply(preview.EligibleTargets, out message);
         LogBulkTargetPreview(preview, BulkOperationType.ApplyOutfit, started);
         return started;
@@ -326,8 +327,6 @@ public sealed class Plugin : IDalamudPlugin
         }
     }
 
-    public bool CanUseLocalPlayerAsOutfitSource
-        => actorRegistry.Entries.FirstOrDefault(static actor => actor.IsLocalPlayer)?.Current.Race is not null;
     public BulkOperation? CurrentBulkOperation => bulkOutfitService.CurrentOperation;
     public string BulkOutfitStatus => bulkOutfitService.LastStatus;
     public int ModifiedOutfitActorCount => bulkOutfitService.ModifiedActorCount;
@@ -426,6 +425,9 @@ public sealed class Plugin : IDalamudPlugin
             : Localizer.Get(TextKey.Unknown, race);
     }
 
+    public OutfitData? GetHumanOutfit(ModelSearchEntry model)
+        => EquipmentDisplayFormatting.CreateHumanOutfit(model.HumanAppearance);
+
     public string GetTribeName(uint tribe)
     {
         if (tribe == 0)
@@ -522,12 +524,18 @@ public sealed class Plugin : IDalamudPlugin
         {
             combinedRestorePending.Add(actor);
             if (appearanceApplyService.TryRestore(actor, out message))
+            {
+                UnpinActor(actor);
                 return true;
+            }
             combinedRestorePending.Remove(actor);
             return false;
         }
 
-        return bulkOutfitService.StartRestore(actor, out message);
+        var started = bulkOutfitService.StartRestore(actor, out message);
+        if (started)
+            UnpinActor(actor);
+        return started;
     }
 
     public bool HasAppearanceOverride(LogicalActorKey actor)
@@ -538,6 +546,46 @@ public sealed class Plugin : IDalamudPlugin
 
     public bool HasOutfitOverride(LogicalActorKey actor)
         => bulkOutfitService.Store.TryGet(actor, out _);
+
+    public bool TryGetOutfitOverride(LogicalActorKey actor, out OutfitOverrideState state)
+        => bulkOutfitService.Store.TryGet(actor, out state!);
+
+    public bool IsOutfitPinned(LogicalActorKey actor)
+        => actorRegistry.TryGet(actor, out var entry) && pinnedOutfitStore.IsPinned(entry);
+
+    public bool TryGetPinnedOutfit(LogicalActorKey actor, out OutfitData outfit)
+    {
+        if (actorRegistry.TryGet(actor, out var entry)
+            && pinnedOutfitStore.TryGet(entry, out outfit))
+            return true;
+        outfit = null!;
+        return false;
+    }
+
+    public bool TrySetOutfitPinned(LogicalActorKey actor, bool pinned, out string message)
+    {
+        if (!actorRegistry.TryGet(actor, out var entry))
+        {
+            message = "Actor is unavailable.";
+            return false;
+        }
+        if (!pinned)
+        {
+            pinnedOutfitStore.Unpin(entry);
+            message = "Outfit pin removed.";
+            return true;
+        }
+        if (!bulkOutfitService.Store.TryGet(actor, out var state))
+        {
+            message = "No Bulk Outfit is applied to this actor.";
+            return false;
+        }
+
+        pinnedOutfitStore.Pin(entry, state.Desired);
+        nextPinnedOutfitScanTick = Environment.TickCount64 + 500;
+        message = "Applied outfit pinned.";
+        return true;
+    }
 
     public bool IsAppearancePending(LogicalActorKey actor)
         => appearanceApplyService.IsPending(actor);
@@ -665,6 +713,15 @@ public sealed class Plugin : IDalamudPlugin
         OutfitData? desired,
         bool succeeded)
     {
+        if (pinnedOutfitOperationActor == actor)
+        {
+            pinnedOutfitOperationActor = null;
+            nextPinnedOutfitScanTick = Environment.TickCount64 + (succeeded ? 500 : 2000);
+        }
+        if (succeeded && type == BulkOperationType.Restore
+            && actorRegistry.TryGet(actor, out var restoredActor))
+            pinnedOutfitStore.Unpin(restoredActor);
+
         var wasPersistentReapply = localPlayerOutfitPersistence.IsReapplyActor(actor);
         if (wasPersistentReapply)
             localPlayerOutfitPersistence.CompleteReapply(actor, succeeded);
@@ -719,6 +776,9 @@ public sealed class Plugin : IDalamudPlugin
             return;
         }
 
+        if (TryReapplyPinnedOutfit(now))
+            return;
+
         if (appearanceApplyService.IsPending(local.Key)
             || bulkOutfitService.CurrentOperation is not null
             || !localPlayerOutfitPersistence.TryGetPending(out var outfit)
@@ -743,6 +803,49 @@ public sealed class Plugin : IDalamudPlugin
         {
             nextLocalOutfitReapplyTick = now + 500;
         }
+    }
+
+    private bool TryReapplyPinnedOutfit(long now)
+    {
+        if (now < nextPinnedOutfitScanTick
+            || pinnedOutfitOperationActor is not null
+            || bulkOutfitService.CurrentOperation is not null)
+            return false;
+
+        nextPinnedOutfitScanTick = now + 500;
+        foreach (var actor in actorRegistry.Entries)
+        {
+            if (appearanceApplyService.IsPending(actor.Key)
+                || actor.Current.Race is null
+                || !pinnedOutfitStore.TryGet(actor, out var desired)
+                || !bulkOutfitService.TryCaptureOutfit(actor.Key, out var current)
+                || OutfitDataValueComparer.AreEqual(current, desired))
+                continue;
+
+            if (!bulkOutfitService.StartPersistentApply(actor.Key, desired, out _))
+                continue;
+            pinnedOutfitOperationActor = actor.Key;
+            diagnosticRouter.Write(new DiagnosticLogEntry
+            {
+                EventId = DiagnosticEventIds.BulkBatchStarted,
+                Category = DiagnosticCategory.BulkOutfit,
+                Message = "Pinned outfit reapply queued.",
+                ActorKey = DiagnosticActorKeys.Format(diagnosticRouter, actor.Key),
+                Properties = new Dictionary<string, object?>
+                {
+                    ["territoryId"] = ClientState.TerritoryType,
+                    ["isLocalPlayer"] = actor.IsLocalPlayer,
+                },
+            });
+            return true;
+        }
+        return false;
+    }
+
+    private void UnpinActor(LogicalActorKey actor)
+    {
+        if (actorRegistry.TryGet(actor, out var entry))
+            pinnedOutfitStore.Unpin(entry);
     }
 
     private void OnRepresentationContextChanged()

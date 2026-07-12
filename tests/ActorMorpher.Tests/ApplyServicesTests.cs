@@ -193,6 +193,38 @@ public sealed class ApplyServicesTests
     }
 
     [Fact]
+    public void BulkApplyWithoutSourceRefreshAppliesVisibleEmptySourceState()
+    {
+        var actor = Snapshot(2);
+        var original = Outfit(20) with { HatVisible = false, VisorToggled = true };
+        var memory = new FakeOutfitMemory(new Dictionary<LogicalActorKey, OutfitData>
+        {
+            [actor.LogicalKey] = original,
+        });
+        var store = new OutfitOverrideStore();
+        using var service = new BulkOutfitService(
+            new FakeResolver(actor),
+            memory,
+            new FakeContext(),
+            store,
+            NullDiagnosticLog.Instance);
+
+        Assert.Null(service.SourceOutfit);
+        Assert.True(service.StartApply([actor.LogicalKey], out _));
+        service.ProcessNextFrame();
+        service.ProcessNextFrame();
+
+        var applied = memory.Current[actor.LogicalKey];
+        Assert.All(applied.Equipment, static armor => Assert.Equal(default, armor));
+        Assert.Equal(new FacewearAppearance(true, 0), applied.Facewear);
+        Assert.False(applied.HatVisible);
+        Assert.True(applied.VisorToggled);
+        Assert.True(store.TryGet(actor.LogicalKey, out var state));
+        Assert.Same(original, state.Original);
+        Assert.True(OutfitDataValueComparer.AreEqual(applied, state.Desired));
+    }
+
+    [Fact]
     public void BulkApplyRollsBackFailedActorAndContinuesBatch()
     {
         var sourceActor = Snapshot(1);

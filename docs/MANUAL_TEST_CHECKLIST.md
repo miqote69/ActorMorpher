@@ -29,9 +29,16 @@ Enable Full diagnostics before testing native appearance operations. Stop after 
 - [ ] Ambiguous same-name NPC copies are skipped
 - [ ] GPose Bulk Outfit waits until representation mapping is ready
 - [ ] GPose Bulk Apply and Unequip affect every mapped matching actor, not hidden field actors
-- [ ] Bulk source equipment uses e####/a#### Set IDs and v#### variants
+- [ ] Bulk source equipment uses e####/a#### Set IDs and plain-number variants
+- [ ] Applying before Source Refresh applies the visibly empty source instead of silently capturing player equipment
+- [ ] Applying after Source Refresh applies exactly the equipment shown in the source table
 - [ ] Stain columns show color swatches and hover displays the correct RGB and HEX values
 - [ ] Selected Human Actor details show the same equipment table as Bulk source
+- [ ] Human Model Search details show icons, model IDs, names, and both Stain swatches
+- [ ] Bulk-modified Actor names are colored and pinned Actor names use the pinned color
+- [ ] Actor details show original and applied Bulk equipment as separate tables
+- [ ] A pinned outfit reapplies after territory change, game restart, and plugin update
+- [ ] Restore clears the pin and leaves the original outfit restored
 - [ ] Bulk Outfit preview excludes the local player by default
 - [ ] Bulk Outfit preview counts non-Human actors as skipped
 - [ ] Disabled exclusion filters do not remove matching actors

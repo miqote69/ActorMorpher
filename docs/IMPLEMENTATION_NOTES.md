@@ -61,7 +61,11 @@ Bulk writes use `LoadEquipment` for exactly ten slots, `SetGlasses` for Facewear
 
 The source outfit table resolves armor and accessories against the localized Item sheet by OutfitSlot plus the packed Set and Variant model key. It displays the representative game icon and up to three distinct item names when several items share one appearance. Unresolved nonzero models are shown as unavailable rather than unequipped.
 
-Source Outfit and Actor Details use the same equipment table. Armor Set IDs use `e####`, accessory IDs use `a####`, and variants use `v####`. Stain 1 and Stain 2 are shown as game-color swatches from the localized Stain sheet. Sheet BGR values are converted to RGB; hover text shows the localized stain name, decimal RGB channels, and hexadecimal color.
+Source Outfit, Human Model Search, and Actor Details use the same equipment table. Armor Set IDs use `e####`, accessory IDs use `a####`, and variants use plain decimal numbers. Stain 1 and Stain 2 are shown as game-color swatches from the localized Stain sheet. The sheet's packed `0xRRGGBB` value is decoded in channel order; hover text shows the localized stain name, decimal RGB channels, and hexadecimal color.
+
+The initial Source Outfit remains empty until Refresh is explicitly pressed. Apply always uses the state currently represented by that table: an unrefreshed empty source builds the same verified per-actor empty-equipment plan as Unequip All, while a refreshed source applies the captured local-player outfit. Apply never refreshes the source implicitly.
+
+Actor Details separates the first captured original outfit from the desired Bulk Outfit. Modified actor names are colored in the actor list, with a separate color for pinned outfits. A pin stores a stable actor identity and the desired outfit in Dalamud plugin configuration rather than persisting territory-scoped logical keys. Visible matching Human actors are checked at a bounded interval and a mismatched pinned outfit is reapplied through the normal one-actor Bulk transaction. Explicit restore removes the pin so it cannot immediately overwrite the restored outfit.
 
 An explicit Model Search apply has priority over an older Bulk Outfit Desired state. The plugin tracks only user-requested model applies; on successful completion it removes that actor's Bulk override and does not reapply the earlier outfit. Internal appearance reapplication for territory changes or GPose is not treated as a new user request, preserving the last explicit operation order.
 

@@ -72,6 +72,8 @@ Supported operations include:
 - Preview actors affected by the current filters.
 - Continue processing after an actor-specific failure.
 - Attempt to restore an actor's previous state when its operation fails.
+- Show original and applied equipment separately for modified actors.
+- Pin an applied outfit so it is restored when the matching actor reappears after restart or update.
 
 Bulk Outfit includes these ten armor and accessory slots:
 
@@ -156,7 +158,7 @@ An appearance successfully applied to the local player is retained across field 
 
 Model Search and Bulk Outfit now use explicit last-operation priority. A successful Model Search apply ends the target actor's previous Bulk Outfit override, so the selected model's own equipment is not replaced by an earlier Unequip or copied outfit. A later Bulk Outfit operation can still override those equipment slots. The local player's successful Bulk Outfit Desired state, including Unequip All, is retained across territory changes and reapplied after any retained model appearance has finished.
 
-In GPose, Bulk Outfit waits for representation mapping and targets only actors with a validated GPose representation; hidden normal-world actors are not included in the batch. Mapping includes a unique stable composite of name, ObjectKind, race, and gender when volatile model/body values differ. The source and Actors equipment tables share the same slot display with localized item name and icon, formal `e####` or `a####` Set IDs, `v####` variants, and game Stain color swatches with RGB tooltips.
+In GPose, Bulk Outfit waits for representation mapping and targets only actors with a validated GPose representation; hidden normal-world actors are not included in the batch. Mapping includes a unique stable composite of name, ObjectKind, race, and gender when volatile model/body values differ. The source and Actors equipment tables share the same slot display with localized item name and icon, formal `e####` or `a####` Set IDs, plain-number variants, and game Stain color swatches with RGB tooltips. The initial source is empty; Refresh explicitly captures the local player's outfit, and Apply always uses the state currently shown in the source table.
 
 Human Model Search can filter by localized Tribe within Race, including Midlander and Highlander for Hyur. Bulk Outfit has independent target and exclusion filters; exclusion takes precedence whenever an actor matches both.
 
