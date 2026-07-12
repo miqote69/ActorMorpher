@@ -123,6 +123,7 @@ public enum TextKey
     PreviewSuspended,
     PreviewUnavailable,
     PreviewFailed,
+    StaticPreviewReady,
     PreviewBackend,
     PreviewInputInvalid,
     PreviewCharaViewUnsafe,

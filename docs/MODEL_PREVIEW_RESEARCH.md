@@ -24,13 +24,13 @@ The installed `Dalamud.dll` (`15.0.2.2+4a6abae`) was inspected directly after th
 
 Current FFXIVClientStructs still documents CharaView client object indices 0 through 7 as shared by Character, Inspect, CharaCard, Fashion, RetainerStatus, TryOn, GearSetPreview, Colorant, Banner, and FittingShop UI. BannerParty may use all eight. No reservation or conflict-free allocator is exposed. Glamourer and Ktisis were searched again and do not contain a standalone CharaView renderer that establishes either missing ownership contract.
 
-Actor Morpher therefore continues to reject native preview allocation. A crash log cannot make an ownership race recoverable because a collision can corrupt another game UI object's lifetime before managed diagnostics run.
+Actor Morpher therefore continues to reject native Human preview allocation. A crash log cannot make an ownership race recoverable because a collision can corrupt another game UI object's lifetime before managed diagnostics run. This restriction does not apply to the managed software geometry preview used for Demihuman and Monster models.
 
 ## Prepared Human input
 
 `HumanPreviewDataBuilder` now validates and snapshots the complete managed input needed by a future CharaView backend: 26 Customize bytes, ten equipment models, three weapon slots, two glasses slots, visibility flags, and visor state. ModelChara ID, source row, Customize, and equipment must agree with the Model Search backing `AppearanceData`. Young NPC Body Type is preserved without normalization.
 
-`ModelPreviewSupportResolver` separates input completeness from backend availability. Human data can report `StaticReady` while remaining blocked by missing CharaView slot/texture ownership. Demihuman and Monster data separately report missing model, missing skeleton, or a ready static asset set blocked only by the unimplemented standalone renderer.
+`ModelPreviewSupportResolver` separates input completeness from backend availability. Human data can report `StaticReady` while remaining blocked by missing CharaView slot/texture ownership. Demihuman and Monster data report missing models precisely and permit static software preview whenever at least one valid MDL part is available; a skeleton is not required because this backend does not animate.
 
 ## Static geometry extraction
 
@@ -40,11 +40,11 @@ The installed Lumina assembly is version 7.5.0 at commit `efef7038ddfe3036cc3ca3
 
 `ModelPreviewGeometryInspector` contains file-local failures, combines actual decoded vertex bounds across available Demihuman parts, and emits aggregate mesh, skipped mesh, vertex, index, triangle, and LOD counts as diagnostic event `AM7104`. Any skipped mesh marks the result partial. `ModelPreviewCameraFraming` calculates a square-preview target, distance, and near/far planes from those combined bounds. Extraction starts only after the 200 ms preview selection debounce settles, so rapidly scrolling the model list does not parse every intermediate MDL.
 
-This phase does not compile shaders, create a Direct3D resource, upload a GPU buffer, load material textures, apply skeletal animation, or claim that CPU geometry readiness is a rendered frame.
+`SoftwareModelPreviewBackend` now turns those CPU meshes into a bounded static preview. It deterministically samples at most 6,000 source triangles, rejects degenerate faces, combines valid Demihuman parts, and publishes only immutable managed scene data. `SoftwareModelPreviewProjector` applies bounded yaw, pitch, and zoom, flat directional lighting, depth sorting, and orthographic projection before `MainWindow` submits ImGui triangles. It does not compile shaders, create a Direct3D resource, upload a GPU buffer, load material textures, or apply skeletal animation.
 
-## Conditions to continue
+## Conditions for Human preview
 
 1. A Dalamud API or documented allocator must reserve and release a CharaView client-object slot for a plugin.
 2. A Dalamud texture API must explicitly support a CharaView render texture with defined frame-thread and lifetime rules.
 3. The backend must prove cleanup on selection changes, window close, logout, territory change, plugin unload, and exceptions.
-4. Human preview should pass first before Demihuman or Monster asset-path work begins.
+4. The Human backend must remain separate from the managed Demihuman and Monster software renderer.

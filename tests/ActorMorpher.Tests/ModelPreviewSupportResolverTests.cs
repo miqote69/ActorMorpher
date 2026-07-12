@@ -56,6 +56,28 @@ public sealed class ModelPreviewSupportResolverTests
         Assert.Equal(ModelPreviewSupportReason.AssetRendererUnavailable, support.Reason);
     }
 
+    [Fact]
+    public void SoftwareRendererCanPreviewModelWithoutSkeleton()
+    {
+        var model = AssetEntry(ModelCategory.Monster);
+        var assets = new ModelPreviewAssetReport(
+            model.ModelId,
+            model.Category,
+            ModelPreviewReadiness.AssetsPartial,
+            [
+                new(ModelPreviewAssetKind.Model, "Body", "model.mdl", true),
+                new(ModelPreviewAssetKind.Skeleton, "Skeleton", "skeleton.sklb", false),
+            ]);
+        var capabilities = ModelPreviewBackendCapabilities.SoftwarePreview;
+
+        var support = new ModelPreviewSupportResolver(humanBuilder, capabilities).Resolve(model, assets);
+
+        Assert.True(support.CanPreview);
+        Assert.False(support.CanAnimate);
+        Assert.Equal(PreviewCompleteness.StaticReady, support.Completeness);
+        Assert.Equal(ModelPreviewSupportReason.None, support.Reason);
+    }
+
     [Theory]
     [InlineData(false, false, ModelPreviewSupportReason.MissingModelAndSkeleton)]
     [InlineData(false, true, ModelPreviewSupportReason.MissingModel)]

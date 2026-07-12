@@ -49,10 +49,12 @@ public sealed class Plugin : IDalamudPlugin
     private readonly HashSet<LogicalActorKey> combinedRestorePending = new();
     private readonly HashSet<LogicalActorKey> explicitModelApplyPending = new();
     private readonly ModelPreviewController modelPreview;
+    private readonly SoftwareModelPreviewBackend softwareModelPreviewBackend;
     private readonly HumanPreviewDataBuilder humanPreviewDataBuilder = new();
     private readonly ModelPreviewSupportResolver modelPreviewSupportResolver;
     private readonly ModelPreviewAssetResolver modelPreviewAssetResolver;
     private readonly ModelPreviewGeometryInspector modelPreviewGeometryInspector;
+    private readonly LuminaModelGeometrySource modelPreviewGeometrySource;
     private readonly LocalPlayerAppearancePersistence localPlayerAppearancePersistence = new();
     private readonly LocalPlayerOutfitPersistence localPlayerOutfitPersistence = new();
     private readonly BulkOutfitTargetResolver bulkOutfitTargetResolver = new();
@@ -106,14 +108,20 @@ public sealed class Plugin : IDalamudPlugin
         diagnosticController.Start();
         humanModelClassifier = new HumanModelClassifier(DataManager);
         modelPreviewAssetResolver = new ModelPreviewAssetResolver(DataManager.FileExists, humanPreviewDataBuilder);
-        modelPreviewSupportResolver = new ModelPreviewSupportResolver(humanPreviewDataBuilder);
-        modelPreviewGeometryInspector = new ModelPreviewGeometryInspector(new LuminaModelGeometrySource(DataManager).Load);
+        modelPreviewSupportResolver = new ModelPreviewSupportResolver(
+            humanPreviewDataBuilder,
+            ModelPreviewBackendCapabilities.SoftwarePreview);
+        modelPreviewGeometrySource = new LuminaModelGeometrySource(DataManager);
+        modelPreviewGeometryInspector = new ModelPreviewGeometryInspector(modelPreviewGeometrySource.Load);
         actorRegistry = new ActorRegistry(ObjectTable, ClientState, Framework, humanModelClassifier, diagnosticRouter);
         actorIdentity = new ActorIdentityService(diagnosticRouter);
         var clientContext = new DalamudClientContext(ClientState);
+        softwareModelPreviewBackend = new SoftwareModelPreviewBackend(
+            GetModelPreviewAssets,
+            modelPreviewGeometrySource.LoadCpuModel);
         modelPreview = new ModelPreviewController(
             Framework,
-            new UnavailableModelPreviewBackend(),
+            softwareModelPreviewBackend,
             clientContext,
             diagnosticRouter);
         var actorResolver = new RegistryActorResolver(actorRegistry, clientContext);
@@ -608,9 +616,12 @@ public sealed class Plugin : IDalamudPlugin
 
     public string AppearanceStatus => appearanceApplyService.LastStatus;
     public ModelPreviewSnapshot ModelPreview => modelPreview.Snapshot;
+    public SoftwareModelPreviewView? SoftwareModelPreview => softwareModelPreviewBackend.GetView();
     public void SelectPreviewModel(ModelSearchEntry? model) => modelPreview.Select(model);
     public void SetModelPreviewActive(bool active) => modelPreview.SetActive(active);
     public void ResetModelPreviewCamera() => modelPreview.ResetCamera();
+    public void OrbitModelPreview(float deltaX, float deltaY) => softwareModelPreviewBackend.Orbit(deltaX, deltaY);
+    public void ZoomModelPreview(float wheelDelta) => softwareModelPreviewBackend.AdjustZoom(wheelDelta);
     public ModelPreviewAssetReport GetModelPreviewAssets(ModelSearchEntry model)
     {
         var key = PreviewCacheKey(model);

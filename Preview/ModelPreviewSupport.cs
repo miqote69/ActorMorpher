@@ -45,4 +45,5 @@ public sealed record ModelPreviewBackendCapabilities(
     bool HasAssetRenderer)
 {
     public static ModelPreviewBackendCapabilities SafeDalamud15 { get; } = new(false, false, false);
+    public static ModelPreviewBackendCapabilities SoftwarePreview { get; } = new(false, false, true);
 }

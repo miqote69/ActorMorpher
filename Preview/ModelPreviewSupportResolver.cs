@@ -64,6 +64,13 @@ public sealed class ModelPreviewSupportResolver
                 ModelPreviewBackendKind.AssetRenderer,
                 PreviewCompleteness.MissingModel,
                 ModelPreviewSupportReason.MissingModel);
+        if (capabilities.HasAssetRenderer)
+            return new ModelPreviewSupport(
+                true,
+                false,
+                ModelPreviewBackendKind.AssetRenderer,
+                PreviewCompleteness.StaticReady,
+                ModelPreviewSupportReason.None);
         if (!hasSkeleton)
             return Unsupported(
                 ModelPreviewBackendKind.AssetRenderer,

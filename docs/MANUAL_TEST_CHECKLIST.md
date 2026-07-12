@@ -25,6 +25,12 @@ Enable Full diagnostics before testing native appearance operations. Stop after 
 - [ ] Demihuman Geometry combines all present parts without failing on unused parts
 - [ ] Auto Frame distance is finite and positive for ready Geometry
 - [ ] Rapid model selection does not visibly parse every intermediate MDL
+- [ ] Monster static 3D preview is nonblank and framed inside the square canvas
+- [ ] Demihuman static 3D preview combines every valid visible equipment part
+- [ ] Left-drag rotates the static preview and mouse wheel changes zoom
+- [ ] Reset Camera restores the initial static preview framing
+- [ ] Missing or malformed optional Demihuman parts do not suppress valid parts
+- [ ] Human preview remains blocked without allocating a CharaView object
 - [ ] GPose entry does not freeze or crash
 - [ ] Ambiguous same-name NPC copies are skipped
 - [ ] GPose Bulk Outfit waits until representation mapping is ready

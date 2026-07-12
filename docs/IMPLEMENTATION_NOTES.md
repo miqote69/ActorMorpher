@@ -16,6 +16,8 @@ This revision connects the existing actor, state, GPose, and redraw architecture
 | Bulk Outfit preview and filters | Implemented |
 | Bulk Outfit/Unequip/Restore writes | Implemented; game test pending |
 | Facewear | Implemented with `SetGlasses`; game test pending |
+| Demihuman/Monster static 3D preview | Implemented with bounded managed software projection |
+| Human 3D preview | Blocked by CharaView slot/texture ownership |
 
 ## Actor identity
 
@@ -73,7 +75,7 @@ An explicit Model Search apply has priority over an older Bulk Outfit Desired st
 
 Successful local-player Bulk operations publish their actual per-actor Desired result. This is important for Unequip All because its Desired outfit is built from the captured actor at processing time. The local Desired outfit is retained independently from the territory-scoped override store. After a territory change, Actor Morpher waits for any retained appearance redraw to complete, captures the new local actor as a fresh outfit restore base, and then reapplies the retained outfit. Bulk restore, explicit Model Search apply, and logout clear this retained outfit.
 
-Apply captures the local player's current Human outfit again when the batch starts, so the operation never relies on a stale preview. Managed failures are isolated per actor: the pre-operation outfit and override-store state are restored, the failure is logged, and the batch advances to the next logical actor. Restore enumerates the store rather than the current UI filter.
+Apply uses the Source Outfit state currently shown in the UI; only the explicit Refresh command captures the local player's current Human outfit. Managed failures are isolated per actor: the pre-operation outfit and override-store state are restored, the failure is logged, and the batch advances to the next logical actor. Restore resolves the store while excluding pinned actors rather than using the current UI filter.
 
 ## Reference audit and licenses
 
@@ -92,3 +94,5 @@ Human Model Search exposes the Customize Tribe value as a localized subcategory.
 Bulk Outfit targeting applies inclusion first and exclusion second. The exclusion filter has its own actor type, race, gender, and name conditions. An actor must match every enabled exclusion condition to be removed; exclusion always wins when inclusion and exclusion both match. The resolved matching, excluded, eligible, non-Human, and unavailable counts are recorded when an operation is requested.
 
 Monster and Demihuman preview geometry uses Lumina 7.5.0's public High LOD `Model`, `Mesh.Vertices`, and `Mesh.Indices` API. Main meshes are converted to bounded managed CPU arrays containing position, normal, UV, color, material path, and copied triangle indices. Missing normals are generated from triangle faces. Non-finite positions, malformed triangle lists, and out-of-range indices reject only their source mesh; a fully invalid file remains isolated to its model part. Bounds are calculated from decoded positions, combined across parts, and converted to a square Auto Frame camera distance. No raw graphics resource or game pointer is retained.
+
+The software preview scene samples at most 6,000 non-degenerate triangles across all valid parts. Camera yaw, pitch, and zoom are finite and clamped. Every frame is projected into the existing ImGui canvas with deterministic material colors, flat lighting, and painter-order depth sorting. Selection change, tab suspension, territory change, logout, and plugin disposal release the managed scene through `ModelPreviewController`; no game object, CharaView slot, native texture, render target, or unmanaged GPU resource is created.

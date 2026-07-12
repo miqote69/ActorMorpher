@@ -821,9 +821,7 @@ public sealed class MainWindow : Window, IDisposable
             }
 
             DrawPreviewAssetReport(plugin.GetModelPreviewAssets(model));
-            if (model.Category != ModelCategory.Human
-                && plugin.ModelPreview is { State: ModelPreviewState.Unsupported, ModelId: var previewModelId }
-                && previewModelId == model.ModelId)
+            if (model.Category != ModelCategory.Human)
                 DrawPreviewGeometryReport(plugin.GetModelPreviewGeometry(model));
 
             if (model.Category == ModelCategory.Human)
@@ -878,7 +876,10 @@ public sealed class MainWindow : Window, IDisposable
             var preview = plugin.ModelPreview;
             ImGui.TextDisabled(T(TextKey.Preview3D));
             ImGui.Spacing();
-            ImGui.TextWrapped(GetPreviewStatus(preview));
+            if (preview.State == ModelPreviewState.Ready && plugin.SoftwareModelPreview is { } softwarePreview)
+                DrawSoftwareModelPreview(softwarePreview);
+            else
+                ImGui.TextWrapped(GetPreviewStatus(preview));
         }
         ImGui.EndChild();
         var canReset = plugin.ModelPreview.State == ModelPreviewState.Ready;
@@ -901,8 +902,48 @@ public sealed class MainWindow : Window, IDisposable
                 => GetPreviewSupportStatus(plugin.GetModelPreviewSupport(model)),
             ModelPreviewState.Unsupported => T(TextKey.PreviewUnavailable),
             ModelPreviewState.Failed => T(TextKey.PreviewFailed),
+            ModelPreviewState.Ready => T(TextKey.StaticPreviewReady),
             _ => preview.Status,
         };
+
+    private void DrawSoftwareModelPreview(SoftwareModelPreviewView view)
+    {
+        var position = ImGui.GetCursorScreenPos();
+        var available = ImGui.GetContentRegionAvail();
+        var canvasSize = new Vector2(Math.Max(1.0f, available.X), Math.Max(1.0f, available.Y));
+        ImGui.InvisibleButton("##software-preview-canvas", canvasSize, ImGuiButtonFlags.MouseButtonLeft);
+        if (ImGui.IsItemActive() && ImGui.IsMouseDragging(ImGuiMouseButton.Left))
+        {
+            var delta = ImGui.GetIO().MouseDelta;
+            plugin.OrbitModelPreview(delta.X, delta.Y);
+            view = plugin.SoftwareModelPreview ?? view;
+        }
+        if (ImGui.IsItemHovered() && ImGui.GetIO().MouseWheel != 0)
+        {
+            plugin.ZoomModelPreview(ImGui.GetIO().MouseWheel);
+            view = plugin.SoftwareModelPreview ?? view;
+        }
+
+        var drawList = ImGui.GetWindowDrawList();
+        var maximum = position + canvasSize;
+        drawList.PushClipRect(position, maximum, true);
+        drawList.AddRectFilled(position, maximum, ImGui.GetColorU32(new Vector4(0.055f, 0.065f, 0.075f, 1.0f)));
+        foreach (var triangle in SoftwareModelPreviewProjector.Project(view, position, canvasSize))
+        {
+            drawList.AddTriangleFilled(
+                triangle.First,
+                triangle.Second,
+                triangle.Third,
+                ImGui.GetColorU32(triangle.Color));
+            drawList.AddTriangle(
+                triangle.First,
+                triangle.Second,
+                triangle.Third,
+                ImGui.GetColorU32(new Vector4(0.03f, 0.035f, 0.04f, 0.28f)),
+                0.55f);
+        }
+        drawList.PopClipRect();
+    }
 
     private string GetPreviewSupportStatus(ModelPreviewSupport support)
     {
