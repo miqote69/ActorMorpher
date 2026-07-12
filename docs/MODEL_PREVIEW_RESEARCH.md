@@ -10,7 +10,7 @@
 
 Phase 1 asset resolution is implemented without allocating native preview objects. Human entries validate their in-memory Customize and Equipment payload. Monster entries resolve IMC, body MDL, and base skeleton paths. Demihuman entries resolve IMC, Head, Body, Hands, Legs, Feet, and base skeleton paths. Every candidate is checked through `IDataManager.FileExists`; lookup failures are contained as missing assets.
 
-The resolver result is shown in Model Details and logged as `AM7101`. It remains independent from whether an appearance can be applied. Animation paths are not guessed because no verified general path rule is available for every skeleton family.
+The resolver result is shown in Model Details and logged as `AM7101`. It remains independent from whether an appearance can be applied. Monster and Demihuman base skeletons use `b0001`. Demihuman equipment parts are optional individually; a missing part is reported as not used rather than as a required failure. Animation paths are not guessed because no verified general path rule is available for every skeleton family.
 
 ## Safety result
 

@@ -112,6 +112,7 @@ public enum TextKey
     Path,
     Ready,
     Missing,
+    NotUsed,
     HumanDataReady,
     AssetsComplete,
     AssetsPartial,

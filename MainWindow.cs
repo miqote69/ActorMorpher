@@ -562,6 +562,7 @@ public sealed class MainWindow : Window, IDisposable
                                 ["previewReadiness"] = previewAssets.Readiness,
                                 ["previewAssetsPresent"] = previewAssets.PresentCount,
                                 ["previewAssetsMissing"] = previewAssets.MissingCount,
+                                ["previewAssetsNotUsed"] = previewAssets.OptionalMissingCount,
                             },
                         });
                         plugin.Diagnostics.Log.Write(new DiagnosticLogEntry
@@ -580,7 +581,8 @@ public sealed class MainWindow : Window, IDisposable
                                 ["variant"] = model.Variant,
                                 ["presentAssets"] = previewAssets.PresentCount,
                                 ["missingAssets"] = previewAssets.MissingCount,
-                                ["assetPaths"] = previewAssets.Assets.Select(static asset => $"{asset.Label}:{asset.IsPresent}:{asset.Path}").ToArray(),
+                                ["notUsedAssets"] = previewAssets.OptionalMissingCount,
+                                ["assetPaths"] = previewAssets.Assets.Select(static asset => $"{asset.Label}:{asset.IsRequired}:{asset.IsPresent}:{asset.Path}").ToArray(),
                             },
                         });
                     }
@@ -738,9 +740,19 @@ public sealed class MainWindow : Window, IDisposable
             ImGui.TableNextRow();
             ImGui.TableNextColumn(); ImGui.TextUnformatted(GetPreviewAssetLabel(asset.Label));
             ImGui.TableNextColumn();
+            var statusColor = asset.IsPresent
+                ? new Vector4(0.35f, 0.85f, 0.45f, 1.0f)
+                : asset.IsRequired
+                    ? new Vector4(0.95f, 0.45f, 0.35f, 1.0f)
+                    : new Vector4(0.65f, 0.65f, 0.65f, 1.0f);
+            var statusText = asset.IsPresent
+                ? T(TextKey.Ready)
+                : asset.IsRequired
+                    ? T(TextKey.Missing)
+                    : T(TextKey.NotUsed);
             ImGui.TextColored(
-                asset.IsPresent ? new Vector4(0.35f, 0.85f, 0.45f, 1.0f) : new Vector4(0.95f, 0.45f, 0.35f, 1.0f),
-                asset.IsPresent ? T(TextKey.Ready) : T(TextKey.Missing));
+                statusColor,
+                statusText);
             ImGui.TableNextColumn(); ImGui.TextWrapped(asset.Path ?? T(TextKey.InMemoryAppearance));
         }
         ImGui.EndTable();

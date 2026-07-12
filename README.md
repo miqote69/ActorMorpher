@@ -46,6 +46,7 @@ Some entries may be searchable but not applicable when the required appearance o
 - Restores the actor to the state captured before the morph was applied.
 - Uses a staged redraw process for application and restoration.
 - Attempts to roll back an operation when a failure is detected.
+- Recreates the original Human twice when restoring from another Human or Young NPC to avoid reusing the previous NPC draw object.
 
 Restoration is not guaranteed. FFXIV object recreation, territory changes, actor despawning, game updates, or plugin errors may prevent a complete restore.
 

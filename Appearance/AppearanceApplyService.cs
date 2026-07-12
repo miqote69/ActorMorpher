@@ -131,8 +131,15 @@ public sealed class AppearanceApplyService : IDisposable
             return false;
         }
 
+        var cleanHumanRestore = state.DesiredData.Category == ModelCategory.Human
+            && state.BaseData.Category == ModelCategory.Human;
         var operation = RedrawOperation.Create(key, state.BaseData, current, state.Revision + 1, context.TerritoryId);
-        pending[operation.OperationId] = new PendingChange(key, state, true, null, state.Revision + 1);
+        pending[operation.OperationId] = new PendingChange(
+            key,
+            state,
+            true,
+            cleanHumanRestore ? state.BaseData : null,
+            state.Revision + 1);
         if (!redraw.Enqueue(operation))
         {
             pending.Remove(operation.OperationId);
@@ -140,7 +147,9 @@ public sealed class AppearanceApplyService : IDisposable
             return false;
         }
         WriteMorphLog(DiagnosticEventIds.MorphOperationStarted, "Appearance restore operation queued.", key, state.BaseData.ModelCharaId, operation.OperationId, state.BaseData, state.Revision + 1, state.BaseData.ModelCharaId);
-        message = "Restoring the original appearance.";
+        message = cleanHumanRestore
+            ? "Preparing a clean Human restore."
+            : "Restoring the original appearance.";
         LastStatus = message;
         return true;
     }
@@ -197,7 +206,7 @@ public sealed class AppearanceApplyService : IDisposable
                 {
                     store.RestoreState(change.Actor, change.PreviousState);
                     LastStatus = "The actor became unavailable during the Human transition.";
-                    OperationCompleted?.Invoke(change.Actor, finalDesired.ModelCharaId, false, false);
+                    OperationCompleted?.Invoke(change.Actor, finalDesired.ModelCharaId, change.IsRestore, false);
                     return;
                 }
 
@@ -214,20 +223,24 @@ public sealed class AppearanceApplyService : IDisposable
                     pending.Remove(continuation.OperationId);
                     store.RestoreState(change.Actor, change.PreviousState);
                     LastStatus = "The final Human transition could not be queued.";
-                    OperationCompleted?.Invoke(change.Actor, finalDesired.ModelCharaId, false, false);
+                    OperationCompleted?.Invoke(change.Actor, finalDesired.ModelCharaId, change.IsRestore, false);
                     return;
                 }
 
                 WriteMorphLog(
                     DiagnosticEventIds.MorphOperationStarted,
-                    "Clean Human transition reset completed; final appearance queued.",
+                    change.IsRestore
+                        ? "Clean Human restore first redraw completed; final restore queued."
+                        : "Clean Human transition reset completed; final appearance queued.",
                     change.Actor,
                     finalDesired.ModelCharaId,
                     continuation.OperationId,
                     finalDesired,
                     change.Revision,
                     store.TryGet(change.Actor, out var state) ? state.BaseData.ModelCharaId : null);
-                LastStatus = $"Applying Model ID {finalDesired.ModelCharaId}.";
+                LastStatus = change.IsRestore
+                    ? "Completing the clean Human restore."
+                    : $"Applying Model ID {finalDesired.ModelCharaId}.";
                 return;
             }
 
@@ -341,6 +354,7 @@ public sealed class AppearanceApplyService : IDisposable
             ["completeness"] = appearance?.Completeness,
             ["bodyType"] = appearance is { Customize.Length: > 2 } ? appearance.Customize[2] : null,
             ["customizeLength"] = appearance?.Customize.Length,
+            ["customizeSignature"] = appearance is null ? null : ByteSignature(appearance.Customize),
             ["equipmentLength"] = appearance?.Equipment.Length,
             ["equipmentSignature"] = appearance is null ? null : EquipmentSignature(appearance.Equipment),
             ["revision"] = revision,
@@ -371,6 +385,19 @@ public sealed class AppearanceApplyService : IDisposable
                 hash *= prime;
                 remaining >>= 8;
             }
+        }
+        return hash.ToString("X16");
+    }
+
+    private static string ByteSignature(IEnumerable<byte> values)
+    {
+        const ulong offset = 14695981039346656037;
+        const ulong prime = 1099511628211;
+        var hash = offset;
+        foreach (var value in values)
+        {
+            hash ^= value;
+            hash *= prime;
         }
         return hash.ToString("X16");
     }

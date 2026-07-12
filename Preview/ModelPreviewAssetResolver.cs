@@ -47,9 +47,9 @@ public sealed class ModelPreviewAssetResolver
         var root = $"chara/monster/{monster}/obj/body/{body}";
         var assets = new[]
         {
-            Asset(ModelPreviewAssetKind.Imc, "IMC", $"{root}/{body}.imc"),
+            Asset(ModelPreviewAssetKind.Imc, "IMC", $"{root}/{body}.imc", false),
             Asset(ModelPreviewAssetKind.Model, "Body", $"{root}/model/{monster}{body}.mdl"),
-            Asset(ModelPreviewAssetKind.Skeleton, "Skeleton", $"chara/monster/{monster}/skeleton/base/{body}/skl_{monster}{body}.sklb"),
+            Asset(ModelPreviewAssetKind.Skeleton, "Skeleton", $"chara/monster/{monster}/skeleton/base/b0001/skl_{monster}b0001.sklb"),
         };
         return Report(model, assets, assets[1].IsPresent, assets[2].IsPresent);
     }
@@ -64,30 +64,31 @@ public sealed class ModelPreviewAssetResolver
         var root = $"chara/demihuman/{demihuman}/obj/equipment/{equipment}";
         var assets = new List<ModelPreviewAsset>
         {
-            Asset(ModelPreviewAssetKind.Imc, "IMC", $"{root}/{equipment}.imc"),
+            Asset(ModelPreviewAssetKind.Imc, "IMC", $"{root}/{equipment}.imc", false),
         };
         assets.AddRange(DemihumanParts.Select(part => Asset(
             ModelPreviewAssetKind.Model,
             part.Label,
-            $"{root}/model/{demihuman}{equipment}_{part.Suffix}.mdl")));
+            $"{root}/model/{demihuman}{equipment}_{part.Suffix}.mdl",
+            false)));
         assets.Add(Asset(
             ModelPreviewAssetKind.Skeleton,
             "Skeleton",
             $"chara/demihuman/{demihuman}/skeleton/base/b0001/skl_{demihuman}b0001.sklb"));
 
         var modelAssets = assets.Where(static asset => asset.Kind == ModelPreviewAssetKind.Model).ToArray();
-        return Report(model, assets, modelAssets.All(static asset => asset.IsPresent), assets[^1].IsPresent);
+        return Report(model, assets, modelAssets.Any(static asset => asset.IsPresent), assets[^1].IsPresent);
     }
 
-    private ModelPreviewAsset Asset(ModelPreviewAssetKind kind, string label, string path)
+    private ModelPreviewAsset Asset(ModelPreviewAssetKind kind, string label, string path, bool required = true)
     {
         try
         {
-            return new ModelPreviewAsset(kind, label, path, fileExists(path));
+            return new ModelPreviewAsset(kind, label, path, fileExists(path), required);
         }
         catch
         {
-            return new ModelPreviewAsset(kind, label, path, false);
+            return new ModelPreviewAsset(kind, label, path, false, required);
         }
     }
 

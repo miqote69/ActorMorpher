@@ -92,6 +92,37 @@ public sealed class ApplyServicesTests
     }
 
     [Fact]
+    public void HumanRestoreRecreatesTheOriginalAppearanceTwice()
+    {
+        var actor = Snapshot(1);
+        var original = HumanAppearance(1, (byte)NpcAge.Normal);
+        var youngNpc = HumanAppearance(2, (byte)NpcAge.Young);
+        var memory = new FakeAppearanceMemory(original);
+        var resolver = new FakeResolver(actor);
+        var store = new AppearanceOverrideStore();
+        using var redraw = new RedrawCoordinator(resolver, memory, new FakeRedrawBackend(), new FakeContext());
+        using var service = new AppearanceApplyService(
+            resolver,
+            memory,
+            new FakeContext(),
+            redraw,
+            store,
+            NullDiagnosticLog.Instance);
+
+        Assert.True(service.TryApply(actor.LogicalKey, youngNpc, out _));
+        Process(redraw, 7);
+        memory.Writes.Clear();
+
+        Assert.True(service.TryRestore(actor.LogicalKey, out _));
+        Process(redraw, 14);
+
+        Assert.Same(original, memory.Current);
+        Assert.Equal(4, memory.Writes.Count);
+        Assert.All(memory.Writes, write => Assert.Same(original, write));
+        Assert.False(store.TryGet(actor.LogicalKey, out _));
+    }
+
+    [Fact]
     public void SpecialHumanBodyNormalizesBackingToOriginalAfterVisibleApply()
     {
         var actor = Snapshot(1);

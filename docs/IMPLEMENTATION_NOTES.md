@@ -37,6 +37,8 @@ During Actor Morpher's synchronous `EnableDraw` call, `NativeDrawObjectInjector`
 
 The production memory layer captures ModelChara ID, the generated Customize array, and the generated equipment array. Writes are staged between current FFXIVClientStructs `DisableDraw` and `EnableDraw` member calls and verified afterward. Actor identity is re-resolved before every native access; no pointer is retained between frames. The new path has not yet been exercised in FF14 by this revision.
 
+Human-to-Human restoration performs two complete redraws with the original BaseData. The first redraw invalidates a CharacterBase left by an adult, old, or Young NPC appearance; the second creates the visible Human from the same original Customize and Equipment payload. The override store is removed only after the second redraw succeeds.
+
 ## GPose
 
 `IClientState.IsGPosing` is monitored on Framework Update. Entry waits for representations before mapping. Mapping does not use a fixed GPose index range or name-only matching. It tries unique GameObject ID, network Entity ID, Base ID plus ObjectKind, then a strict composite match. Ambiguous copies are skipped.

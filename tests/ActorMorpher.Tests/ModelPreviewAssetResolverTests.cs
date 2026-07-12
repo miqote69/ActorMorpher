@@ -15,7 +15,7 @@ public sealed class ModelPreviewAssetResolverTests
         var present = new HashSet<string>
         {
             "chara/monster/m0123/obj/body/b0045/model/m0123b0045.mdl",
-            "chara/monster/m0123/skeleton/base/b0045/skl_m0123b0045.sklb",
+            "chara/monster/m0123/skeleton/base/b0001/skl_m0123b0001.sklb",
         };
         var report = new ModelPreviewAssetResolver(present.Contains).Resolve(Entry(ModelCategory.Monster, 3, 123, 45));
 
@@ -35,6 +35,21 @@ public sealed class ModelPreviewAssetResolverTests
 
         Assert.Equal(ModelPreviewReadiness.AssetsPartial, report.Readiness);
         Assert.Equal(7, report.Assets.Count);
+    }
+
+    [Fact]
+    public void DemihumanWithOnePartAndSkeletonIsReadyAndOtherPartsAreOptional()
+    {
+        var present = new HashSet<string>
+        {
+            "chara/demihuman/d0006/obj/equipment/e0002/model/d0006e0002_top.mdl",
+            "chara/demihuman/d0006/skeleton/base/b0001/skl_d0006b0001.sklb",
+        };
+        var report = new ModelPreviewAssetResolver(present.Contains).Resolve(Entry(ModelCategory.Demihuman, 2, 6, 2));
+
+        Assert.Equal(ModelPreviewReadiness.AssetsComplete, report.Readiness);
+        Assert.Equal(0, report.MissingCount);
+        Assert.Equal(5, report.OptionalMissingCount);
     }
 
     [Fact]
@@ -66,7 +81,8 @@ public sealed class ModelPreviewAssetResolverTests
             .Resolve(Entry(ModelCategory.Monster, 3, 123, 45));
 
         Assert.Equal(ModelPreviewReadiness.AssetsMissing, report.Readiness);
-        Assert.Equal(3, report.MissingCount);
+        Assert.Equal(2, report.MissingCount);
+        Assert.Equal(1, report.OptionalMissingCount);
     }
 
     private static ModelSearchEntry Entry(ModelCategory category, byte type, ushort model, ushort @base)
