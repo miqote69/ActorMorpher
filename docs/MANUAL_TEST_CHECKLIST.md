@@ -14,6 +14,10 @@ Enable Full diagnostics before testing native appearance operations. Stop after 
 - [ ] Model ID and name filters combine correctly
 - [ ] Young-only search does not include old/adult NPCs
 - [ ] Model detail shows completeness and disabled reason
+- [ ] Rapidly changing Model Search selection settles on only the last preview
+- [ ] Leaving Model Search pauses the preview and returning reloads the selection
+- [ ] Closing and reopening the plugin window reloads the selected preview without a stale model
+- [ ] Territory change and logout release the preview without a crash
 - [ ] GPose entry does not freeze or crash
 - [ ] Ambiguous same-name NPC copies are skipped
 - [ ] Bulk Outfit preview excludes the local player by default

@@ -43,7 +43,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly IHumanModelClassifier humanModelClassifier;
     private readonly NativeDrawObjectInjector drawObjectInjector;
     private readonly HashSet<LogicalActorKey> combinedRestorePending = new();
-    private readonly IModelPreviewBackend modelPreview = new UnavailableModelPreviewBackend();
+    private readonly ModelPreviewController modelPreview;
     private readonly ModelPreviewAssetResolver modelPreviewAssetResolver;
     private readonly BulkOutfitTargetResolver bulkOutfitTargetResolver = new();
     private readonly Dictionary<ClientLanguage, IReadOnlyList<ModelSearchEntry>> modelSearchCaches = new();
@@ -89,6 +89,11 @@ public sealed class Plugin : IDalamudPlugin
         actorRegistry = new ActorRegistry(ObjectTable, ClientState, Framework, humanModelClassifier, diagnosticRouter);
         actorIdentity = new ActorIdentityService(diagnosticRouter);
         var clientContext = new DalamudClientContext(ClientState);
+        modelPreview = new ModelPreviewController(
+            Framework,
+            new UnavailableModelPreviewBackend(),
+            clientContext,
+            diagnosticRouter);
         var actorResolver = new RegistryActorResolver(actorRegistry, clientContext);
         var appearanceMemory = new NativeAppearanceMemory(ObjectTable, humanModelClassifier, diagnosticRouter);
         drawObjectInjector = new NativeDrawObjectInjector(GameInteropProvider, diagnosticRouter);
@@ -355,6 +360,8 @@ public sealed class Plugin : IDalamudPlugin
     public string AppearanceStatus => appearanceApplyService.LastStatus;
     public ModelPreviewSnapshot ModelPreview => modelPreview.Snapshot;
     public void SelectPreviewModel(ModelSearchEntry? model) => modelPreview.Select(model);
+    public void SetModelPreviewActive(bool active) => modelPreview.SetActive(active);
+    public void ResetModelPreviewCamera() => modelPreview.ResetCamera();
     public ModelPreviewAssetReport GetModelPreviewAssets(ModelSearchEntry model)
     {
         var key = (model.Type, model.Model, model.Base, model.Variant);

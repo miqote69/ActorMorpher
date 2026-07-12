@@ -56,10 +56,12 @@ public sealed class MainWindow : Window, IDisposable
 
     public void Dispose()
     {
+        plugin.SetModelPreviewActive(false);
     }
 
     public override void Draw()
     {
+        var modelSearchVisible = false;
         if (ImGui.BeginTabBar("##actor-morpher-tabs"))
         {
             if (ImGui.BeginTabItem($"{T(TextKey.Actors)}###actors"))
@@ -70,6 +72,7 @@ public sealed class MainWindow : Window, IDisposable
 
             if (ImGui.BeginTabItem($"{T(TextKey.ModelSearch)}###model-search"))
             {
+                modelSearchVisible = true;
                 DrawModelSearchTab();
                 ImGui.EndTabItem();
             }
@@ -94,7 +97,7 @@ public sealed class MainWindow : Window, IDisposable
 
             ImGui.EndTabBar();
         }
-
+        plugin.SetModelPreviewActive(modelSearchVisible);
     }
 
     private void DrawSettingsTab()
@@ -602,6 +605,7 @@ public sealed class MainWindow : Window, IDisposable
         {
             if (selectedModel is not { } model)
             {
+                plugin.SelectPreviewModel(null);
                 ImGui.TextDisabled(T(TextKey.SelectCharacter));
                 ImGui.EndChild();
                 return;
@@ -706,14 +710,29 @@ public sealed class MainWindow : Window, IDisposable
             var preview = plugin.ModelPreview;
             ImGui.TextDisabled(T(TextKey.Preview3D));
             ImGui.Spacing();
-            ImGui.TextWrapped(preview.Status);
+            ImGui.TextWrapped(GetPreviewStatus(preview));
         }
         ImGui.EndChild();
-        ImGui.BeginDisabled();
-        ImGui.Button(T(TextKey.ResetCamera));
-        ImGui.EndDisabled();
+        var canReset = plugin.ModelPreview.State == ModelPreviewState.Ready;
+        if (!canReset)
+            ImGui.BeginDisabled();
+        if (ImGui.Button(T(TextKey.ResetCamera)))
+            plugin.ResetModelPreviewCamera();
+        if (!canReset)
+            ImGui.EndDisabled();
         ImGui.Spacing();
     }
+
+    private string GetPreviewStatus(ModelPreviewSnapshot preview)
+        => preview.State switch
+        {
+            ModelPreviewState.Idle => T(TextKey.PreviewSelectModel),
+            ModelPreviewState.Suspended => T(TextKey.PreviewSuspended),
+            ModelPreviewState.Loading => T(TextKey.PreviewLoading),
+            ModelPreviewState.Unsupported => T(TextKey.PreviewUnavailable),
+            ModelPreviewState.Failed => T(TextKey.PreviewFailed),
+            _ => preview.Status,
+        };
 
     private void DrawPreviewAssetReport(ModelPreviewAssetReport report)
     {

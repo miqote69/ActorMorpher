@@ -62,3 +62,7 @@ Apply captures the local player's current Human outfit again when the batch star
 Glamourer state, GPose, NPC-data, and apply designs were reviewed as behavioral references. Its repository contains an Apache-2.0 license. Penumbra redraw behavior was reviewed as a behavioral reference; the checked-out top-level repository did not contain a license file. No Glamourer or Penumbra source file, class, volatile offset, signature, VTable index, or IPC implementation was copied into Actor Morpher.
 
 Actor Morpher remains MIT licensed. Since no third-party implementation code was incorporated, no third-party source notice was added to the distributed binary.
+
+## Model preview lifetime
+
+`ModelPreviewController` is the sole owner of preview backend selection and release. It debounces selection for 200 ms, distinguishes entries by row/category/source/source-row, and ignores superseded generations. Backend resources are released when Model Search becomes inactive, its UI heartbeat expires, logout or territory change occurs, or the plugin is disposed. All backend lifecycle exceptions are contained and diagnosed before a future native renderer is enabled.

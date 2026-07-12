@@ -3,6 +3,7 @@ namespace ActorMorpher.Preview;
 public enum ModelPreviewState
 {
     Idle,
+    Suspended,
     Unsupported,
     Loading,
     Ready,
