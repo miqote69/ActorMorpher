@@ -31,6 +31,18 @@ public sealed class RegistryActorResolverTests
     }
 
     [Fact]
+    public void GPoseUsesValidatedDirectLocalPlayerWhenMappingIsNotInRegistry()
+    {
+        var normal = Snapshot(1, false);
+        var directGPose = Snapshot(201, true);
+        var actor = Entry(normal);
+
+        var selected = RegistryActorResolver.SelectRepresentation(actor, true, directGPose);
+
+        Assert.Same(directGPose, selected);
+    }
+
+    [Fact]
     public void OutsideGPoseSelectsNormalRepresentation()
     {
         var normal = Snapshot(1, false);

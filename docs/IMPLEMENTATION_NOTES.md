@@ -45,6 +45,8 @@ Human-to-Human restoration performs two complete redraws with the original BaseD
 
 The local player additionally accepts the current client-defined GPose player slot at Object Table index 201, but only when the source is the local player and the candidate is a PC. Other actors continue to use identity matching. While GPose is active, resolver failure never falls back to a normal-world representation; the operation is rejected instead of redrawing a hidden field actor.
 
+The GPose local-player slot is acquired directly from `IObjectTable[201]` rather than requiring it to survive the general registry enumeration filters. Appearance, outfit, and redraw operations subsequently resolve the same table slot directly and revalidate GameObject ID and Entity ID before every native access.
+
 ## Bulk Outfit
 
 Outfit data contains exactly ten armor/accessory slots: Head, Body, Hands, Legs, Feet, Ears, Neck, Wrists, Right Ring, and Left Ring. Each slot stores Set, Variant, Stain 1, and Stain 2. Facewear, hat visibility, and visor state are separate. Weapons, job, level, customize, ModelChara ID, and weapon visibility are not part of the outfit model.

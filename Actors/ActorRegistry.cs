@@ -8,6 +8,8 @@ namespace ActorMorpher.Actors;
 
 public sealed unsafe class ActorRegistry : IDisposable
 {
+    private const int GPoseLocalPlayerSlot = 201;
+
     private readonly IObjectTable objectTable;
     private readonly IClientState clientState;
     private readonly IFramework framework;
@@ -53,6 +55,35 @@ public sealed unsafe class ActorRegistry : IDisposable
             actor = entries.FirstOrDefault(candidate => candidate.Key == key)!;
             return actor is not null;
         }
+    }
+
+    public bool TryGetGPoseLocalPlayer(LogicalActorKey logicalKey, out ActorSnapshot snapshot)
+    {
+        snapshot = null!;
+        if (!clientState.IsGPosing || logicalKey.ObjectKind != ObjectKind.Pc)
+            return false;
+
+        var candidate = objectTable[GPoseLocalPlayerSlot];
+        if (candidate is null
+            || candidate.Address == nint.Zero
+            || candidate.ObjectKind != ObjectKind.Pc)
+            return false;
+
+        var created = CreateSnapshot(candidate, clientState.TerritoryType, null);
+        if (created is null)
+            return false;
+
+        snapshot = created with
+        {
+            LogicalKey = logicalKey,
+            RepresentationKey = new ActorRepresentationKey(
+                GPoseLocalPlayerSlot,
+                candidate.GameObjectId,
+                candidate.EntityId,
+                true),
+            IsLocalPlayer = true,
+        };
+        return true;
     }
 
     public void SetGPoseMappings(IReadOnlyDictionary<ActorRepresentationKey, LogicalActorKey> mappings)

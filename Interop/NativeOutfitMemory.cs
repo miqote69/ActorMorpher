@@ -93,7 +93,7 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
     private bool TryResolveHuman(ActorSnapshot expected, out Character* character)
     {
         var key = expected.RepresentationKey;
-        var current = objectTable.FirstOrDefault(obj => obj is not null && obj.ObjectIndex == key.ObjectIndex);
+        var current = objectTable[key.ObjectIndex];
         if (current is null
             || current.Address == nint.Zero
             || current.GameObjectId != key.GameObjectId

@@ -99,7 +99,13 @@ public sealed class GPoseCoordinator : IDisposable
                 State = GPoseState.ResolvingMappings;
                 break;
             case GPoseState.ResolvingMappings:
-                var mappings = mappingResolver.Resolve(normalActors, registry.Entries);
+                var mappings = mappingResolver.Resolve(normalActors, registry.Entries).ToDictionary();
+                var localSource = normalActors.FirstOrDefault(static actor => actor.IsLocalPlayer);
+                ActorSnapshot? directLocalPlayer = null;
+                var directLocalPlayerFound = localSource is not null
+                    && registry.TryGetGPoseLocalPlayer(localSource.Key, out directLocalPlayer);
+                if (directLocalPlayerFound)
+                    mappings[directLocalPlayer!.RepresentationKey] = localSource!.Key;
                 registry.SetGPoseMappings(mappings);
                 MappingCount = mappings.Count;
                 diagnostics.Write(new DiagnosticLogEntry
@@ -107,7 +113,17 @@ public sealed class GPoseCoordinator : IDisposable
                     EventId = DiagnosticEventIds.GPoseMappingResolved,
                     Category = DiagnosticCategory.GPose,
                     Message = "GPose representation mapping resolved.",
-                    Properties = new Dictionary<string, object?> { ["mappingCount"] = MappingCount, ["normalActorCount"] = normalActors.Count },
+                    Properties = new Dictionary<string, object?>
+                    {
+                        ["mappingCount"] = MappingCount,
+                        ["normalActorCount"] = normalActors.Count,
+                        ["currentActorCount"] = registry.Entries.Count,
+                        ["currentRepresentationCount"] = registry.Entries.Sum(static actor => actor.Representations.Count),
+                        ["directLocalPlayerFound"] = directLocalPlayerFound,
+                        ["directLocalPlayerIndex"] = directLocalPlayerFound
+                            ? directLocalPlayer!.RepresentationKey.ObjectIndex
+                            : null,
+                    },
                 });
                 State = GPoseState.ApplyingOverrides;
                 break;
