@@ -47,6 +47,53 @@ public sealed class BulkOutfitTests
         Assert.Equal(0, preview.SkippedNonHumanActors);
     }
 
+    [Fact]
+    public void ExclusionWinsWhenTargetAndExclusionConditionsAreIdentical()
+    {
+        var humanNpc = Entry(2, "Human", ObjectKind.EventNpc, 0, false);
+        var filter = new BulkOutfitFilter(ActorTargetType.Npcs, 1, 0, "Human");
+        var settings = new BulkOutfitSettings(filter, filter, false);
+
+        var preview = new BulkOutfitTargetResolver().Resolve([humanNpc], settings);
+
+        Assert.Equal(0, preview.MatchingLogicalActors);
+        Assert.Equal(1, preview.ExcludedLogicalActors);
+        Assert.Empty(preview.EligibleTargets);
+    }
+
+    [Fact]
+    public void ExclusionRemovesOnlyActorsMatchingAllExclusionConditions()
+    {
+        var first = Entry(2, "Young Human", ObjectKind.EventNpc, 0, false);
+        var second = Entry(3, "Adult Human", ObjectKind.EventNpc, 0, false);
+        var settings = new BulkOutfitSettings(
+            new BulkOutfitFilter(ActorTargetType.Npcs, 1, null, string.Empty),
+            new BulkOutfitFilter(ActorTargetType.Npcs, 1, null, "Young"),
+            false);
+
+        var preview = new BulkOutfitTargetResolver().Resolve([first, second], settings);
+
+        Assert.Equal(1, preview.MatchingLogicalActors);
+        Assert.Equal(1, preview.ExcludedLogicalActors);
+        Assert.Equal(second.Key, Assert.Single(preview.EligibleTargets));
+    }
+
+    [Fact]
+    public void PlayerExclusionCanRemoveIncludedLocalPlayer()
+    {
+        var player = Entry(1, "Player", ObjectKind.Pc, 0, true);
+        var npc = Entry(2, "Human", ObjectKind.EventNpc, 0, false);
+        var settings = new BulkOutfitSettings(
+            new BulkOutfitFilter(ActorTargetType.All, 0, null, string.Empty),
+            new BulkOutfitFilter(ActorTargetType.Players, 0, null, string.Empty),
+            true);
+
+        var preview = new BulkOutfitTargetResolver().Resolve([player, npc], settings);
+
+        Assert.Equal(1, preview.ExcludedLogicalActors);
+        Assert.Equal(npc.Key, Assert.Single(preview.EligibleTargets));
+    }
+
     private static ActorEntry Entry(
         ushort index,
         string name,

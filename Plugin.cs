@@ -218,12 +218,21 @@ public sealed class Plugin : IDalamudPlugin
     public bool StartBulkOutfit(BulkOutfitPreview preview, out string message)
     {
         if (!RefreshSourceOutfit(out message))
+        {
+            LogBulkTargetPreview(preview, BulkOperationType.ApplyOutfit, false);
             return false;
-        return bulkOutfitService.StartApply(preview.EligibleTargets, out message);
+        }
+        var started = bulkOutfitService.StartApply(preview.EligibleTargets, out message);
+        LogBulkTargetPreview(preview, BulkOperationType.ApplyOutfit, started);
+        return started;
     }
 
     public bool StartUnequipAll(BulkOutfitPreview preview, out string message)
-        => bulkOutfitService.StartUnequip(preview.EligibleTargets, out message);
+    {
+        var started = bulkOutfitService.StartUnequip(preview.EligibleTargets, out message);
+        LogBulkTargetPreview(preview, BulkOperationType.UnequipAll, started);
+        return started;
+    }
 
     public bool StartRestoreModifiedActors(out string message)
         => bulkOutfitService.StartRestore(out message);
@@ -237,6 +246,24 @@ public sealed class Plugin : IDalamudPlugin
     public BulkOperation? CurrentBulkOperation => bulkOutfitService.CurrentOperation;
     public string BulkOutfitStatus => bulkOutfitService.LastStatus;
     public int ModifiedOutfitActorCount => bulkOutfitService.ModifiedActorCount;
+
+    private void LogBulkTargetPreview(BulkOutfitPreview preview, BulkOperationType type, bool started)
+        => diagnosticRouter.Write(new DiagnosticLogEntry
+        {
+            EventId = DiagnosticEventIds.BulkTargetResolved,
+            Category = DiagnosticCategory.BulkOutfit,
+            Message = "Bulk Outfit target and exclusion filters resolved.",
+            Outcome = started ? "Accepted" : "Rejected",
+            Properties = new Dictionary<string, object?>
+            {
+                ["type"] = type,
+                ["matchingLogicalActors"] = preview.MatchingLogicalActors,
+                ["excludedLogicalActors"] = preview.ExcludedLogicalActors,
+                ["eligibleHumanActors"] = preview.EligibleHumanActors,
+                ["skippedNonHumanActors"] = preview.SkippedNonHumanActors,
+                ["unavailableActors"] = preview.UnavailableActors,
+            },
+        });
 
     public IReadOnlyList<ModelSearchEntry> GetModelSearchEntries()
     {
@@ -296,6 +323,16 @@ public sealed class Plugin : IDalamudPlugin
         return sheet.TryGetRow(race, out var row) && !row.Masculine.IsEmpty
             ? row.Masculine.ToString()
             : Localizer.Get(TextKey.Unknown, race);
+    }
+
+    public string GetTribeName(uint tribe)
+    {
+        if (tribe == 0)
+            return Localizer[TextKey.AnyTribe];
+        var sheet = DataManager.GetExcelSheet<Tribe>(ClientState.ClientLanguage);
+        return sheet.TryGetRow(tribe, out var row) && !row.Masculine.IsEmpty
+            ? row.Masculine.ToString()
+            : Localizer.Get(TextKey.Unknown, tribe);
     }
 
     public bool ContainsGameText(string value, string search)
@@ -751,7 +788,8 @@ public sealed class Plugin : IDalamudPlugin
         var tribe = customize[4];
         return race is >= 1 and <= 8
             && gender is 0 or 1
-            && tribe is >= 1 and <= 16;
+            && tribe is >= 1 and <= 16
+            && HumanTribeCatalog.IsValidForRace(race, tribe);
     }
 
     private static ulong[] CreateEquipment(ENpcBase row)
@@ -880,6 +918,11 @@ public sealed record ModelSearchEntry(
     AppearanceData? ModelAppearance)
 {
     public uint ModelId => RowId;
+
+    public uint Tribe => Category == ModelCategory.Human
+        && HumanAppearance is { Customize.Length: > 4 } appearance
+            ? appearance.Customize[4]
+            : 0U;
 
     public bool IsYoungNpc => Category == ModelCategory.Human && BodyType == (byte)NpcAge.Young;
 }

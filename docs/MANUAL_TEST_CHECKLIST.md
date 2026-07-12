@@ -12,6 +12,9 @@ Enable Full diagnostics before testing native appearance operations. Stop after 
 - [ ] Actor selection clears after index reuse by another actor
 - [ ] Model Search returns Human, Demihuman, and Monster rows
 - [ ] Model ID and name filters combine correctly
+- [ ] Human Race and Tribe filters combine correctly
+- [ ] Hyur limits Tribe choices to Midlander and Highlander
+- [ ] Any Race exposes all 16 localized Tribe names
 - [ ] Young-only search does not include old/adult NPCs
 - [ ] Model detail shows completeness and disabled reason
 - [ ] Rapidly changing Model Search selection settles on only the last preview
@@ -22,6 +25,10 @@ Enable Full diagnostics before testing native appearance operations. Stop after 
 - [ ] Ambiguous same-name NPC copies are skipped
 - [ ] Bulk Outfit preview excludes the local player by default
 - [ ] Bulk Outfit preview counts non-Human actors as skipped
+- [ ] Disabled exclusion filters do not remove matching actors
+- [ ] Enabled exclusion filters remove only actors matching every exclusion condition
+- [ ] Identical target and exclusion conditions result in zero eligible actors
+- [ ] Include Yourself followed by a Players exclusion removes the local player
 - [ ] Territory change, logout, and plugin disable do not crash
 
 ## Native appearance verification

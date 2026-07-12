@@ -17,7 +17,15 @@ public sealed class BulkOutfitTargetResolver
 
     public BulkOutfitPreview Resolve(IReadOnlyList<ActorEntry> actors, BulkOutfitSettings settings)
     {
-        var matching = actors.Where(actor => Matches(actor, settings)).ToArray();
+        var included = actors
+            .Where(actor => settings.IncludeYourself || !actor.IsLocalPlayer)
+            .Where(actor => Matches(actor, settings.Target))
+            .ToArray();
+        var excluded = settings.Exclusion is { } exclusion
+            ? included.Where(actor => Matches(actor, exclusion)).ToArray()
+            : Array.Empty<ActorEntry>();
+        var excludedKeys = excluded.Select(static actor => actor.Key).ToHashSet();
+        var matching = included.Where(actor => !excludedKeys.Contains(actor.Key)).ToArray();
         var eligible = matching
             .Where(static actor => actor.Representations.Count > 0 && actor.Current.Race is not null)
             .Select(static actor => actor.Key)
@@ -27,25 +35,24 @@ public sealed class BulkOutfitTargetResolver
 
         return new BulkOutfitPreview(
             matching.Length,
+            excluded.Length,
             eligible.Length,
             matching.Count(static actor => actor.Representations.Count > 0 && actor.Current.Race is null),
             unavailable,
             eligible);
     }
 
-    private bool Matches(ActorEntry actor, BulkOutfitSettings settings)
+    private bool Matches(ActorEntry actor, BulkOutfitFilter filter)
     {
-        if (!settings.IncludeYourself && actor.IsLocalPlayer)
+        if (!string.IsNullOrWhiteSpace(filter.Name)
+            && !GameTextComparison.Contains(actor.Name, filter.Name, language()))
             return false;
-        if (!string.IsNullOrWhiteSpace(settings.Name)
-            && !GameTextComparison.Contains(actor.Name, settings.Name, language()))
+        if (filter.ActorType == ActorTargetType.Players && actor.Kind != ObjectKind.Pc)
             return false;
-        if (settings.ActorType == ActorTargetType.Players && actor.Kind != ObjectKind.Pc)
+        if (filter.ActorType == ActorTargetType.Npcs && actor.Kind == ObjectKind.Pc)
             return false;
-        if (settings.ActorType == ActorTargetType.Npcs && actor.Kind == ObjectKind.Pc)
+        if (filter.Race != 0 && actor.Race != filter.Race)
             return false;
-        if (settings.Race != 0 && actor.Race != settings.Race)
-            return false;
-        return settings.Gender is null || actor.Gender == settings.Gender;
+        return filter.Gender is null || actor.Gender == filter.Gender;
     }
 }

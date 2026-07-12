@@ -152,6 +152,8 @@ Model and NPC names, race names, item names, searching, and sorting follow the a
 
 Human Model Search details include equipment model numbers and localized matching item names. Actor restore now coordinates appearance and Bulk Outfit snapshots so a pre-morph body is not combined with an NPC outfit. Bulk writes skip equipment slots that already match, reducing unnecessary resource reloads and interference with externally modded unequipped appearances.
 
+Human Model Search can filter by localized Tribe within Race, including Midlander and Highlander for Hyur. Bulk Outfit has independent target and exclusion filters; exclusion takes precedence whenever an actor matches both.
+
 Model Search now resolves and displays preview asset readiness for Human, Demihuman, and Monster entries. Human preview inputs are validated into immutable Customize, equipment, weapon, and visibility data, and the UI distinguishes missing inputs from an unavailable rendering backend. The 3D surface still refuses native CharaView allocation: the current APIs do not expose exclusive CharaView slot ownership or verified native texture lifetime rules. See [preview research](docs/MODEL_PREVIEW_RESEARCH.md) and [preview architecture](docs/MODEL_PREVIEW.md).
 
 Special Human Body Types use normalized backing data after their visible draw object is created. This prevents later Penumbra redraws from starting with stale Young NPC skeleton and equipment data. See [Penumbra compatibility](docs/PENUMBRA_COMPATIBILITY.md).

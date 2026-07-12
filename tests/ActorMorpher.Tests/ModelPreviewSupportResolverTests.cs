@@ -84,6 +84,7 @@ public sealed class ModelPreviewSupportResolverTests
         customize[0] = 1;
         customize[1] = 0;
         customize[2] = (byte)NpcAge.Normal;
+        customize[4] = 1;
         var equipment = new ulong[10];
         var human = new HumanAppearance(customize, equipment, 0, 0, false);
         return new ModelSearchEntry(

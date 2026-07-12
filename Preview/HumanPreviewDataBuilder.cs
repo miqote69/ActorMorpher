@@ -50,7 +50,11 @@ public sealed class HumanPreviewDataBuilder
 
         var race = appearance.Customize[0];
         var sex = appearance.Customize[1];
-        if (race is < 1 or > 8 || sex > 1)
+        var tribe = appearance.Customize[4];
+        if (race is < 1 or > 8
+            || sex > 1
+            || tribe == 0
+            || !HumanTribeCatalog.IsValidForRace(race, tribe))
         {
             failure = HumanPreviewDataFailure.InvalidCustomizeValues;
             return false;

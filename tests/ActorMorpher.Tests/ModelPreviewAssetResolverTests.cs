@@ -68,6 +68,7 @@ public sealed class ModelPreviewAssetResolverTests
         customize[0] = 1;
         customize[1] = 0;
         customize[2] = (byte)NpcAge.Normal;
+        customize[4] = 1;
         var appearance = new HumanAppearance(customize, new ulong[10], 0, 0, false);
         var modelAppearance = AppearanceData.Create(100, ModelCategory.Human, 100, AppearanceCompleteness.Complete, customize, new ulong[10]);
         var entry = Entry(ModelCategory.Human, 1, 1, 1) with { HumanAppearance = appearance, ModelAppearance = modelAppearance };

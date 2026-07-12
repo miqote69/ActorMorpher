@@ -40,6 +40,11 @@ public sealed class Localizer
 
     private static readonly IReadOnlyDictionary<TextKey, string> English = new Dictionary<TextKey, string>
     {
+        [TextKey.Tribe] = "Tribe",
+        [TextKey.AnyTribe] = "Any tribe",
+        [TextKey.ExclusionFilters] = "Exclusion Filters",
+        [TextKey.EnableExclusionFilters] = "Enable Exclusion Filters",
+        [TextKey.ExcludedActors] = "Excluded logical actors: {0}",
         [TextKey.PreviewBackend] = "Preview backend: {0}",
         [TextKey.PreviewInputInvalid] = "Preview input data is incomplete or inconsistent.",
         [TextKey.PreviewCharaViewUnsafe] = "Human data is ready, but Dalamud does not provide exclusive CharaView slot and texture ownership.",
@@ -73,6 +78,11 @@ public sealed class Localizer
         [UiLanguage.English] = English,
         [UiLanguage.Japanese] = Translate(new Dictionary<TextKey, string>
         {
+            [TextKey.Tribe] = "\u90e8\u65cf",
+            [TextKey.AnyTribe] = "\u3059\u3079\u3066\u306e\u90e8\u65cf",
+            [TextKey.ExclusionFilters] = "\u5bfe\u8c61\u5916\u30d5\u30a3\u30eb\u30bf\u30fc",
+            [TextKey.EnableExclusionFilters] = "\u5bfe\u8c61\u5916\u30d5\u30a3\u30eb\u30bf\u30fc\u3092\u6709\u52b9\u5316",
+            [TextKey.ExcludedActors] = "\u5bfe\u8c61\u5916\u306eActor: {0}",
             [TextKey.PreviewBackend] = "\u30d7\u30ec\u30d3\u30e5\u30fcBackend: {0}",
             [TextKey.PreviewInputInvalid] = "\u30d7\u30ec\u30d3\u30e5\u30fc\u5165\u529b\u30c7\u30fc\u30bf\u304c\u4e0d\u5b8c\u5168\u3001\u307e\u305f\u306f\u6574\u5408\u3057\u3066\u3044\u307e\u305b\u3093\u3002",
             [TextKey.PreviewCharaViewUnsafe] = "Human\u30c7\u30fc\u30bf\u306f\u6e96\u5099\u5b8c\u4e86\u3067\u3059\u304c\u3001Dalamud\u306bCharaView\u67a0\u3068\u30c6\u30af\u30b9\u30c1\u30e3\u306e\u6392\u4ed6\u7684\u306a\u6240\u6709API\u304c\u3042\u308a\u307e\u305b\u3093\u3002",

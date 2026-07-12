@@ -14,6 +14,7 @@ public sealed class HumanPreviewDataBuilderTests
         customize[0] = 1;
         customize[1] = 1;
         customize[2] = (byte)NpcAge.Young;
+        customize[4] = 2;
         var equipment = Enumerable.Range(1, 10).Select(static value => (ulong)value).ToArray();
         var entry = Entry(customize, equipment, 0x1234, 0x5678, true);
 
@@ -113,6 +114,7 @@ public sealed class HumanPreviewDataBuilderTests
         customize[0] = 1;
         customize[1] = 0;
         customize[2] = (byte)NpcAge.Normal;
+        customize[4] = 1;
         return customize;
     }
 }

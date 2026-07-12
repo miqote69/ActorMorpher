@@ -17,6 +17,7 @@ public sealed class MainWindow : Window, IDisposable
     private string modelIdFilter = string.Empty;
     private int selectedCategory;
     private int selectedRace;
+    private uint selectedTribe;
     private int selectedGender;
     private bool includeAdultHumans = true;
     private bool includeYoungNpc = true;
@@ -28,6 +29,11 @@ public sealed class MainWindow : Window, IDisposable
     private int bulkActorType;
     private int bulkRace;
     private int bulkGender;
+    private bool bulkExclusionEnabled;
+    private string bulkExcludeNameFilter = string.Empty;
+    private int bulkExcludeActorType;
+    private int bulkExcludeRace;
+    private int bulkExcludeGender;
     private bool bulkIncludeYourself;
     private string bulkActionStatus = string.Empty;
     private string diagnosticMarker = string.Empty;
@@ -289,41 +295,37 @@ public sealed class MainWindow : Window, IDisposable
         ImGui.Separator();
         ImGui.TextUnformatted(T(TextKey.TargetFilters));
         ImGui.Checkbox($"{T(TextKey.IncludeYourself)}###bulk-include-yourself", ref bulkIncludeYourself);
-        ImGui.SetNextItemWidth(160.0f);
-        var actorTypeNames = ActorTypeNames();
-        ImGui.Combo($"{T(TextKey.ActorType)}###bulk-actor-type", ref bulkActorType, actorTypeNames, actorTypeNames.Length);
-        ImGui.SetNextItemWidth(160.0f);
-        if (ImGui.BeginCombo($"{T(TextKey.Race)}###bulk-race", GetRaceFilterName(bulkRace)))
-        {
-            for (var i = 0; i < HumanRaces.Length; ++i)
-            {
-                if (ImGui.Selectable($"{GetRaceFilterName(i)}###bulk-race-{i}", bulkRace == i))
-                    bulkRace = i;
-            }
-            ImGui.EndCombo();
-        }
-        ImGui.SetNextItemWidth(160.0f);
-        if (ImGui.BeginCombo($"{T(TextKey.Gender)}###bulk-gender", GetGenderFilterName(bulkGender)))
-        {
-            for (var i = 0; i < HumanGenders.Length; ++i)
-            {
-                if (ImGui.Selectable($"{GetGenderFilterName(i)}###bulk-gender-{i}", bulkGender == i))
-                    bulkGender = i;
-            }
-            ImGui.EndCombo();
-        }
-        ImGui.SetNextItemWidth(260.0f);
-        ImGui.InputTextWithHint($"{T(TextKey.Name)}###bulk-name", T(TextKey.FilterByName), ref bulkNameFilter, 128);
+        DrawBulkFilterControls("target", ref bulkActorType, ref bulkRace, ref bulkGender, ref bulkNameFilter);
+
+        ImGui.Spacing();
+        ImGui.TextUnformatted(T(TextKey.ExclusionFilters));
+        ImGui.Checkbox($"{T(TextKey.EnableExclusionFilters)}###bulk-exclusion-enabled", ref bulkExclusionEnabled);
+        if (!bulkExclusionEnabled)
+            ImGui.BeginDisabled();
+        DrawBulkFilterControls("exclude", ref bulkExcludeActorType, ref bulkExcludeRace, ref bulkExcludeGender, ref bulkExcludeNameFilter);
+        if (!bulkExclusionEnabled)
+            ImGui.EndDisabled();
+
         var gender = HumanGenders[bulkGender];
+        var excludeGender = HumanGenders[bulkExcludeGender];
         var preview = plugin.GetBulkOutfitPreview(new BulkOutfitSettings(
-            (ActorTargetType)bulkActorType,
-            HumanRaces[bulkRace],
-            gender == byte.MaxValue ? null : gender,
-            bulkNameFilter,
+            new BulkOutfitFilter(
+                (ActorTargetType)bulkActorType,
+                HumanRaces[bulkRace],
+                gender == byte.MaxValue ? null : gender,
+                bulkNameFilter),
+            bulkExclusionEnabled
+                ? new BulkOutfitFilter(
+                    (ActorTargetType)bulkExcludeActorType,
+                    HumanRaces[bulkExcludeRace],
+                    excludeGender == byte.MaxValue ? null : excludeGender,
+                    bulkExcludeNameFilter)
+                : null,
             bulkIncludeYourself));
 
         ImGui.Separator();
         ImGui.TextUnformatted(T(TextKey.MatchingActors, preview.MatchingLogicalActors));
+        ImGui.TextUnformatted(T(TextKey.ExcludedActors, preview.ExcludedLogicalActors));
         ImGui.TextUnformatted(T(TextKey.EligibleHumanActors, preview.EligibleHumanActors));
         ImGui.TextUnformatted(T(TextKey.SkippedNonHumanActors, preview.SkippedNonHumanActors));
         ImGui.TextUnformatted(T(TextKey.UnavailableActors, preview.UnavailableActors));
@@ -376,6 +378,40 @@ public sealed class MainWindow : Window, IDisposable
             ImGui.TextWrapped(bulkActionStatus);
         if (!string.IsNullOrWhiteSpace(plugin.BulkOutfitStatus))
             ImGui.TextWrapped(plugin.BulkOutfitStatus);
+    }
+
+    private void DrawBulkFilterControls(
+        string id,
+        ref int actorType,
+        ref int race,
+        ref int gender,
+        ref string name)
+    {
+        ImGui.SetNextItemWidth(160.0f);
+        var actorTypeNames = ActorTypeNames();
+        ImGui.Combo($"{T(TextKey.ActorType)}###bulk-{id}-actor-type", ref actorType, actorTypeNames, actorTypeNames.Length);
+        ImGui.SetNextItemWidth(160.0f);
+        if (ImGui.BeginCombo($"{T(TextKey.Race)}###bulk-{id}-race", GetRaceFilterName(race)))
+        {
+            for (var i = 0; i < HumanRaces.Length; ++i)
+            {
+                if (ImGui.Selectable($"{GetRaceFilterName(i)}###bulk-{id}-race-{i}", race == i))
+                    race = i;
+            }
+            ImGui.EndCombo();
+        }
+        ImGui.SetNextItemWidth(160.0f);
+        if (ImGui.BeginCombo($"{T(TextKey.Gender)}###bulk-{id}-gender", GetGenderFilterName(gender)))
+        {
+            for (var i = 0; i < HumanGenders.Length; ++i)
+            {
+                if (ImGui.Selectable($"{GetGenderFilterName(i)}###bulk-{id}-gender-{i}", gender == i))
+                    gender = i;
+            }
+            ImGui.EndCombo();
+        }
+        ImGui.SetNextItemWidth(260.0f);
+        ImGui.InputTextWithHint($"{T(TextKey.Name)}###bulk-{id}-name", T(TextKey.FilterByName), ref name, 128);
     }
 
     private void DrawActorsTab()
@@ -560,6 +596,8 @@ public sealed class MainWindow : Window, IDisposable
                                 ["modelCharaId"] = model.ModelId,
                                 ["modelName"] = model.Name,
                                 ["category"] = model.Category,
+                                ["race"] = model.Race,
+                                ["tribe"] = model.Tribe,
                                 ["completeness"] = model.Completeness,
                                 ["source"] = model.Source,
                                 ["sourceRowId"] = model.SourceId,
@@ -641,6 +679,7 @@ public sealed class MainWindow : Window, IDisposable
                 if (model.Category == ModelCategory.Human)
                 {
                     DrawDetailRow(T(TextKey.Race), plugin.GetRaceName(model.Race));
+                    DrawDetailRow(T(TextKey.Tribe), plugin.GetTribeName(model.Tribe));
                     DrawDetailRow("Gender", GetGenderName(model.Gender));
                     DrawDetailRow("Age", GetAgeName(model.BodyType));
                     DrawDetailRow("Body Type", model.BodyType.ToString());
@@ -880,9 +919,27 @@ public sealed class MainWindow : Window, IDisposable
             for (var i = 0; i < HumanRaces.Length; ++i)
             {
                 if (ImGui.Selectable($"{GetRaceFilterName(i)}###model-race-{i}", selectedRace == i))
+                {
                     selectedRace = i;
+                    if (!HumanTribeCatalog.IsValidForRace(HumanRaces[selectedRace], selectedTribe))
+                        selectedTribe = 0;
+                }
             }
 
+            ImGui.EndCombo();
+        }
+
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(170.0f);
+        if (ImGui.BeginCombo($"{T(TextKey.Tribe)}###model-tribe", GetTribeFilterName(selectedTribe)))
+        {
+            if (ImGui.Selectable($"{T(TextKey.AnyTribe)}###model-tribe-0", selectedTribe == 0))
+                selectedTribe = 0;
+            foreach (var tribe in HumanTribeCatalog.GetTribes(HumanRaces[selectedRace]))
+            {
+                if (ImGui.Selectable($"{plugin.GetTribeName(tribe)}###model-tribe-{tribe}", selectedTribe == tribe))
+                    selectedTribe = tribe;
+            }
             ImGui.EndCombo();
         }
 
@@ -899,7 +956,6 @@ public sealed class MainWindow : Window, IDisposable
             ImGui.EndCombo();
         }
 
-        ImGui.SameLine();
         ImGui.Checkbox($"{T(TextKey.Adult)}###include-adult", ref includeAdultHumans);
         ImGui.SameLine();
         ImGui.Checkbox($"{T(TextKey.YoungNpc)}###include-young", ref includeYoungNpc);
@@ -945,6 +1001,9 @@ public sealed class MainWindow : Window, IDisposable
         if (race != 0 && model.Race != race)
             return false;
 
+        if (selectedTribe != 0 && model.Tribe != selectedTribe)
+            return false;
+
         var gender = HumanGenders[selectedGender];
         if (gender != byte.MaxValue && model.Gender != gender)
             return false;
@@ -977,6 +1036,7 @@ public sealed class MainWindow : Window, IDisposable
     private string[] CategoryNames() => [T(TextKey.Human), T(TextKey.Demihuman), T(TextKey.Monster)];
     private string[] ActorTypeNames() => [T(TextKey.All), T(TextKey.Players), T(TextKey.Npcs)];
     private string GetRaceFilterName(int index) => HumanRaces[index] == 0 ? T(TextKey.AnyRace) : plugin.GetRaceName(HumanRaces[index]);
+    private string GetTribeFilterName(uint tribe) => tribe == 0 ? T(TextKey.AnyTribe) : plugin.GetTribeName(tribe);
     private string GetGenderFilterName(int index) => HumanGenders[index] == byte.MaxValue ? T(TextKey.AnyGender) : GetGenderName(HumanGenders[index]);
     private string T(TextKey key, params object[] arguments) => plugin.Localizer.Get(key, arguments);
 }
