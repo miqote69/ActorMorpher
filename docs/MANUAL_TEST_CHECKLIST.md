@@ -21,6 +21,10 @@ Enable Full diagnostics before testing native appearance operations. Stop after 
 - [ ] Leaving Model Search pauses the preview and returning reloads the selection
 - [ ] Closing and reopening the plugin window reloads the selected preview without a stale model
 - [ ] Territory change and logout release the preview without a crash
+- [ ] Monster details show nonzero Geometry counts and finite Bounds when its MDL is present
+- [ ] Demihuman Geometry combines all present parts without failing on unused parts
+- [ ] Auto Frame distance is finite and positive for ready Geometry
+- [ ] Rapid model selection does not visibly parse every intermediate MDL
 - [ ] GPose entry does not freeze or crash
 - [ ] Ambiguous same-name NPC copies are skipped
 - [ ] Bulk Outfit preview excludes the local player by default

@@ -50,6 +50,7 @@ public static class DiagnosticEventIds
     public const string PreviewAssetsResolved = "AM7101";
     public const string PreviewSelectionRequested = "AM7102";
     public const string PreviewStateChanged = "AM7103";
+    public const string PreviewGeometryInspected = "AM7104";
     public const string SlowOperation = "AM8001";
     public const string LogEventsDropped = "AM8002";
     public const string DiagnosticMarker = "AM8003";
@@ -85,7 +86,7 @@ public static class DiagnosticEventIds
         [TroubleshootingCaptureEnded] = "TroubleshootingCaptureEnded",
         [DiagnosticSnapshotCreated] = "DiagnosticSnapshotCreated", [SlowOperation] = "SlowOperation",
         [PreviewAssetsResolved] = "PreviewAssetsResolved", [PreviewSelectionRequested] = "PreviewSelectionRequested",
-        [PreviewStateChanged] = "PreviewStateChanged",
+        [PreviewStateChanged] = "PreviewStateChanged", [PreviewGeometryInspected] = "PreviewGeometryInspected",
         [LogEventsDropped] = "LogEventsDropped", [DiagnosticMarker] = "DiagnosticMarker",
         [RepeatedEventsSuppressed] = "RepeatedEventsSuppressed", [HandledException] = "HandledException",
         [FileLoggingUnavailable] = "FileLoggingUnavailable", [DiagnosticExportFailed] = "DiagnosticExportFailed",

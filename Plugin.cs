@@ -47,11 +47,13 @@ public sealed class Plugin : IDalamudPlugin
     private readonly HumanPreviewDataBuilder humanPreviewDataBuilder = new();
     private readonly ModelPreviewSupportResolver modelPreviewSupportResolver;
     private readonly ModelPreviewAssetResolver modelPreviewAssetResolver;
+    private readonly ModelPreviewGeometryInspector modelPreviewGeometryInspector;
     private readonly BulkOutfitTargetResolver bulkOutfitTargetResolver = new();
     private readonly Dictionary<ClientLanguage, IReadOnlyList<ModelSearchEntry>> modelSearchCaches = new();
     private readonly Dictionary<ClientLanguage, IReadOnlyDictionary<uint, string>> equipmentNameCaches = new();
     private readonly Dictionary<(uint RowId, ModelCategory Category, ModelSource Source, uint SourceId), ModelPreviewAssetReport> previewAssetCaches = new();
     private readonly Dictionary<(uint RowId, ModelCategory Category, ModelSource Source, uint SourceId), ModelPreviewSupport> previewSupportCaches = new();
+    private readonly Dictionary<(uint RowId, ModelCategory Category, ModelSource Source, uint SourceId), ModelPreviewGeometryReport> previewGeometryCaches = new();
 
     public Configuration Configuration { get; }
     public Localizer Localizer { get; }
@@ -90,6 +92,7 @@ public sealed class Plugin : IDalamudPlugin
         humanModelClassifier = new HumanModelClassifier(DataManager);
         modelPreviewAssetResolver = new ModelPreviewAssetResolver(DataManager.FileExists, humanPreviewDataBuilder);
         modelPreviewSupportResolver = new ModelPreviewSupportResolver(humanPreviewDataBuilder);
+        modelPreviewGeometryInspector = new ModelPreviewGeometryInspector(new LuminaModelGeometrySource(DataManager).Load);
         actorRegistry = new ActorRegistry(ObjectTable, ClientState, Framework, humanModelClassifier, diagnosticRouter);
         actorIdentity = new ActorIdentityService(diagnosticRouter);
         var clientContext = new DalamudClientContext(ClientState);
@@ -423,6 +426,41 @@ public sealed class Plugin : IDalamudPlugin
             previewSupportCaches.Add(key, support);
         }
         return support;
+    }
+
+    public ModelPreviewGeometryReport GetModelPreviewGeometry(ModelSearchEntry model)
+    {
+        var key = PreviewCacheKey(model);
+        if (previewGeometryCaches.TryGetValue(key, out var report))
+            return report;
+        report = modelPreviewGeometryInspector.Inspect(GetModelPreviewAssets(model));
+        previewGeometryCaches.Add(key, report);
+        diagnosticRouter.Write(new DiagnosticLogEntry
+        {
+            EventId = DiagnosticEventIds.PreviewGeometryInspected,
+            Category = DiagnosticCategory.ModelSearch,
+            Message = "Model preview geometry inspected.",
+            Outcome = report.State.ToString(),
+            Properties = new Dictionary<string, object?>
+            {
+                ["modelCharaId"] = model.ModelId,
+                ["category"] = model.Category,
+                ["readyParts"] = report.ReadyPartCount,
+                ["failedParts"] = report.FailedPartCount,
+                ["meshCount"] = report.MeshCount,
+                ["vertexCount"] = report.VertexCount,
+                ["indexCount"] = report.IndexCount,
+                ["lodCount"] = report.MaximumLodCount,
+                ["boundsMin"] = report.Bounds is { } bounds
+                    ? new[] { bounds.Min.X, bounds.Min.Y, bounds.Min.Z }
+                    : null,
+                ["boundsMax"] = report.Bounds is { } maxBounds
+                    ? new[] { maxBounds.Max.X, maxBounds.Max.Y, maxBounds.Max.Z }
+                    : null,
+                ["autoFrameDistance"] = report.AutoFrame?.Distance,
+            },
+        });
+        return report;
     }
 
     private static (uint RowId, ModelCategory Category, ModelSource Source, uint SourceId) PreviewCacheKey(ModelSearchEntry model)

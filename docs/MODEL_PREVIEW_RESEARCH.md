@@ -32,6 +32,14 @@ Actor Morpher therefore continues to reject native preview allocation. A crash l
 
 `ModelPreviewSupportResolver` separates input completeness from backend availability. Human data can report `StaticReady` while remaining blocked by missing CharaView slot/texture ownership. Demihuman and Monster data separately report missing model, missing skeleton, or a ready static asset set blocked only by the unimplemented standalone renderer.
 
+## Static geometry inspection
+
+The installed Lumina API exposes MDL mesh records, vertex and index counts, LOD records, and model bounding boxes without native game memory access. `LuminaModelGeometrySource` now reads only those public fields through `IDataManager.GetFile<MdlFile>`. `ModelPreviewGeometryInspector` contains file-local failures, combines bounds across available Demihuman parts, and emits aggregate mesh, vertex, index, triangle, and LOD counts as diagnostic event `AM7104`.
+
+`ModelPreviewCameraFraming` calculates a square-preview target, distance, and near/far planes from the combined bounds using a validated field of view and padding. Geometry inspection starts only after the 200 ms preview selection debounce settles, so rapidly scrolling the model list does not synchronously parse every intermediate MDL.
+
+This phase does not access raw vertex buffers, compile shaders, create a Direct3D resource, or claim that metadata readiness is a rendered frame. Lumina's high-level `Mesh` type does not expose its vertex and index arrays as public properties in the installed build, so a renderer still requires a separately reviewed vertex extraction strategy.
+
 ## Conditions to continue
 
 1. A Dalamud API or documented allocator must reserve and release a CharaView client-object slot for a plugin.

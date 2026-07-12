@@ -72,3 +72,5 @@ Human preview preparation clones 26 Customize bytes, ten equipment models, main/
 Human Model Search exposes the Customize Tribe value as a localized subcategory. Race IDs 1 through 8 map to their two sequential Tribe rows, and changing Race clears an incompatible Tribe selection. Human data validation rejects a Tribe that does not belong to its Race.
 
 Bulk Outfit targeting applies inclusion first and exclusion second. The exclusion filter has its own actor type, race, gender, and name conditions. An actor must match every enabled exclusion condition to be removed; exclusion always wins when inclusion and exclusion both match. The resolved matching, excluded, eligible, non-Human, and unavailable counts are recorded when an operation is requested.
+
+Monster and Demihuman preview geometry uses Lumina `MdlFile` metadata only. Each present MDL contributes mesh, vertex, index, LOD, and model-bound data. Bounds are validated for finite ordered coordinates, combined across parts, and converted to a square Auto Frame camera distance. File failures are isolated per part and no raw graphics resource or game pointer is retained.

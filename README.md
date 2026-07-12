@@ -156,6 +156,8 @@ Human Model Search can filter by localized Tribe within Race, including Midlande
 
 Model Search now resolves and displays preview asset readiness for Human, Demihuman, and Monster entries. Human preview inputs are validated into immutable Customize, equipment, weapon, and visibility data, and the UI distinguishes missing inputs from an unavailable rendering backend. The 3D surface still refuses native CharaView allocation: the current APIs do not expose exclusive CharaView slot ownership or verified native texture lifetime rules. See [preview research](docs/MODEL_PREVIEW_RESEARCH.md) and [preview architecture](docs/MODEL_PREVIEW.md).
 
+Monster and Demihuman details inspect Lumina MDL metadata after selection debounce and show geometry counts, combined bounds, and a calculated Auto Frame distance. This is renderer preparation only; no Direct3D preview resource is created yet.
+
 Special Human Body Types use normalized backing data after their visible draw object is created. This prevents later Penumbra redraws from starting with stale Young NPC skeleton and equipment data. See [Penumbra compatibility](docs/PENUMBRA_COMPATIBILITY.md).
 
 Native appearance features use the current Dalamud and FFXIVClientStructs APIs without guessed offsets, signatures, VTable indexes, or ObjectKind writes. These new write paths still require FF14 testing against the current client; enable diagnostics before testing and report any crash pack with the session log.

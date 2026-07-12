@@ -689,6 +689,10 @@ public sealed class MainWindow : Window, IDisposable
             }
 
             DrawPreviewAssetReport(plugin.GetModelPreviewAssets(model));
+            if (model.Category != ModelCategory.Human
+                && plugin.ModelPreview is { State: ModelPreviewState.Unsupported, ModelId: var previewModelId }
+                && previewModelId == model.ModelId)
+                DrawPreviewGeometryReport(plugin.GetModelPreviewGeometry(model));
 
             if (model.Category == ModelCategory.Human)
             {
@@ -848,6 +852,43 @@ public sealed class MainWindow : Window, IDisposable
                 statusText);
             ImGui.TableNextColumn(); ImGui.TextWrapped(asset.Path ?? T(TextKey.InMemoryAppearance));
         }
+        ImGui.EndTable();
+    }
+
+    private void DrawPreviewGeometryReport(ModelPreviewGeometryReport report)
+    {
+        ImGui.Spacing();
+        ImGui.TextUnformatted(T(TextKey.PreviewGeometry));
+        ImGui.SameLine();
+        var ready = report.State == ModelPreviewGeometryState.Ready;
+        var partial = report.State == ModelPreviewGeometryState.Partial;
+        var color = ready
+            ? new Vector4(0.35f, 0.85f, 0.45f, 1.0f)
+            : partial
+                ? new Vector4(0.95f, 0.75f, 0.25f, 1.0f)
+                : new Vector4(0.95f, 0.35f, 0.35f, 1.0f);
+        var status = ready
+            ? T(TextKey.GeometryReady)
+            : partial
+                ? T(TextKey.GeometryPartial)
+                : T(TextKey.GeometryUnavailable);
+        ImGui.TextColored(color, status);
+
+        if (report.Bounds is not { } bounds)
+            return;
+        if (!ImGui.BeginTable("##preview-geometry", 2, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
+            return;
+        ImGui.TableSetupColumn(T(TextKey.Field), ImGuiTableColumnFlags.WidthFixed, 150.0f);
+        ImGui.TableSetupColumn(T(TextKey.Value), ImGuiTableColumnFlags.WidthStretch);
+        DrawDetailRow(T(TextKey.Meshes), report.MeshCount.ToString());
+        DrawDetailRow(T(TextKey.Vertices), report.VertexCount.ToString());
+        DrawDetailRow(T(TextKey.Indices), report.IndexCount.ToString());
+        DrawDetailRow(T(TextKey.Triangles), report.TriangleCount.ToString());
+        DrawDetailRow(T(TextKey.LodCount), report.MaximumLodCount.ToString());
+        DrawDetailRow(T(TextKey.Bounds),
+            $"({bounds.Min.X:F2}, {bounds.Min.Y:F2}, {bounds.Min.Z:F2}) - ({bounds.Max.X:F2}, {bounds.Max.Y:F2}, {bounds.Max.Z:F2})");
+        if (report.AutoFrame is { } autoFrame)
+            DrawDetailRow(T(TextKey.AutoFrameDistance), autoFrame.Distance.ToString("F2"));
         ImGui.EndTable();
     }
 

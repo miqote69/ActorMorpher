@@ -40,6 +40,17 @@ public sealed class Localizer
 
     private static readonly IReadOnlyDictionary<TextKey, string> English = new Dictionary<TextKey, string>
     {
+        [TextKey.PreviewGeometry] = "Preview Geometry",
+        [TextKey.GeometryReady] = "Geometry Ready",
+        [TextKey.GeometryPartial] = "Geometry Partial",
+        [TextKey.GeometryUnavailable] = "Geometry Unavailable",
+        [TextKey.Meshes] = "Meshes",
+        [TextKey.Vertices] = "Vertices",
+        [TextKey.Indices] = "Indices",
+        [TextKey.Triangles] = "Triangles",
+        [TextKey.Bounds] = "Bounds",
+        [TextKey.LodCount] = "LOD Count",
+        [TextKey.AutoFrameDistance] = "Auto Frame Distance",
         [TextKey.Tribe] = "Tribe",
         [TextKey.AnyTribe] = "Any tribe",
         [TextKey.ExclusionFilters] = "Exclusion Filters",
@@ -78,6 +89,17 @@ public sealed class Localizer
         [UiLanguage.English] = English,
         [UiLanguage.Japanese] = Translate(new Dictionary<TextKey, string>
         {
+            [TextKey.PreviewGeometry] = "\u30d7\u30ec\u30d3\u30e5\u30fcGeometry",
+            [TextKey.GeometryReady] = "Geometry\u6e96\u5099\u5b8c\u4e86",
+            [TextKey.GeometryPartial] = "Geometry\u4e00\u90e8\u6e96\u5099\u5b8c\u4e86",
+            [TextKey.GeometryUnavailable] = "Geometry\u5229\u7528\u4e0d\u53ef",
+            [TextKey.Meshes] = "Mesh\u6570",
+            [TextKey.Vertices] = "\u9802\u70b9\u6570",
+            [TextKey.Indices] = "Index\u6570",
+            [TextKey.Triangles] = "\u4e09\u89d2\u5f62\u6570",
+            [TextKey.Bounds] = "\u5883\u754c",
+            [TextKey.LodCount] = "LOD\u6570",
+            [TextKey.AutoFrameDistance] = "Auto Frame\u8ddd\u96e2",
             [TextKey.Tribe] = "\u90e8\u65cf",
             [TextKey.AnyTribe] = "\u3059\u3079\u3066\u306e\u90e8\u65cf",
             [TextKey.ExclusionFilters] = "\u5bfe\u8c61\u5916\u30d5\u30a3\u30eb\u30bf\u30fc",
