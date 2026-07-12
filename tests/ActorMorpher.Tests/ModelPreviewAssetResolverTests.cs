@@ -122,6 +122,55 @@ public sealed class ModelPreviewAssetResolverTests
     }
 
     [Fact]
+    public void YoungElezenUsesYoungAndSharedAncestorModelsBeforeAdultFemaleModels()
+    {
+        var customize = new byte[26];
+        customize[0] = 2;
+        customize[1] = 1;
+        customize[2] = (byte)NpcAge.Young;
+        customize[4] = 3;
+        customize[5] = 201;
+        customize[6] = 201;
+        var equipment = new ulong[10];
+        equipment[(int)OutfitSlot.Body] = 0x000123CE;
+        equipment[(int)OutfitSlot.Hands] = 0x000101FF;
+        equipment[(int)OutfitSlot.Legs] = 0x0002239A;
+        equipment[(int)OutfitSlot.Feet] = 0x0002178C;
+        var appearance = new HumanAppearance(customize, equipment, 0, 0, false);
+        var modelAppearance = AppearanceData.Create(
+            100, ModelCategory.Human, 100, AppearanceCompleteness.Complete, customize, equipment);
+        var entry = Entry(ModelCategory.Human, 1, 1, 1) with
+        {
+            HumanAppearance = appearance,
+            ModelAppearance = modelAppearance,
+        };
+        var present = new HashSet<string>
+        {
+            "chara/human/c0604/obj/face/f0201/model/c0604f0201_fac.mdl",
+            "chara/human/c0604/obj/hair/h0201/model/c0604h0201_hir.mdl",
+            "chara/equipment/e9166/model/c0604e9166_top.mdl",
+            "chara/equipment/e9166/model/c0201e9166_top.mdl",
+            "chara/equipment/e0511/model/c0101e0511_glv.mdl",
+            "chara/equipment/e9114/model/c0604e9114_dwn.mdl",
+            "chara/equipment/e6028/model/c0101e6028_sho.mdl",
+        };
+
+        var report = new ModelPreviewAssetResolver(present.Contains).Resolve(entry);
+
+        Assert.Equal(ModelPreviewReadiness.AssetsComplete, report.Readiness);
+        Assert.Equal((ushort)604, report.HumanTargetCode);
+        Assert.Contains(report.Assets, asset => asset.Label == "Body"
+            && asset.Path == "chara/equipment/e9166/model/c0604e9166_top.mdl");
+        Assert.Contains(report.Assets, asset => asset.Label == "Hands"
+            && asset.Path == "chara/equipment/e0511/model/c0101e0511_glv.mdl");
+        Assert.Contains(report.Assets, asset => asset.Label == "Legs"
+            && asset.Path == "chara/equipment/e9114/model/c0604e9114_dwn.mdl");
+        Assert.Contains(report.Assets, asset => asset.Label == "Feet"
+            && asset.Path == "chara/equipment/e6028/model/c0101e6028_sho.mdl");
+        Assert.DoesNotContain(report.Assets, asset => asset.Path == "chara/equipment/e9166/model/c0201e9166_top.mdl");
+    }
+
+    [Fact]
     public void MissingEquippedHandsAndFeetFallBackToSharedBareModels()
     {
         var customize = new byte[26];

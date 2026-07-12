@@ -29,6 +29,8 @@ Enable Full diagnostics before testing native appearance operations. Stop after 
 - [ ] Demihuman static 3D preview combines every valid visible equipment part
 - [ ] Adult Human static 3D preview shows face, hair, body, and available equipment
 - [ ] Young NPC static 3D preview uses the Young face and hair and remains correctly framed
+- [ ] Young NPC previews with shared Human Hands or Feet render every equipped part
+- [ ] Demihuman hair stored in Head or Hands uses the source NPC hair color rather than the fallback palette
 - [ ] Left-drag rotates the static preview and mouse wheel changes zoom
 - [ ] Reset Camera restores the initial static preview framing
 - [ ] Missing or malformed optional Demihuman parts do not suppress valid parts

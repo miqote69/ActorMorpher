@@ -52,9 +52,12 @@ public sealed class ModelPreviewAssetResolver
         if (family == 0)
             return Invalid(model);
         var bodyType = human.BodyType is (byte)NpcAge.Old or (byte)NpcAge.Young ? human.BodyType : (byte)NpcAge.Normal;
-        var specificCode = $"c{family:D2}{bodyType:D2}";
+        var specificCode = bodyType == (byte)NpcAge.Old
+            ? human.Sex == 0 ? "c0103" : "c0203"
+            : $"c{family:D2}{bodyType:D2}";
         var adultCode = $"c{family:D2}01";
         var fallbackCode = human.Sex == 0 ? "c0101" : "c0201";
+        var modelCodes = ModelCodes(specificCode, adultCode, fallbackCode, bodyType);
         var faceId = human.Customize[5];
         var hairId = human.Customize[6];
         var assets = new List<ModelPreviewAsset>
@@ -63,7 +66,7 @@ public sealed class ModelPreviewAssetResolver
             FirstPresent(
                 ModelPreviewAssetKind.Model,
                 "Face",
-                Codes(specificCode, adultCode, fallbackCode).Select(code =>
+                modelCodes.Select(code =>
                     $"chara/human/{code}/obj/face/f{faceId:D4}/model/{code}f{faceId:D4}_fac.mdl"),
                 true,
                 1),
@@ -74,7 +77,7 @@ public sealed class ModelPreviewAssetResolver
             assets.Add(FirstPresent(
                 ModelPreviewAssetKind.Model,
                 "Hair",
-                Codes(specificCode, adultCode, fallbackCode).Select(code =>
+                modelCodes.Select(code =>
                     $"chara/human/{code}/obj/hair/h{hairId:D4}/model/{code}h{hairId:D4}_hir.mdl"),
                 false,
                 1));
@@ -86,9 +89,9 @@ public sealed class ModelPreviewAssetResolver
             var set = checked((ushort)(packed & 0xFFFF));
             var variant = checked((byte)((packed >> 16) & 0xFF));
             var candidates = set == 0
-                ? BaseBodyCandidates(part.Slot, part.Suffix, adultCode, fallbackCode)
-                : EquipmentCandidates(part.Slot, part.Suffix, set, adultCode, fallbackCode)
-                    .Concat(BaseBodyCandidates(part.Slot, part.Suffix, adultCode, fallbackCode));
+                ? BaseBodyCandidates(part.Slot, part.Suffix, modelCodes)
+                : EquipmentCandidates(part.Slot, part.Suffix, set, modelCodes)
+                    .Concat(BaseBodyCandidates(part.Slot, part.Suffix, modelCodes));
             if (!candidates.Any())
                 continue;
             assets.Add(FirstPresent(
@@ -102,7 +105,7 @@ public sealed class ModelPreviewAssetResolver
         assets.Add(FirstPresent(
             ModelPreviewAssetKind.Skeleton,
             "Skeleton",
-            Codes(specificCode, adultCode, fallbackCode).Select(code =>
+            modelCodes.Select(code =>
                 $"chara/human/{code}/skeleton/base/b0001/skl_{code}b0001.sklb"),
             false,
             1));
@@ -119,14 +122,17 @@ public sealed class ModelPreviewAssetResolver
             model.Category,
             readiness,
             assets,
-            checked((ushort)(family * 100 + bodyType)));
+            ushort.Parse(specificCode.AsSpan(1)));
     }
 
-    private static IEnumerable<string> BaseBodyCandidates(OutfitSlot slot, string suffix, string adultCode, string fallbackCode)
+    private static IEnumerable<string> BaseBodyCandidates(
+        OutfitSlot slot,
+        string suffix,
+        IReadOnlyList<string> modelCodes)
     {
         if (slot is not (OutfitSlot.Body or OutfitSlot.Hands or OutfitSlot.Legs or OutfitSlot.Feet))
             return Array.Empty<string>();
-        return Codes(adultCode, fallbackCode).Select(code =>
+        return modelCodes.Select(code =>
             $"chara/equipment/e0000/model/{code}e0000_{suffix}.mdl");
     }
 
@@ -134,11 +140,10 @@ public sealed class ModelPreviewAssetResolver
         OutfitSlot slot,
         string suffix,
         ushort set,
-        string adultCode,
-        string fallbackCode)
+        IReadOnlyList<string> modelCodes)
     {
         var prefix = slot >= OutfitSlot.Ears ? 'a' : 'e';
-        return Codes(adultCode, fallbackCode).Select(code =>
+        return modelCodes.Select(code =>
             $"chara/{(prefix == 'a' ? "accessory" : "equipment")}/{prefix}{set:D4}/model/{code}{prefix}{set:D4}_{suffix}.mdl");
     }
 
@@ -162,6 +167,18 @@ public sealed class ModelPreviewAssetResolver
 
     private static IEnumerable<string> Codes(params string[] codes)
         => codes.Distinct(StringComparer.Ordinal);
+
+    private static IReadOnlyList<string> ModelCodes(
+        string specificCode,
+        string adultCode,
+        string fallbackCode,
+        byte bodyType)
+        => bodyType switch
+        {
+            (byte)NpcAge.Young => Codes(specificCode, "c0104", "c0101").ToArray(),
+            (byte)NpcAge.Old => Codes(specificCode, "c0103", "c0101").ToArray(),
+            _ => Codes(adultCode, fallbackCode).ToArray(),
+        };
 
     private static int HumanModelFamily(byte race, byte tribe, byte sex)
     {

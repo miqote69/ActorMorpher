@@ -1,4 +1,5 @@
 using System.Numerics;
+using ActorMorpher.Appearance;
 using ActorMorpher.Preview;
 using Xunit;
 
@@ -37,5 +38,41 @@ public sealed class HumanCmpPreviewPaletteTests
     {
         Assert.False(HumanCmpPreviewPalette.TryGetHairColors(
             new byte[200000], tribe, sex, 0, 0, out _, out _));
+    }
+
+    [Fact]
+    public void DemihumanPreviewUsesNpcCustomizeHairColors()
+    {
+        var data = new byte[18432 + 32 * 5120];
+        var hairOffset = 18432 + 5120 + 1024 + 6 * 8;
+        data[hairOffset] = 5;
+        data[hairOffset + 1] = 10;
+        data[hairOffset + 2] = 30;
+        data[hairOffset + 3] = 255;
+        var highlightOffset = 1024;
+        data[highlightOffset] = 20;
+        data[highlightOffset + 1] = 30;
+        data[highlightOffset + 2] = 50;
+        data[highlightOffset + 3] = 255;
+        var customize = new byte[26];
+        customize[1] = 1;
+        customize[4] = 1;
+        customize[7] = 1;
+        customize[10] = 6;
+        var appearance = AppearanceData.Create(
+            2853,
+            ModelCategory.Demihuman,
+            11558,
+            AppearanceCompleteness.Complete,
+            customize,
+            new ulong[10]);
+        var model = new ModelSearchEntry(
+            2853, ModelCategory.Demihuman, ModelSource.BattleNpc, 11558, "Gaia", 2, 1041, 1, 1,
+            1, 1, 1, null, AppearanceCompleteness.Complete, appearance);
+
+        var context = ModelPreviewTextureContext.FromModel(model, data);
+
+        Assert.Equal(new Vector4(5, 10, 30, 255) / 255.0f, context.HairColor);
+        Assert.Equal(new Vector4(20, 30, 50, 255) / 255.0f, context.HairHighlightColor);
     }
 }

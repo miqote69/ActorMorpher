@@ -31,6 +31,19 @@ public sealed class MtrlPreviewParserTests
         Assert.Throws<EndOfStreamException>(() => new MtrlPreviewParser().Parse(data));
     }
 
+    [Fact]
+    public void ResolvesHairMaskFromSamplerMaskAndLegacySTextureSuffix()
+    {
+        var material = new MtrlPreviewData(
+            1,
+            "hair.shpk",
+            ["gaia_s.tex"],
+            [new MtrlPreviewSampler(0x8A4E82B6, "gaia_s.tex")],
+            []);
+
+        Assert.Equal("gaia_s.tex", material.FindTexture(0x8A4E82B6, "_m.tex", "_mask.tex", "_s.tex"));
+    }
+
     private static byte[] CreateMaterial()
     {
         var strings = Encoding.UTF8.GetBytes("diffuse.tex\0index_id.tex\0character.shpk\0");

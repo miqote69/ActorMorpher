@@ -10,6 +10,7 @@ public sealed class ModelPreviewTextureSource(IDataManager dataManager)
     private const uint SamplerColorMap0 = 0x1E6FEF9C;
     private const uint SamplerColorMap1 = 0x6968DF0A;
     private const uint SamplerNormal = 0x0C5EC1F1;
+    private const uint SamplerMask = 0x8A4E82B6;
     private const uint CharacterIndexSampler = 1449103320;
     private readonly MtrlPreviewParser parser = new();
     private byte[]? humanCmp;
@@ -17,27 +18,15 @@ public sealed class ModelPreviewTextureSource(IDataManager dataManager)
 
     public ModelPreviewTextureContext CreateContext(ModelSearchEntry? model)
     {
-        if (model is not { Category: ModelCategory.Human, HumanAppearance.Customize.Length: >= 12 } human)
+        if (model is not ({ Category: ModelCategory.Human, HumanAppearance.Customize.Length: >= 12 }
+            or { Category: ModelCategory.Demihuman, ModelAppearance.Customize.Length: >= 12 }))
             return ModelPreviewTextureContext.Default;
         if (!humanCmpLoaded)
         {
             humanCmpLoaded = true;
             humanCmp = dataManager.GetFile("chara/xls/charamake/human.cmp")?.Data;
         }
-        var customize = human.HumanAppearance.Customize;
-        if (humanCmp is null
-            || !HumanCmpPreviewPalette.TryGetHairColors(
-                humanCmp,
-                customize[4],
-                customize[1],
-                customize[10],
-                customize[11],
-                out var hair,
-                out var highlight))
-            return ModelPreviewTextureContext.Default;
-        if (customize[7] == 0)
-            highlight = hair;
-        return new ModelPreviewTextureContext(hair, highlight);
+        return ModelPreviewTextureContext.FromModel(model, humanCmp);
     }
 
     public ModelPreviewTexturePayload? Load(string materialPath, ModelPreviewTextureContext context)
@@ -51,7 +40,7 @@ public sealed class ModelPreviewTextureSource(IDataManager dataManager)
         if (string.Equals(material.ShaderPackage, "hair.shpk", StringComparison.OrdinalIgnoreCase))
         {
             var normalPath = material.FindTexture(SamplerNormal, "_n.tex", "_norm.tex");
-            var maskPath = material.FindTexture(0, "_m.tex", "_mask.tex");
+            var maskPath = material.FindTexture(SamplerMask, "_m.tex", "_mask.tex", "_s.tex");
             var normal = normalPath is null ? null : dataManager.GetFile<TexFile>(normalPath);
             var mask = maskPath is null ? null : dataManager.GetFile<TexFile>(maskPath);
             if (normal is not null && mask is not null)
@@ -91,4 +80,30 @@ public sealed record ModelPreviewTextureContext(Vector4 HairColor, Vector4 HairH
     public static ModelPreviewTextureContext Default { get; } = new(
         new Vector4(130, 64, 13, 255) / 255.0f,
         new Vector4(77, 126, 240, 255) / 255.0f);
+
+    public static ModelPreviewTextureContext FromModel(ModelSearchEntry? model, byte[]? humanCmp)
+    {
+        IReadOnlyList<byte>? customize = model switch
+        {
+            { Category: ModelCategory.Human, HumanAppearance.Customize.Length: >= 12 } human
+                => human.HumanAppearance.Customize,
+            { Category: ModelCategory.Demihuman, ModelAppearance.Customize.Length: >= 12 } demihuman
+                => demihuman.ModelAppearance.Customize,
+            _ => null,
+        };
+        if (customize is null
+            || humanCmp is null
+            || !HumanCmpPreviewPalette.TryGetHairColors(
+                humanCmp,
+                customize[4],
+                customize[1],
+                customize[10],
+                customize[11],
+                out var hair,
+                out var highlight))
+            return Default;
+        if (customize[7] == 0)
+            highlight = hair;
+        return new ModelPreviewTextureContext(hair, highlight);
+    }
 }
