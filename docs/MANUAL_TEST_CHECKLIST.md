@@ -39,6 +39,9 @@ Enable Full diagnostics before testing native appearance operations. Stop after 
 - [ ] Actor details show original and applied Bulk equipment as separate tables
 - [ ] A pinned outfit reapplies after territory change, game restart, and plugin update
 - [ ] Restore clears the pin and leaves the original outfit restored
+- [ ] Unpinned equipment shows the pin icon and pinned equipment shows the red delete icon
+- [ ] Actor state filter separates Unapplied, Outfit Modified, and Pinned actors
+- [ ] Bulk Restore skips pinned actors while restoring every other modified actor
 - [ ] Bulk Outfit preview excludes the local player by default
 - [ ] Bulk Outfit preview counts non-Human actors as skipped
 - [ ] Disabled exclusion filters do not remove matching actors

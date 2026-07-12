@@ -74,6 +74,8 @@ Supported operations include:
 - Attempt to restore an actor's previous state when its operation fails.
 - Show original and applied equipment separately for modified actors.
 - Pin an applied outfit so it is restored when the matching actor reappears after restart or update.
+- Filter actors by unapplied, outfit-modified, or pinned state.
+- Keep pinned actors out of the Bulk Restore batch while allowing explicit per-actor restore.
 
 Bulk Outfit includes these ten armor and accessory slots:
 

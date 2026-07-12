@@ -264,8 +264,12 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     public bool StartRestoreModifiedActors(out string message)
-        => CanStartBulkOutfitInCurrentContext(out message)
-        && bulkOutfitService.StartRestore(out message);
+    {
+        if (!CanStartBulkOutfitInCurrentContext(out message))
+            return false;
+        var targets = GetRestorableModifiedOutfitActors();
+        return bulkOutfitService.StartRestore(targets, out message);
+    }
 
     public void CancelBulkOperation()
         => bulkOutfitService.Cancel();
@@ -329,7 +333,15 @@ public sealed class Plugin : IDalamudPlugin
 
     public BulkOperation? CurrentBulkOperation => bulkOutfitService.CurrentOperation;
     public string BulkOutfitStatus => bulkOutfitService.LastStatus;
-    public int ModifiedOutfitActorCount => bulkOutfitService.ModifiedActorCount;
+    public int RestorableModifiedOutfitActorCount => GetRestorableModifiedOutfitActors().Count;
+
+    public IDisposable PushIconFont()
+        => PluginInterface.UiBuilder.IconFontFixedWidthHandle.Push();
+
+    private IReadOnlyList<LogicalActorKey> GetRestorableModifiedOutfitActors()
+        => BulkOutfitRestoreTargetResolver.Resolve(
+            bulkOutfitService.Store.States.Keys,
+            IsOutfitPinned);
 
     private IReadOnlyList<ActorEntry> GetBulkOutfitActors()
         => GPoseBulkActorSelector.Select(

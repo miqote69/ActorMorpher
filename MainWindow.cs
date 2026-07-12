@@ -14,6 +14,7 @@ public sealed class MainWindow : Window, IDisposable
     private int selectedActorType;
     private int selectedActorRace;
     private int selectedActorGender;
+    private int selectedActorOutfitState;
     private string modelNameFilter = string.Empty;
     private string modelIdFilter = string.Empty;
     private int selectedCategory;
@@ -328,7 +329,7 @@ public sealed class MainWindow : Window, IDisposable
         if (!canUnequip)
             ImGui.EndDisabled();
         ImGui.SameLine();
-        var canRestore = !operationRunning && plugin.ModifiedOutfitActorCount > 0;
+        var canRestore = !operationRunning && plugin.RestorableModifiedOutfitActorCount > 0;
         if (!canRestore)
             ImGui.BeginDisabled();
         if (ImGui.Button($"{T(TextKey.RestoreModifiedActors)}###bulk-restore"))
@@ -499,6 +500,9 @@ public sealed class MainWindow : Window, IDisposable
             var actorTypeNames = ActorTypeNames();
             ImGui.Combo("##actor-type", ref selectedActorType, actorTypeNames, actorTypeNames.Length);
             ImGui.SetNextItemWidth(-1);
+            var outfitStateNames = ActorOutfitStateNames();
+            ImGui.Combo("##actor-outfit-state", ref selectedActorOutfitState, outfitStateNames, outfitStateNames.Length);
+            ImGui.SetNextItemWidth(-1);
             DrawActorRaceFilter();
             ImGui.SetNextItemWidth(-1);
             DrawActorGenderFilter();
@@ -642,12 +646,27 @@ public sealed class MainWindow : Window, IDisposable
     {
         if (!canPin)
             ImGui.BeginDisabled();
-        var icon = FontAwesomeIcon.Thumbtack.ToIconString();
-        var label = pinned ? T(TextKey.UnpinOutfit) : T(TextKey.PinOutfit);
-        if (ImGui.SmallButton($"{icon} {label}###outfit-pin-{actor.GetHashCode()}"))
-            applySucceeded = plugin.TrySetOutfitPinned(actor, !pinned, out applyStatus);
+        var icon = pinned ? FontAwesomeIcon.Trash.ToIconString() : "\uf08d";
+        using (plugin.PushIconFont())
+        {
+            if (pinned)
+                PushDangerButtonColors();
+            if (ImGui.Button($"{icon}###outfit-pin-{actor.GetHashCode()}"))
+                applySucceeded = plugin.TrySetOutfitPinned(actor, !pinned, out applyStatus);
+            if (pinned)
+                ImGui.PopStyleColor(3);
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(T(pinned ? TextKey.UnpinOutfit : TextKey.PinOutfit));
         if (!canPin)
             ImGui.EndDisabled();
+    }
+
+    private static void PushDangerButtonColors()
+    {
+        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.55f, 0.08f, 0.08f, 1.0f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.75f, 0.12f, 0.12f, 1.0f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.95f, 0.18f, 0.18f, 1.0f));
     }
 
     private void DrawActorRaceFilter()
@@ -1111,6 +1130,15 @@ public sealed class MainWindow : Window, IDisposable
         if (selectedActorType == 2 && actor.Kind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc)
             return false;
 
+        var pinned = plugin.IsOutfitPinned(actor.Key);
+        var modified = plugin.HasOutfitOverride(actor.Key);
+        if (selectedActorOutfitState == 1 && (modified || pinned))
+            return false;
+        if (selectedActorOutfitState == 2 && (!modified || pinned))
+            return false;
+        if (selectedActorOutfitState == 3 && !pinned)
+            return false;
+
         var race = HumanRaces[selectedActorRace];
         if (race != 0 && actor.Race != race)
             return false;
@@ -1118,6 +1146,15 @@ public sealed class MainWindow : Window, IDisposable
         var gender = HumanGenders[selectedActorGender];
         return gender == byte.MaxValue || actor.Gender == gender;
     }
+
+    private string[] ActorOutfitStateNames()
+        =>
+        [
+            T(TextKey.All),
+            T(TextKey.Unapplied),
+            T(TextKey.ModifiedOutfit),
+            T(TextKey.PinnedOutfit),
+        ];
 
     private bool MatchesModelFilter(ModelSearchEntry model)
     {

@@ -50,7 +50,6 @@ public sealed class BulkOutfitService : IDisposable
     public OutfitData? SourceOutfit { get; private set; }
     public BulkOperation? CurrentOperation => operation;
     public OutfitOverrideStore Store => store;
-    public int ModifiedActorCount => store.States.Count;
     public string LastStatus { get; private set; } = string.Empty;
     public event Action<LogicalActorKey, BulkOperationType, OutfitData?, bool>? ActorOperationCompleted;
 
@@ -105,6 +104,9 @@ public sealed class BulkOutfitService : IDisposable
 
     public bool StartRestore(out string message)
         => Start(BulkOperationType.Restore, store.States.Keys.ToArray(), null, out message);
+
+    public bool StartRestore(IReadOnlyList<LogicalActorKey> targets, out string message)
+        => Start(BulkOperationType.Restore, targets, null, out message);
 
     public bool StartRestore(LogicalActorKey actor, out string message)
         => Start(BulkOperationType.Restore, [actor], null, out message);

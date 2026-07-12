@@ -83,6 +83,7 @@ public enum TextKey
     UnpinOutfit,
     PinnedOutfit,
     ModifiedOutfit,
+    Unapplied,
     Slot,
     Set,
     ItemName,
