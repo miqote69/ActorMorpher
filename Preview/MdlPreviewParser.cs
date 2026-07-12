@@ -66,6 +66,8 @@ public sealed class MdlPreviewParser
         var attributeCount = BinaryPrimitives.ReadUInt16LittleEndian(modelHeader[6..]);
         var submeshCount = BinaryPrimitives.ReadUInt16LittleEndian(modelHeader[8..]);
         var materialCount = BinaryPrimitives.ReadUInt16LittleEndian(modelHeader[10..]);
+        var boneCount = BinaryPrimitives.ReadUInt16LittleEndian(modelHeader[12..]);
+        var boneTableCount = BinaryPrimitives.ReadUInt16LittleEndian(modelHeader[14..]);
         var elementIdCount = BinaryPrimitives.ReadUInt16LittleEndian(modelHeader[24..]);
         var terrainShadowMeshCount = modelHeader[26];
         var hasExtraLod = (modelHeader[27] & 0x10) != 0;
@@ -93,14 +95,23 @@ public sealed class MdlPreviewParser
             reader.Skip(2);
             var indexCount = reader.ReadUInt32();
             var materialIndex = reader.ReadUInt16();
-            reader.Skip(6);
+            reader.Skip(4); // Submesh index and count.
+            var boneTableIndex = reader.ReadUInt16();
             var startIndex = reader.ReadUInt32();
             var streamOffsets = reader.ReadUInt32Array(3);
             var strides = reader.ReadBytes(3);
             var streamCount = (byte)(reader.ReadByte() & 0x03);
             if (reader.Position - start != MeshSize)
                 throw new InvalidDataException("MDL mesh layout is invalid.");
-            meshes[meshIndex] = new Mesh(vertexCount, indexCount, materialIndex, startIndex, streamOffsets, strides, streamCount);
+            meshes[meshIndex] = new Mesh(
+                vertexCount,
+                indexCount,
+                materialIndex,
+                boneTableIndex,
+                startIndex,
+                streamOffsets,
+                strides,
+                streamCount);
         }
 
         reader.Skip(checked(attributeCount * sizeof(uint)));
@@ -109,6 +120,9 @@ public sealed class MdlPreviewParser
         reader.Skip(checked(terrainShadowSubmeshCount * 12));
         var materialOffsets = reader.ReadUInt32Array(materialCount);
         var materials = materialOffsets.Select(offset => ReadString(strings, offset)).ToArray();
+        var boneOffsets = reader.ReadUInt32Array(boneCount);
+        var boneNames = boneOffsets.Select(offset => ReadString(strings, offset)).ToArray();
+        var boneTables = ReadBoneTables(reader, version, boneTableCount);
 
         ValidateBuffer(data, vertexOffsets[0], vertexBufferSizes[0], "vertex");
         ValidateBuffer(data, indexOffsets[0], indexBufferSizes[0], "index");
@@ -133,7 +147,12 @@ public sealed class MdlPreviewParser
             var vertices = ReadVertices(data, vertexOffsets[0], vertexBufferSizes[0], mesh, declarations[meshIndex]);
             var indices = ReadIndices(data, indexOffsets[0], indexBufferSizes[0], mesh);
             var material = mesh.MaterialIndex < materials.Length ? materials[mesh.MaterialIndex] : string.Empty;
-            sources.Add(new ModelPreviewSourceMesh(meshIndex, material, vertices, indices));
+            var bones = mesh.BoneTableIndex < boneTables.Length
+                ? boneTables[mesh.BoneTableIndex]
+                    .Select(index => index < boneNames.Length ? boneNames[index] : string.Empty)
+                    .ToArray()
+                : Array.Empty<string>();
+            sources.Add(new ModelPreviewSourceMesh(meshIndex, material, vertices, indices, bones));
         }
 
         if (sources.Count == 0)
@@ -150,7 +169,7 @@ public sealed class MdlPreviewParser
     {
         var vertices = new ModelPreviewSourceVertex[mesh.VertexCount];
         var streamEnd = checked((long)bufferOffset + bufferSize);
-        foreach (var element in elements.Where(element => element.Usage is 0 or 4 or 7 && CanRead(mesh, element)))
+        foreach (var element in elements.Where(element => element.Usage is 0 or 1 or 2 or 4 or 7 && CanRead(mesh, element)))
         {
             var streamStart = checked((long)bufferOffset + mesh.StreamOffsets[element.Stream]);
             var requiredEnd = checked(streamStart
@@ -166,23 +185,31 @@ public sealed class MdlPreviewParser
             Vector4? position = null;
             Vector4? uv = null;
             Vector4? color = null;
+            Vector4? boneWeights = null;
+            ModelPreviewBoneIndices? boneIndices = null;
             foreach (var element in elements)
             {
-                if (element.Usage is not (0 or 4 or 7) || !CanRead(mesh, element))
+                if (element.Usage is not (0 or 1 or 2 or 4 or 7) || !CanRead(mesh, element))
                     continue;
                 var offset = checked((int)((long)bufferOffset
                     + mesh.StreamOffsets[element.Stream]
                     + (long)vertexIndex * mesh.Strides[element.Stream]
                     + element.Offset));
+                if (element.Usage == 2)
+                {
+                    boneIndices ??= ReadBoneIndices(data.AsSpan(offset), element.Type);
+                    continue;
+                }
                 var value = ReadVector(data.AsSpan(offset), element.Type);
                 switch (element.Usage)
                 {
                     case 0 when position is null: position = value; break;
+                    case 1 when boneWeights is null: boneWeights = value; break;
                     case 4 when uv is null: uv = value; break;
                     case 7 when color is null: color = value; break;
                 }
             }
-            vertices[vertexIndex] = new ModelPreviewSourceVertex(position, null, uv, color);
+            vertices[vertexIndex] = new ModelPreviewSourceVertex(position, null, uv, color, boneWeights, boneIndices);
         }
         return vertices;
     }
@@ -225,7 +252,34 @@ public sealed class MdlPreviewParser
             8 => new(source[0] / 255f, source[1] / 255f, source[2] / 255f, source[3] / 255f),
             13 => new(ReadHalf(source), ReadHalf(source[2..]), 0, 1),
             14 => new(ReadHalf(source), ReadHalf(source[2..]), ReadHalf(source[4..]), ReadHalf(source[6..])),
+            16 => new(
+                BinaryPrimitives.ReadUInt16LittleEndian(source),
+                BinaryPrimitives.ReadUInt16LittleEndian(source[2..]),
+                0,
+                1),
+            17 => new(
+                BinaryPrimitives.ReadUInt16LittleEndian(source),
+                BinaryPrimitives.ReadUInt16LittleEndian(source[2..]),
+                BinaryPrimitives.ReadUInt16LittleEndian(source[4..]),
+                BinaryPrimitives.ReadUInt16LittleEndian(source[6..])),
             _ => throw new InvalidDataException($"Unsupported MDL position type {type}."),
+        };
+
+    private static ModelPreviewBoneIndices ReadBoneIndices(ReadOnlySpan<byte> source, byte type)
+        => type switch
+        {
+            5 or 8 => new(source[0], source[1], source[2], source[3]),
+            16 => new(
+                BinaryPrimitives.ReadUInt16LittleEndian(source),
+                BinaryPrimitives.ReadUInt16LittleEndian(source[2..]),
+                0,
+                0),
+            17 => new(
+                BinaryPrimitives.ReadUInt16LittleEndian(source),
+                BinaryPrimitives.ReadUInt16LittleEndian(source[2..]),
+                BinaryPrimitives.ReadUInt16LittleEndian(source[4..]),
+                BinaryPrimitives.ReadUInt16LittleEndian(source[6..])),
+            _ => throw new InvalidDataException($"Unsupported MDL blend-index type {type}."),
         };
 
     private static float ReadSingle(ReadOnlySpan<byte> source)
@@ -250,9 +304,44 @@ public sealed class MdlPreviewParser
             2 => 12,
             3 => 16,
             4 or 5 or 8 or 13 => 4,
-            14 => 8,
+            14 or 17 => 8,
+            16 => 4,
             _ => 0,
         };
+
+    private static ushort[][] ReadBoneTables(CheckedReader reader, uint version, ushort count)
+    {
+        if (count == 0)
+            return Array.Empty<ushort[]>();
+        var tables = new ushort[count][];
+        if (version == Version5)
+        {
+            for (var table = 0; table < count; ++table)
+            {
+                var indices = Enumerable.Range(0, 64).Select(_ => reader.ReadUInt16()).ToArray();
+                var boneCount = reader.ReadUInt32();
+                if (boneCount > indices.Length)
+                    throw new InvalidDataException("MDL V5 bone table count is invalid.");
+                tables[table] = indices[..(int)boneCount];
+            }
+            return tables;
+        }
+
+        var tableStart = reader.Position;
+        for (var table = 0; table < count; ++table)
+        {
+            reader.Position = tableStart + table * 4;
+            var offset = reader.ReadUInt16();
+            var boneCount = reader.ReadUInt16();
+            if (boneCount > 256)
+                throw new InvalidDataException("MDL V6 bone table count is invalid.");
+            var indexPosition = checked(tableStart + table * 4 + offset * 4);
+            reader.Position = indexPosition;
+            tables[table] = Enumerable.Range(0, boneCount).Select(_ => reader.ReadUInt16()).ToArray();
+        }
+        reader.Position = tableStart + count * 4;
+        return tables;
+    }
 
     private static string ReadString(byte[] strings, uint offset)
     {
@@ -275,6 +364,7 @@ public sealed class MdlPreviewParser
         ushort VertexCount,
         uint IndexCount,
         ushort MaterialIndex,
+        ushort BoneTableIndex,
         uint StartIndex,
         uint[] StreamOffsets,
         byte[] Strides,
@@ -282,7 +372,7 @@ public sealed class MdlPreviewParser
 
     private sealed class CheckedReader(byte[] data)
     {
-        public int Position { get; private set; }
+        public int Position { get; set; }
 
         public byte ReadByte() => ReadSpan(1)[0];
         public ushort ReadUInt16() => BinaryPrimitives.ReadUInt16LittleEndian(ReadSpan(2));

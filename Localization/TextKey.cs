@@ -118,6 +118,8 @@ public enum TextKey
     Skipped,
     Failed,
     Preview3D,
+    Enable3DPreview,
+    PreviewDisabled,
     PreviewSelectModel,
     PreviewLoading,
     PreviewSuspended,

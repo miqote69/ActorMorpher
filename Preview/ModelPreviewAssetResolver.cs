@@ -114,15 +114,20 @@ public sealed class ModelPreviewAssetResolver
             : anyModel
                 ? ModelPreviewReadiness.AssetsPartial
                 : ModelPreviewReadiness.AssetsMissing;
-        return new ModelPreviewAssetReport(model.ModelId, model.Category, readiness, assets);
+        return new ModelPreviewAssetReport(
+            model.ModelId,
+            model.Category,
+            readiness,
+            assets,
+            checked((ushort)(family * 100 + bodyType)));
     }
 
-    private IEnumerable<string> BaseBodyCandidates(OutfitSlot slot, string suffix, string adultCode, string fallbackCode)
+    private static IEnumerable<string> BaseBodyCandidates(OutfitSlot slot, string suffix, string adultCode, string fallbackCode)
     {
         if (slot is not (OutfitSlot.Body or OutfitSlot.Hands or OutfitSlot.Legs or OutfitSlot.Feet))
             return Array.Empty<string>();
         return Codes(adultCode, fallbackCode).Select(code =>
-            $"chara/human/{code}/obj/body/b0001/model/{code}b0001_{suffix}.mdl");
+            $"chara/equipment/e0000/model/{code}e0000_{suffix}.mdl");
     }
 
     private static IEnumerable<string> EquipmentCandidates(

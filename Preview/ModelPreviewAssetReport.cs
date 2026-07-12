@@ -29,7 +29,8 @@ public sealed record ModelPreviewAssetReport(
     uint ModelCharaId,
     ModelCategory Category,
     ModelPreviewReadiness Readiness,
-    IReadOnlyList<ModelPreviewAsset> Assets)
+    IReadOnlyList<ModelPreviewAsset> Assets,
+    ushort HumanTargetCode = 0)
 {
     public int PresentCount => Assets.Count(static asset => asset.IsPresent);
     public int MissingCount => Assets.Count(static asset => asset.IsRequired && !asset.IsPresent);

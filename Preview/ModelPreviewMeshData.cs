@@ -6,13 +6,29 @@ public readonly record struct ModelPreviewSourceVertex(
     Vector4? Position,
     Vector3? Normal,
     Vector4? UV,
-    Vector4? Color);
+    Vector4? Color,
+    Vector4? BoneWeights = null,
+    ModelPreviewBoneIndices? BoneIndices = null);
+
+public readonly record struct ModelPreviewBoneIndices(ushort X, ushort Y, ushort Z, ushort W)
+{
+    public ushort this[int index]
+        => index switch
+        {
+            0 => X,
+            1 => Y,
+            2 => Z,
+            3 => W,
+            _ => throw new ArgumentOutOfRangeException(nameof(index)),
+        };
+}
 
 public sealed record ModelPreviewSourceMesh(
     int SourceIndex,
     string MaterialPath,
     ModelPreviewSourceVertex[] Vertices,
-    ushort[] Indices);
+    ushort[] Indices,
+    IReadOnlyList<string>? Bones = null);
 
 public readonly record struct ModelPreviewVertex(
     Vector3 Position,

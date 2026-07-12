@@ -105,7 +105,7 @@ public sealed class MainWindow : Window, IDisposable
 
             ImGui.EndTabBar();
         }
-        plugin.SetModelPreviewActive(modelSearchVisible);
+        plugin.SetModelPreviewActive(modelSearchVisible && plugin.Configuration.Enable3DPreview);
     }
 
     private void DrawSettingsTab()
@@ -119,6 +119,14 @@ public sealed class MainWindow : Window, IDisposable
             plugin.Save();
         }
         ImGui.TextDisabled(T(TextKey.GameDataLanguage, plugin.GameLanguage));
+        var enablePreview = plugin.Configuration.Enable3DPreview;
+        if (ImGui.Checkbox($"{T(TextKey.Enable3DPreview)}###enable-3d-preview", ref enablePreview))
+        {
+            plugin.Configuration.Enable3DPreview = enablePreview;
+            if (!enablePreview)
+                plugin.SelectPreviewModel(null);
+            plugin.Save();
+        }
     }
 
     private void DrawDiagnosticsTab()
@@ -792,8 +800,17 @@ public sealed class MainWindow : Window, IDisposable
 
             ImGui.TextUnformatted(model.Name);
             ImGui.Separator();
-            plugin.SelectPreviewModel(model);
-            DrawModelPreview();
+            if (plugin.Configuration.Enable3DPreview)
+            {
+                plugin.SelectPreviewModel(model);
+                DrawModelPreview();
+            }
+            else
+            {
+                plugin.SelectPreviewModel(null);
+                ImGui.TextDisabled(T(TextKey.PreviewDisabled));
+                ImGui.Spacing();
+            }
 
             if (ImGui.BeginTable("##model-detail-fields", 2, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
             {
@@ -820,8 +837,11 @@ public sealed class MainWindow : Window, IDisposable
                 ImGui.EndTable();
             }
 
-            DrawPreviewAssetReport(plugin.GetModelPreviewAssets(model));
-            DrawPreviewGeometryReport(plugin.GetModelPreviewGeometry(model));
+            if (plugin.Configuration.Enable3DPreview)
+            {
+                DrawPreviewAssetReport(plugin.GetModelPreviewAssets(model));
+                DrawPreviewGeometryReport(plugin.GetModelPreviewGeometry(model));
+            }
 
             if (model.Category == ModelCategory.Human)
             {

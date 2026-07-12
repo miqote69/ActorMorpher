@@ -92,7 +92,7 @@ public sealed class SoftwareModelPreviewTests
             entry.Category,
             ModelPreviewReadiness.AssetsPartial,
             [new(ModelPreviewAssetKind.Model, "Body", "body.mdl", true)]);
-        using var backend = new SoftwareModelPreviewBackend(_ => assets, (_, _) => Model([0, 1, 2]));
+        using var backend = new SoftwareModelPreviewBackend(_ => assets, (_, _, _) => Model([0, 1, 2]));
 
         backend.Select(entry);
         var initial = Assert.IsType<SoftwareModelPreviewView>(backend.GetView());
@@ -115,12 +115,34 @@ public sealed class SoftwareModelPreviewTests
             entry.Category,
             ModelPreviewReadiness.AssetsComplete,
             [new(ModelPreviewAssetKind.Model, "Body", "body.mdl", true)]);
-        using var backend = new SoftwareModelPreviewBackend(_ => assets, (_, _) => Model([0, 1, 2]));
+        using var backend = new SoftwareModelPreviewBackend(_ => assets, (_, _, _) => Model([0, 1, 2]));
 
         backend.Select(entry);
 
         Assert.Equal(ModelPreviewState.Ready, backend.Snapshot.State);
         Assert.NotNull(backend.GetView());
+    }
+
+    [Fact]
+    public void BackendDoesNotPublishFloatingOptionalPartsWhenRequiredBodyFails()
+    {
+        var entry = AssetEntry() with { Category = ModelCategory.Human };
+        var assets = new ModelPreviewAssetReport(
+            entry.ModelId,
+            entry.Category,
+            ModelPreviewReadiness.AssetsComplete,
+            [
+                new(ModelPreviewAssetKind.Model, "Body", "body.mdl", true),
+                new(ModelPreviewAssetKind.Model, "Hair", "hair.mdl", true, false),
+            ]);
+        using var backend = new SoftwareModelPreviewBackend(
+            _ => assets,
+            (path, _, _) => path == "body.mdl" ? throw new InvalidDataException("PBD failed") : Model([0, 1, 2]));
+
+        backend.Select(entry);
+
+        Assert.Equal(ModelPreviewState.Failed, backend.Snapshot.State);
+        Assert.Null(backend.GetView());
     }
 
     private static ModelPreviewCpuModel Model(ushort[] indices)

@@ -3,6 +3,7 @@ using System;
 using System.Buffers.Binary;
 using System.IO;
 using System.Numerics;
+using System.Text;
 using Xunit;
 
 namespace ActorMorpher.Tests;
@@ -39,6 +40,17 @@ public sealed class MdlPreviewParserTests
         var model = new ModelPreviewMeshBuilder().Build(parsed.Meshes);
 
         Assert.Equal(new Vector3(1, 0, 0), Assert.Single(model.Meshes).Vertices[1].Position);
+    }
+
+    [Fact]
+    public void ParsesVersion6BoneTableWeightsAndIndices()
+    {
+        var parsed = new MdlPreviewParser().Parse(CreateSkinnedTriangleMdl());
+        var mesh = Assert.Single(parsed.Meshes);
+
+        Assert.Equal("j_head", Assert.Single(mesh.Bones!));
+        Assert.Equal(Vector4.UnitX, mesh.Vertices[0].BoneWeights);
+        Assert.Equal(new ModelPreviewBoneIndices(0, 0, 0, 0), mesh.Vertices[0].BoneIndices);
     }
 
     private static byte[] CreateTriangleMdl(bool addScalarPosition = false)
@@ -118,6 +130,120 @@ public sealed class MdlPreviewParserTests
         return data;
     }
 
+    private static byte[] CreateSkinnedTriangleMdl()
+    {
+        const int declarationOffset = 0x44;
+        const int declarationSize = 17 * 8;
+        const int stringHeaderSize = 8;
+        const int stringSize = 7;
+        const int modelHeaderSize = 0x38;
+        const int lodsSize = 3 * 0x3C;
+        const int meshSize = 0x24;
+        const int boneNameOffsetsSize = 4;
+        const int boneTableSize = 8;
+        const int vertexSize = 3 * 20;
+        const int indexSize = 3 * 2;
+        const int vertexOffset = declarationOffset + declarationSize + stringHeaderSize + stringSize
+            + modelHeaderSize + lodsSize + meshSize + boneNameOffsetsSize + boneTableSize;
+        const int indexOffset = vertexOffset + vertexSize;
+        var data = new byte[indexOffset + indexSize];
+        var writer = new SpanWriter(data);
+
+        writer.UInt32(0x01000006);
+        writer.UInt32(0);
+        writer.UInt32(0);
+        writer.UInt16(1);
+        writer.UInt16(0);
+        writer.UInt32s(vertexOffset, 0, 0);
+        writer.UInt32s(indexOffset, 0, 0);
+        writer.UInt32s(vertexSize, 0, 0);
+        writer.UInt32s(indexSize, 0, 0);
+        writer.Byte(1);
+        writer.Skip(3);
+
+        WriteElement(writer, 0, 0, 2, 0);
+        WriteElement(writer, 0, 12, 8, 1);
+        WriteElement(writer, 0, 16, 5, 2);
+        for (var element = 3; element < 17; ++element)
+        {
+            writer.Byte(byte.MaxValue);
+            writer.Skip(7);
+        }
+
+        writer.UInt16(1);
+        writer.Skip(2);
+        writer.UInt32(stringSize);
+        writer.Bytes(Encoding.UTF8.GetBytes("j_head\0"));
+
+        writer.Skip(4);
+        writer.UInt16(1);
+        writer.UInt16(0);
+        writer.UInt16(0);
+        writer.UInt16(0);
+        writer.UInt16(1);
+        writer.UInt16(1);
+        writer.UInt16(0);
+        writer.UInt16(0);
+        writer.UInt16(0);
+        writer.Byte(1);
+        writer.Byte(0);
+        writer.UInt16(0);
+        writer.Byte(0);
+        writer.Byte(0);
+        writer.Skip(28);
+
+        writer.UInt16(0);
+        writer.UInt16(1);
+        writer.Skip(0x3C - 4);
+        writer.Skip(2 * 0x3C);
+
+        writer.UInt16(3);
+        writer.Skip(2);
+        writer.UInt32(3);
+        writer.UInt16(0);
+        writer.UInt16(0);
+        writer.UInt16(0);
+        writer.UInt16(0);
+        writer.UInt32(0);
+        writer.UInt32s(0, 0, 0);
+        writer.Byte(20);
+        writer.Byte(0);
+        writer.Byte(0);
+        writer.Byte(1);
+
+        writer.UInt32(0);
+        writer.UInt16(1);
+        writer.UInt16(1);
+        writer.UInt16(0);
+        writer.UInt16(0);
+
+        WriteSkinnedVertex(writer, 0, 0, 0);
+        WriteSkinnedVertex(writer, 1, 0, 0);
+        WriteSkinnedVertex(writer, 0, 1, 0);
+        writer.UInt16(0);
+        writer.UInt16(1);
+        writer.UInt16(2);
+        return data;
+    }
+
+    private static void WriteElement(SpanWriter writer, byte stream, byte offset, byte type, byte usage)
+    {
+        writer.Byte(stream);
+        writer.Byte(offset);
+        writer.Byte(type);
+        writer.Byte(usage);
+        writer.Skip(4);
+    }
+
+    private static void WriteSkinnedVertex(SpanWriter writer, float x, float y, float z)
+    {
+        writer.Single(x);
+        writer.Single(y);
+        writer.Single(z);
+        writer.Bytes([255, 0, 0, 0]);
+        writer.Bytes([0, 0, 0, 0]);
+    }
+
     private sealed class SpanWriter(byte[] data)
     {
         private int position;
@@ -138,6 +264,11 @@ public sealed class MdlPreviewParserTests
                 UInt32(value);
         }
         public void Single(float value) => UInt32(BitConverter.SingleToInt32Bits(value));
+        public void Bytes(ReadOnlySpan<byte> value)
+        {
+            value.CopyTo(data.AsSpan(position));
+            position += value.Length;
+        }
         public void Skip(int count) => position += count;
     }
 }

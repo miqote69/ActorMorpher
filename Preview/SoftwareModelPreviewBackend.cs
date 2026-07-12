@@ -3,7 +3,7 @@ namespace ActorMorpher.Preview;
 public sealed class SoftwareModelPreviewBackend : IModelPreviewBackend
 {
     private readonly Func<ModelSearchEntry, ModelPreviewAssetReport> resolveAssets;
-    private readonly Func<string, byte, ModelPreviewCpuModel?> loadModel;
+    private readonly Func<string, byte, ushort, ModelPreviewCpuModel?> loadModel;
     private readonly SoftwareModelPreviewSceneBuilder sceneBuilder = new();
     private readonly object syncRoot = new();
     private ModelPreviewSelectionKey? selection;
@@ -15,7 +15,7 @@ public sealed class SoftwareModelPreviewBackend : IModelPreviewBackend
 
     public SoftwareModelPreviewBackend(
         Func<ModelSearchEntry, ModelPreviewAssetReport> resolveAssets,
-        Func<string, byte, ModelPreviewCpuModel?> loadModel)
+        Func<string, byte, ushort, ModelPreviewCpuModel?> loadModel)
     {
         this.resolveAssets = resolveAssets;
         this.loadModel = loadModel;
@@ -40,20 +40,22 @@ public sealed class SoftwareModelPreviewBackend : IModelPreviewBackend
         }
         var assets = resolveAssets(model);
         var models = new List<ModelPreviewCpuModel>();
+        var requiredModelFailed = false;
         foreach (var asset in assets.Assets.Where(static asset =>
                      asset.Kind == ModelPreviewAssetKind.Model && asset.IsPresent && asset.Path is not null))
         {
             try
             {
-                if (loadModel(asset.Path!, asset.MaterialVariant) is { } loaded)
+                if (loadModel(asset.Path!, asset.MaterialVariant, assets.HumanTargetCode) is { } loaded)
                     models.Add(loaded);
             }
             catch
             {
+                requiredModelFailed |= asset.IsRequired;
                 // A malformed optional part must not suppress other valid model parts.
             }
         }
-        if (models.Count == 0)
+        if (models.Count == 0 || requiredModelFailed)
         {
             Snapshot = new(generation, ModelPreviewState.Failed, model.ModelId,
                 "No renderable static model geometry is available.");

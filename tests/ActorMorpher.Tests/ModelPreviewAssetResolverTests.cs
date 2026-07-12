@@ -1,5 +1,6 @@
 using ActorMorpher;
 using ActorMorpher.Appearance;
+using ActorMorpher.BulkOutfit;
 using ActorMorpher.Preview;
 using System.Collections.Generic;
 using System.IO;
@@ -76,14 +77,19 @@ public sealed class ModelPreviewAssetResolverTests
         var present = new HashSet<string>
         {
             "chara/human/c0101/obj/face/f0001/model/c0101f0001_fac.mdl",
-            "chara/human/c0101/obj/body/b0001/model/c0101b0001_top.mdl",
+            "chara/equipment/e0000/model/c0101e0000_top.mdl",
+            "chara/equipment/e0000/model/c0101e0000_glv.mdl",
+            "chara/equipment/e0000/model/c0101e0000_sho.mdl",
         };
 
         var report = new ModelPreviewAssetResolver(present.Contains).Resolve(entry);
 
         Assert.Equal(ModelPreviewReadiness.AssetsComplete, report.Readiness);
+        Assert.Equal((ushort)101, report.HumanTargetCode);
         Assert.Contains(report.Assets, asset => asset.Label == "Face" && asset.IsPresent);
         Assert.Contains(report.Assets, asset => asset.Label == "Body" && asset.IsPresent);
+        Assert.Contains(report.Assets, asset => asset.Label == "Hands" && asset.IsPresent);
+        Assert.Contains(report.Assets, asset => asset.Label == "Feet" && asset.IsPresent);
     }
 
     [Fact]
@@ -104,14 +110,55 @@ public sealed class ModelPreviewAssetResolverTests
         {
             "chara/human/c0104/obj/face/f0001/model/c0104f0001_fac.mdl",
             "chara/human/c0104/obj/hair/h0001/model/c0104h0001_hir.mdl",
-            "chara/human/c0101/obj/body/b0001/model/c0101b0001_top.mdl",
+            "chara/equipment/e0000/model/c0101e0000_top.mdl",
         };
 
         var report = new ModelPreviewAssetResolver(present.Contains).Resolve(entry);
 
         Assert.Contains(report.Assets, asset => asset.Path == "chara/human/c0104/obj/face/f0001/model/c0104f0001_fac.mdl");
         Assert.Contains(report.Assets, asset => asset.Path == "chara/human/c0104/obj/hair/h0001/model/c0104h0001_hir.mdl");
-        Assert.Contains(report.Assets, asset => asset.Path == "chara/human/c0101/obj/body/b0001/model/c0101b0001_top.mdl");
+        Assert.Equal((ushort)104, report.HumanTargetCode);
+        Assert.Contains(report.Assets, asset => asset.Path == "chara/equipment/e0000/model/c0101e0000_top.mdl");
+    }
+
+    [Fact]
+    public void MissingEquippedHandsAndFeetFallBackToSharedBareModels()
+    {
+        var customize = new byte[26];
+        customize[0] = 1;
+        customize[1] = 1;
+        customize[2] = (byte)NpcAge.Normal;
+        customize[4] = 2;
+        customize[5] = 1;
+        var equipment = new ulong[10];
+        equipment[(int)OutfitSlot.Hands] = 0x000302D5;
+        equipment[(int)OutfitSlot.Feet] = 0x00020323;
+        var appearance = new HumanAppearance(customize, equipment, 0, 0, false);
+        var modelAppearance = AppearanceData.Create(
+            100, ModelCategory.Human, 100, AppearanceCompleteness.Complete, customize, equipment);
+        var entry = Entry(ModelCategory.Human, 1, 1, 1) with
+        {
+            HumanAppearance = appearance,
+            ModelAppearance = modelAppearance,
+        };
+        var present = new HashSet<string>
+        {
+            "chara/human/c0401/obj/face/f0001/model/c0401f0001_fac.mdl",
+            "chara/equipment/e0000/model/c0201e0000_top.mdl",
+            "chara/equipment/e0000/model/c0201e0000_glv.mdl",
+            "chara/equipment/e0000/model/c0201e0000_dwn.mdl",
+            "chara/equipment/e0000/model/c0201e0000_sho.mdl",
+        };
+
+        var report = new ModelPreviewAssetResolver(present.Contains).Resolve(entry);
+
+        Assert.Equal((ushort)401, report.HumanTargetCode);
+        Assert.Contains(report.Assets, asset => asset.Label == "Hands"
+            && asset.Path == "chara/equipment/e0000/model/c0201e0000_glv.mdl"
+            && asset.IsPresent);
+        Assert.Contains(report.Assets, asset => asset.Label == "Feet"
+            && asset.Path == "chara/equipment/e0000/model/c0201e0000_sho.mdl"
+            && asset.IsPresent);
     }
 
     [Fact]

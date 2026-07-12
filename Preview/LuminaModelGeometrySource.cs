@@ -4,10 +4,26 @@ using Lumina.Models.Materials;
 
 namespace ActorMorpher.Preview;
 
-public sealed class LuminaModelGeometrySource(IDataManager dataManager)
+public sealed class LuminaModelGeometrySource
 {
+    private readonly IDataManager dataManager;
     private readonly ModelPreviewMeshBuilder meshBuilder = new();
     private readonly MdlPreviewParser parser = new();
+    private readonly HumanPbdDeformer? humanDeformer;
+
+    public LuminaModelGeometrySource(IDataManager dataManager)
+    {
+        this.dataManager = dataManager;
+        try
+        {
+            var pbd = dataManager.GetFile("chara/xls/boneDeformer/human.pbd")?.Data;
+            humanDeformer = pbd is null ? null : new HumanPbdDeformer(pbd);
+        }
+        catch
+        {
+            humanDeformer = null;
+        }
+    }
 
     public ModelFileGeometry? Load(string path)
     {
@@ -24,21 +40,39 @@ public sealed class LuminaModelGeometrySource(IDataManager dataManager)
     }
 
     public ModelPreviewCpuModel? LoadCpuModel(string path)
-        => LoadCpuModel(path, 1);
+        => LoadCpuModel(path, 1, 0);
 
-    public ModelPreviewCpuModel? LoadCpuModel(string path, byte requestedVariant)
+    public ModelPreviewCpuModel? LoadCpuModel(string path, byte requestedVariant, ushort humanTargetCode)
     {
         var data = dataManager.GetFile(path)?.Data;
         if (data is null)
             return null;
         var parsed = parser.Parse(data);
         var materialVariant = ResolveMaterialVariant(path, requestedVariant);
-        var sources = parsed.Meshes.Select(mesh => mesh with
+        IReadOnlyList<ModelPreviewSourceMesh> sources = parsed.Meshes.Select(mesh => mesh with
         {
             MaterialPath = ResolveMaterialPath(mesh.MaterialPath, materialVariant, requestedVariant),
         }).ToArray();
+        if (humanTargetCode != 0
+            && TryGetHumanCode(path, out var modelCode)
+            && modelCode != humanTargetCode)
+        {
+            if (humanDeformer is null
+                || !humanDeformer.TryDeform(humanTargetCode, modelCode, sources, out sources))
+                throw new InvalidDataException(
+                    $"Human PBD does not contain a deformation path from c{modelCode:D4} to c{humanTargetCode:D4}.");
+        }
         var cpuModel = meshBuilder.Build(sources);
         return cpuModel with { LodCount = parsed.LodCount };
+    }
+
+    private static bool TryGetHumanCode(string path, out ushort code)
+    {
+        code = 0;
+        var start = path.IndexOf("/c", StringComparison.Ordinal);
+        if (start < 0 || start + 6 > path.Length)
+            return false;
+        return ushort.TryParse(path.AsSpan(start + 2, 4), out code);
     }
 
     private byte ResolveMaterialVariant(string modelPath, byte requestedVariant)

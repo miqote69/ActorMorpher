@@ -6,8 +6,9 @@ namespace ActorMorpher;
 [Serializable]
 public sealed class Configuration : IPluginConfiguration
 {
-    public int Version { get; set; } = 4;
+    public int Version { get; set; } = 5;
     public UiLanguage UiLanguage { get; set; } = UiLanguage.Automatic;
+    public bool Enable3DPreview { get; set; } = true;
     public FileDiagnosticMode FileDiagnosticMode { get; set; }
     public bool IncludeActorNamesInDiagnostics { get; set; }
     public bool IncludeRawAddressesInDiagnostics { get; set; }
@@ -40,6 +41,11 @@ public sealed class Configuration : IPluginConfiguration
         }
         if (Version < 4)
             Version = 4;
+        if (Version < 5)
+        {
+            Enable3DPreview = true;
+            Version = 5;
+        }
 
         if (!Enum.IsDefined(UiLanguage))
             UiLanguage = UiLanguage.Automatic;
