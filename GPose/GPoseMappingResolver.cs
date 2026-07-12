@@ -31,7 +31,8 @@ public sealed class GPoseMappingResolver
                 ?? Unique(available, candidate => source.Key.EntityId is not 0 and not 0xE0000000
                     && candidate.RepresentationKey.EntityId == source.Key.EntityId)
                 ?? Unique(available, candidate => candidate.BaseId == source.Key.BaseId && candidate.ObjectKind == source.Key.ObjectKind)
-                ?? Unique(available, candidate => StrictMatch(sourceSnapshot, candidate));
+                ?? Unique(available, candidate => StrictMatch(sourceSnapshot, candidate))
+                ?? Unique(available, candidate => StableAppearanceMatch(sourceSnapshot, candidate));
 
             if (match is not null)
                 result.Add(match.RepresentationKey, source.Key);
@@ -58,4 +59,11 @@ public sealed class GPoseMappingResolver
         && source.Race == candidate.Race
         && source.Gender == candidate.Gender
         && source.BodyType == candidate.BodyType;
+
+    private static bool StableAppearanceMatch(ActorSnapshot source, ActorSnapshot candidate)
+        => !string.IsNullOrWhiteSpace(source.Name)
+        && source.Name == candidate.Name
+        && source.ObjectKind == candidate.ObjectKind
+        && source.Race == candidate.Race
+        && source.Gender == candidate.Gender;
 }

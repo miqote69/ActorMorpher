@@ -55,6 +55,22 @@ public sealed class GPoseMappingResolverTests
         Assert.Empty(result);
     }
 
+    [Fact]
+    public void ResolvesUniquePlayerCopiesByStableAppearanceWhenModelsDiffer()
+    {
+        var first = Entry(1, 100, 10, 0, "First", modelCharaId: 10, race: 1, gender: 0);
+        var second = Entry(2, 200, 20, 0, "Second", modelCharaId: 20, race: 2, gender: 1);
+        var firstCopy = Entry(201, 900, 0xE0000000, 0, "First", modelCharaId: 99, race: 1, gender: 0);
+        var secondCopy = Entry(202, 901, 0xE0000000, 0, "Second", modelCharaId: 98, race: 2, gender: 1);
+
+        var result = new GPoseMappingResolver().Resolve(
+            [first, second],
+            [first, second, firstCopy, secondCopy]);
+
+        Assert.Equal(first.Key, result[firstCopy.Current.RepresentationKey]);
+        Assert.Equal(second.Key, result[secondCopy.Current.RepresentationKey]);
+    }
+
     private static ActorEntry Entry(
         ushort index,
         ulong gameObjectId,
@@ -62,7 +78,10 @@ public sealed class GPoseMappingResolverTests
         uint baseId,
         string name,
         ObjectKind kind = ObjectKind.Pc,
-        bool isLocalPlayer = false)
+        bool isLocalPlayer = false,
+        uint modelCharaId = 0,
+        byte race = 1,
+        byte gender = 0)
     {
         var logical = new LogicalActorKey(index, gameObjectId, entityId, baseId, kind, 30);
         var representation = new ActorRepresentationKey(index, gameObjectId, entityId, false);
@@ -72,9 +91,9 @@ public sealed class GPoseMappingResolverTests
             name,
             kind,
             baseId,
-            0,
-            1,
-            0,
+            modelCharaId,
+            race,
+            gender,
             1,
             0,
             0,

@@ -53,6 +53,16 @@ public sealed class BulkOutfitService : IDisposable
     public string LastStatus { get; private set; } = string.Empty;
     public event Action<LogicalActorKey, BulkOperationType, OutfitData?, bool>? ActorOperationCompleted;
 
+    public bool TryCaptureOutfit(LogicalActorKey actorKey, out OutfitData outfit)
+    {
+        if (!disposed
+            && resolver.TryResolve(actorKey, out var actor)
+            && memory.TryCapture(actor, out outfit))
+            return true;
+        outfit = null!;
+        return false;
+    }
+
     public bool RefreshSource(LogicalActorKey localPlayer, out string message)
     {
         if (disposed)

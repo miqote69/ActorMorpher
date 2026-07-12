@@ -8,3 +8,11 @@ public sealed record EquipmentDisplayEntry(
     uint IconId);
 
 public sealed record EquipmentItemDisplay(string Name, uint IconId);
+
+public sealed record StainDisplayEntry(
+    byte Id,
+    string Name,
+    byte R,
+    byte G,
+    byte B,
+    bool HasColor);

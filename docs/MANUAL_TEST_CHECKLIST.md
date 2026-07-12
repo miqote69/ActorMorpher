@@ -27,6 +27,11 @@ Enable Full diagnostics before testing native appearance operations. Stop after 
 - [ ] Rapid model selection does not visibly parse every intermediate MDL
 - [ ] GPose entry does not freeze or crash
 - [ ] Ambiguous same-name NPC copies are skipped
+- [ ] GPose Bulk Outfit waits until representation mapping is ready
+- [ ] GPose Bulk Apply and Unequip affect every mapped matching actor, not hidden field actors
+- [ ] Bulk source equipment uses e####/a#### Set IDs and v#### variants
+- [ ] Stain columns show color swatches and hover displays the correct RGB and HEX values
+- [ ] Selected Human Actor details show the same equipment table as Bulk source
 - [ ] Bulk Outfit preview excludes the local player by default
 - [ ] Bulk Outfit preview counts non-Human actors as skipped
 - [ ] Disabled exclusion filters do not remove matching actors

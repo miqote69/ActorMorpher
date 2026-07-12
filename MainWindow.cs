@@ -264,38 +264,7 @@ public sealed class MainWindow : Window, IDisposable
             plugin.RefreshSourceOutfit(out bulkActionStatus);
 
         var source = plugin.SourceOutfit;
-        var sourceEquipment = plugin.GetSourceOutfitEquipment().ToDictionary(static item => item.Slot);
-        if (ImGui.BeginTable("##source-outfit", 6, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
-        {
-            ImGui.TableSetupColumn(T(TextKey.Slot), ImGuiTableColumnFlags.WidthFixed, 80.0f);
-            ImGui.TableSetupColumn(T(TextKey.ItemName), ImGuiTableColumnFlags.WidthStretch);
-            ImGui.TableSetupColumn(T(TextKey.Set), ImGuiTableColumnFlags.WidthFixed, 55.0f);
-            ImGui.TableSetupColumn(T(TextKey.Variant), ImGuiTableColumnFlags.WidthFixed, 55.0f);
-            ImGui.TableSetupColumn(T(TextKey.Stain1), ImGuiTableColumnFlags.WidthFixed, 55.0f);
-            ImGui.TableSetupColumn(T(TextKey.Stain2), ImGuiTableColumnFlags.WidthFixed, 55.0f);
-            ImGui.TableHeadersRow();
-            foreach (var slot in Enum.GetValues<OutfitSlot>())
-            {
-                var armor = source?.Equipment[(int)slot] ?? default;
-                sourceEquipment.TryGetValue(slot, out var item);
-                ImGui.TableNextRow();
-                ImGui.TableNextColumn(); ImGui.TextUnformatted(slot.ToString());
-                ImGui.TableNextColumn(); DrawSourceEquipmentItem(source is not null, item);
-                ImGui.TableNextColumn(); ImGui.TextUnformatted(source is null ? "-" : armor.Set.ToString());
-                ImGui.TableNextColumn(); ImGui.TextUnformatted(source is null ? "-" : armor.Variant.ToString());
-                ImGui.TableNextColumn(); ImGui.TextUnformatted(source is null ? "-" : armor.Stain1.ToString());
-                ImGui.TableNextColumn(); ImGui.TextUnformatted(source is null ? "-" : armor.Stain2.ToString());
-            }
-            ImGui.EndTable();
-        }
-        if (source is not null)
-        {
-            ImGui.TextUnformatted($"{T(TextKey.Facewear)}: {(source.Facewear.IsAvailable ? source.Facewear.ModelId : T(TextKey.Unavailable))}");
-            ImGui.SameLine();
-            ImGui.TextUnformatted($"{T(TextKey.Hat)}: {(source.HatVisible ? T(TextKey.Visible) : T(TextKey.Hidden))}");
-            ImGui.SameLine();
-            ImGui.TextUnformatted($"{T(TextKey.Visor)}: {(source.VisorToggled ? T(TextKey.Toggled) : T(TextKey.Normal))}");
-        }
+        DrawOutfitDisplay("source-outfit", source);
 
         ImGui.Separator();
         ImGui.TextUnformatted(T(TextKey.TargetFilters));
@@ -419,7 +388,43 @@ public sealed class MainWindow : Window, IDisposable
         ImGui.InputTextWithHint($"{T(TextKey.Name)}###bulk-{id}-name", T(TextKey.FilterByName), ref name, 128);
     }
 
-    private void DrawSourceEquipmentItem(bool sourceAvailable, EquipmentDisplayEntry? item)
+    private void DrawOutfitDisplay(string id, OutfitData? outfit)
+    {
+        var equipment = plugin.GetOutfitEquipment(outfit).ToDictionary(static item => item.Slot);
+        if (ImGui.BeginTable($"##{id}-table", 6, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
+        {
+            ImGui.TableSetupColumn(T(TextKey.Slot), ImGuiTableColumnFlags.WidthFixed, 80.0f);
+            ImGui.TableSetupColumn(T(TextKey.ItemName), ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn(T(TextKey.Set), ImGuiTableColumnFlags.WidthFixed, 65.0f);
+            ImGui.TableSetupColumn(T(TextKey.Variant), ImGuiTableColumnFlags.WidthFixed, 55.0f);
+            ImGui.TableSetupColumn(T(TextKey.Stain1), ImGuiTableColumnFlags.WidthFixed, 48.0f);
+            ImGui.TableSetupColumn(T(TextKey.Stain2), ImGuiTableColumnFlags.WidthFixed, 48.0f);
+            ImGui.TableHeadersRow();
+            foreach (var slot in Enum.GetValues<OutfitSlot>())
+            {
+                var armor = outfit?.Equipment[(int)slot] ?? default;
+                equipment.TryGetValue(slot, out var item);
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(slot.ToString());
+                ImGui.TableNextColumn(); DrawEquipmentItem(outfit is not null, item);
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(outfit is null ? "-" : EquipmentDisplayFormatting.FormatSet(slot, armor.Set));
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(outfit is null ? "-" : EquipmentDisplayFormatting.FormatVariant(armor.Variant));
+                ImGui.TableNextColumn(); DrawStainSwatch($"{id}-{slot}-1", outfit is not null, armor.Stain1);
+                ImGui.TableNextColumn(); DrawStainSwatch($"{id}-{slot}-2", outfit is not null, armor.Stain2);
+            }
+            ImGui.EndTable();
+        }
+
+        if (outfit is null)
+            return;
+        ImGui.TextUnformatted($"{T(TextKey.Facewear)}: {(outfit.Facewear.IsAvailable ? outfit.Facewear.ModelId : T(TextKey.Unavailable))}");
+        ImGui.SameLine();
+        ImGui.TextUnformatted($"{T(TextKey.Hat)}: {(outfit.HatVisible ? T(TextKey.Visible) : T(TextKey.Hidden))}");
+        ImGui.SameLine();
+        ImGui.TextUnformatted($"{T(TextKey.Visor)}: {(outfit.VisorToggled ? T(TextKey.Toggled) : T(TextKey.Normal))}");
+    }
+
+    private void DrawEquipmentItem(bool sourceAvailable, EquipmentDisplayEntry? item)
     {
         var iconSize = new Vector2(32.0f, 32.0f);
         if (sourceAvailable && item is { IconId: > 0 } && plugin.TryGetIconTexture(item.IconId, out var texture))
@@ -436,6 +441,31 @@ public sealed class MainWindow : Window, IDisposable
                     ? T(TextKey.Unavailable)
                     : item.Name;
         ImGui.TextWrapped(name);
+    }
+
+    private void DrawStainSwatch(string id, bool sourceAvailable, byte stainId)
+    {
+        if (!sourceAvailable)
+        {
+            ImGui.TextUnformatted("-");
+            return;
+        }
+
+        var stain = plugin.GetStainDisplay(stainId);
+        var color = stain is { HasColor: true }
+            ? new Vector4(stain.R / 255.0f, stain.G / 255.0f, stain.B / 255.0f, 1.0f)
+            : Vector4.Zero;
+        ImGui.ColorButton(
+            $"##stain-{id}",
+            color,
+            ImGuiColorEditFlags.NoTooltip | ImGuiColorEditFlags.NoPicker | ImGuiColorEditFlags.NoDragDrop,
+            new Vector2(24.0f, 24.0f));
+        if (!ImGui.IsItemHovered())
+            return;
+        if (stain is { HasColor: true })
+            ImGui.SetTooltip($"{stain.Name}\nRGB: {stain.R}, {stain.G}, {stain.B}\n#{stain.R:X2}{stain.G:X2}{stain.B:X2}");
+        else
+            ImGui.SetTooltip(stain?.Name ?? T(TextKey.Unavailable));
     }
 
     private void DrawActorsTab()
@@ -543,6 +573,13 @@ public sealed class MainWindow : Window, IDisposable
                 DrawDetailRow(T(TextKey.GPoseRepresentation), current.RepresentationKey.IsGPoseRepresentation ? T(TextKey.Yes) : T(TextKey.No));
                 ImGui.EndTable();
             }
+
+            ImGui.Spacing();
+            ImGui.TextUnformatted(T(TextKey.Equipment));
+            if (current.Race is not null && plugin.TryGetActorOutfit(actor.Key, out var actorOutfit))
+                DrawOutfitDisplay($"actor-outfit-{actor.Key.GetHashCode()}", actorOutfit);
+            else
+                ImGui.TextDisabled(T(TextKey.Unavailable));
 
             ImGui.Spacing();
             var canRestore = (plugin.HasAppearanceOverride(actor.Key) || plugin.HasOutfitOverride(actor.Key))

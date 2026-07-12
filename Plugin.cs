@@ -57,6 +57,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly BulkOutfitTargetResolver bulkOutfitTargetResolver = new();
     private readonly Dictionary<ClientLanguage, IReadOnlyList<ModelSearchEntry>> modelSearchCaches = new();
     private readonly Dictionary<ClientLanguage, IReadOnlyDictionary<(OutfitSlot Slot, uint ModelKey), EquipmentItemDisplay>> equipmentDisplayCaches = new();
+    private readonly Dictionary<ClientLanguage, IReadOnlyDictionary<byte, StainDisplayEntry>> stainDisplayCaches = new();
     private readonly Dictionary<(uint RowId, ModelCategory Category, ModelSource Source, uint SourceId), ModelPreviewAssetReport> previewAssetCaches = new();
     private readonly Dictionary<(uint RowId, ModelCategory Category, ModelSource Source, uint SourceId), ModelPreviewSupport> previewSupportCaches = new();
     private readonly Dictionary<(uint RowId, ModelCategory Category, ModelSource Source, uint SourceId), ModelPreviewGeometryReport> previewGeometryCaches = new();
@@ -219,7 +220,7 @@ public sealed class Plugin : IDalamudPlugin
         => actorIdentity.TryResolve(actorRegistry, key, out actor);
 
     public BulkOutfitPreview GetBulkOutfitPreview(BulkOutfitSettings settings)
-        => bulkOutfitTargetResolver.Resolve(actorRegistry.Entries, settings);
+        => bulkOutfitTargetResolver.Resolve(GetBulkOutfitActors(), settings);
 
     public bool RefreshSourceOutfit(out string message)
     {
@@ -234,6 +235,11 @@ public sealed class Plugin : IDalamudPlugin
 
     public bool StartBulkOutfit(BulkOutfitPreview preview, out string message)
     {
+        if (!CanStartBulkOutfitInCurrentContext(out message))
+        {
+            LogBulkTargetPreview(preview, BulkOperationType.ApplyOutfit, false);
+            return false;
+        }
         if (!RefreshSourceOutfit(out message))
         {
             LogBulkTargetPreview(preview, BulkOperationType.ApplyOutfit, false);
@@ -246,26 +252,62 @@ public sealed class Plugin : IDalamudPlugin
 
     public bool StartUnequipAll(BulkOutfitPreview preview, out string message)
     {
+        if (!CanStartBulkOutfitInCurrentContext(out message))
+        {
+            LogBulkTargetPreview(preview, BulkOperationType.UnequipAll, false);
+            return false;
+        }
         var started = bulkOutfitService.StartUnequip(preview.EligibleTargets, out message);
         LogBulkTargetPreview(preview, BulkOperationType.UnequipAll, started);
         return started;
     }
 
     public bool StartRestoreModifiedActors(out string message)
-        => bulkOutfitService.StartRestore(out message);
+        => CanStartBulkOutfitInCurrentContext(out message)
+        && bulkOutfitService.StartRestore(out message);
 
     public void CancelBulkOperation()
         => bulkOutfitService.Cancel();
 
     public OutfitData? SourceOutfit => bulkOutfitService.SourceOutfit;
-    public IReadOnlyList<EquipmentDisplayEntry> GetSourceOutfitEquipment()
-        => SourceOutfit is { } source
+    public IReadOnlyList<EquipmentDisplayEntry> GetOutfitEquipment(OutfitData? outfit)
+        => outfit is { } source
             ? source.Equipment.Select((armor, index) => CreateEquipmentDisplay(
                 (OutfitSlot)index,
                 armor.Set,
                 armor.Variant,
                 GetEquipmentDisplays(ClientState.ClientLanguage))).ToArray()
             : Array.Empty<EquipmentDisplayEntry>();
+
+    public bool TryGetActorOutfit(LogicalActorKey actor, out OutfitData outfit)
+        => bulkOutfitService.TryCaptureOutfit(actor, out outfit);
+
+    public StainDisplayEntry? GetStainDisplay(byte stainId)
+    {
+        if (stainId == 0)
+            return new StainDisplayEntry(0, Localizer[TextKey.None], 0, 0, 0, false);
+        var language = ClientState.ClientLanguage;
+        if (!stainDisplayCaches.TryGetValue(language, out var cache))
+        {
+            cache = DataManager.GetExcelSheet<Stain>(language)
+                .Where(static stain => stain.RowId is > 0 and <= byte.MaxValue)
+                .ToDictionary(
+                    static stain => checked((byte)stain.RowId),
+                    stain =>
+                    {
+                        var (red, green, blue) = EquipmentDisplayFormatting.DecodeStainColor(stain.Color);
+                        return new StainDisplayEntry(
+                            checked((byte)stain.RowId),
+                            stain.Name.IsEmpty ? Localizer.Get(TextKey.Unknown, stain.RowId) : stain.Name.ToString(),
+                            red,
+                            green,
+                            blue,
+                            true);
+                    });
+            stainDisplayCaches[language] = cache;
+        }
+        return cache.GetValueOrDefault(stainId);
+    }
 
     public bool TryGetIconTexture(uint iconId, out IDalamudTextureWrap? texture)
     {
@@ -289,6 +331,24 @@ public sealed class Plugin : IDalamudPlugin
     public BulkOperation? CurrentBulkOperation => bulkOutfitService.CurrentOperation;
     public string BulkOutfitStatus => bulkOutfitService.LastStatus;
     public int ModifiedOutfitActorCount => bulkOutfitService.ModifiedActorCount;
+
+    private IReadOnlyList<ActorEntry> GetBulkOutfitActors()
+        => GPoseBulkActorSelector.Select(
+            actorRegistry.Entries,
+            ClientState.IsGPosing,
+            gposeCoordinator.State == GPoseState.Ready,
+            key => actorRegistry.TryGetGPoseLocalPlayer(key, out _));
+
+    private bool CanStartBulkOutfitInCurrentContext(out string message)
+    {
+        if (ClientState.IsGPosing && gposeCoordinator.State != GPoseState.Ready)
+        {
+            message = "GPose actor mapping is not ready yet.";
+            return false;
+        }
+        message = string.Empty;
+        return true;
+    }
 
     private void LogBulkTargetPreview(BulkOutfitPreview preview, BulkOperationType type, bool started)
         => diagnosticRouter.Write(new DiagnosticLogEntry

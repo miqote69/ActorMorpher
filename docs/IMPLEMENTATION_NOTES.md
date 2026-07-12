@@ -43,11 +43,13 @@ The local player's successfully applied Desired appearance is retained separatel
 
 ## GPose
 
-`IClientState.IsGPosing` is monitored on Framework Update. Entry waits for representations before mapping. Mapping does not use a fixed GPose index range or name-only matching. It tries unique GameObject ID, network Entity ID, Base ID plus ObjectKind, then a strict composite match. Ambiguous copies are skipped.
+`IClientState.IsGPosing` is monitored on Framework Update. Entry waits for representations before mapping. Mapping does not use a fixed GPose index range or name-only matching. It tries unique GameObject ID, network Entity ID, Base ID plus ObjectKind, a strict appearance composite, then a stable composite of name, ObjectKind, race, and gender that excludes volatile ModelChara and Body Type values. Every stage requires exactly one candidate; ambiguous copies are skipped.
 
 The local player additionally accepts the current client-defined GPose player slot at Object Table index 201, but only when the source is the local player and the candidate is a PC. Other actors continue to use identity matching. While GPose is active, resolver failure never falls back to a normal-world representation; the operation is rejected instead of redrawing a hidden field actor.
 
 The GPose local-player slot is acquired directly from `IObjectTable[201]` rather than requiring it to survive the general registry enumeration filters. Appearance, outfit, and redraw operations subsequently resolve the same table slot directly and revalidate GameObject ID and Entity ID before every native access.
+
+GPose Bulk Outfit operations are unavailable until mapping reaches Ready. Target preview includes only logical actors with a mapped GPose representation or the validated direct local-player representation. Normal-world actors that remain in the Object Table during GPose are excluded instead of being counted and later skipped during capture.
 
 ## Bulk Outfit
 
@@ -58,6 +60,8 @@ Unequip planning requires verified slot-specific Nothing data and a verified no-
 Bulk writes use `LoadEquipment` for exactly ten slots, `SetGlasses` for Facewear, `HideHeadgear` for hat visibility, and `SetVisor` for visor state. The outfit type contains no weapons, class/job, customize, or ModelChara fields. Batches process one logical actor per Framework Update and continue after an actor-local rollback.
 
 The source outfit table resolves armor and accessories against the localized Item sheet by OutfitSlot plus the packed Set and Variant model key. It displays the representative game icon and up to three distinct item names when several items share one appearance. Unresolved nonzero models are shown as unavailable rather than unequipped.
+
+Source Outfit and Actor Details use the same equipment table. Armor Set IDs use `e####`, accessory IDs use `a####`, and variants use `v####`. Stain 1 and Stain 2 are shown as game-color swatches from the localized Stain sheet. Sheet BGR values are converted to RGB; hover text shows the localized stain name, decimal RGB channels, and hexadecimal color.
 
 An explicit Model Search apply has priority over an older Bulk Outfit Desired state. The plugin tracks only user-requested model applies; on successful completion it removes that actor's Bulk override and does not reapply the earlier outfit. Internal appearance reapplication for territory changes or GPose is not treated as a new user request, preserving the last explicit operation order.
 
