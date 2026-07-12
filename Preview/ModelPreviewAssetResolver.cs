@@ -11,6 +11,19 @@ public sealed class ModelPreviewAssetResolver
         ("dwn", "Legs"),
         ("sho", "Feet"),
     ];
+    private static readonly (OutfitSlot Slot, string Suffix, string Label)[] HumanEquipmentParts =
+    [
+        (OutfitSlot.Head, "met", "Head"),
+        (OutfitSlot.Body, "top", "Body"),
+        (OutfitSlot.Hands, "glv", "Hands"),
+        (OutfitSlot.Legs, "dwn", "Legs"),
+        (OutfitSlot.Feet, "sho", "Feet"),
+        (OutfitSlot.Ears, "ear", "Ears"),
+        (OutfitSlot.Neck, "nek", "Neck"),
+        (OutfitSlot.Wrists, "wri", "Wrists"),
+        (OutfitSlot.RightRing, "rir", "Right Ring"),
+        (OutfitSlot.LeftRing, "ril", "Left Ring"),
+    ];
 
     private readonly Func<string, bool> fileExists;
     private readonly HumanPreviewDataBuilder humanBuilder;
@@ -32,12 +45,130 @@ public sealed class ModelPreviewAssetResolver
 
     private ModelPreviewAssetReport ResolveHuman(ModelSearchEntry model)
     {
-        var ready = humanBuilder.TryBuild(model, out _, out _);
-        return new ModelPreviewAssetReport(
-            model.ModelId,
-            model.Category,
-            ready ? ModelPreviewReadiness.HumanDataReady : ModelPreviewReadiness.InvalidModelData,
-            [new ModelPreviewAsset(ModelPreviewAssetKind.HumanAppearance, "Customize + Equipment", null, ready)]);
+        if (!humanBuilder.TryBuild(model, out var human, out _))
+            return Invalid(model);
+
+        var family = HumanModelFamily(human.Race, human.Customize[4], human.Sex);
+        if (family == 0)
+            return Invalid(model);
+        var bodyType = human.BodyType is (byte)NpcAge.Old or (byte)NpcAge.Young ? human.BodyType : (byte)NpcAge.Normal;
+        var specificCode = $"c{family:D2}{bodyType:D2}";
+        var adultCode = $"c{family:D2}01";
+        var fallbackCode = human.Sex == 0 ? "c0101" : "c0201";
+        var faceId = human.Customize[5];
+        var hairId = human.Customize[6];
+        var assets = new List<ModelPreviewAsset>
+        {
+            new(ModelPreviewAssetKind.HumanAppearance, "Customize + Equipment", null, true, false),
+            FirstPresent(
+                ModelPreviewAssetKind.Model,
+                "Face",
+                Codes(specificCode, adultCode, fallbackCode).Select(code =>
+                    $"chara/human/{code}/obj/face/f{faceId:D4}/model/{code}f{faceId:D4}_fac.mdl"),
+                true),
+        };
+
+        if (hairId > 0)
+        {
+            assets.Add(FirstPresent(
+                ModelPreviewAssetKind.Model,
+                "Hair",
+                Codes(specificCode, adultCode, fallbackCode).Select(code =>
+                    $"chara/human/{code}/obj/hair/h{hairId:D4}/model/{code}h{hairId:D4}_hir.mdl"),
+                false));
+        }
+
+        foreach (var part in HumanEquipmentParts)
+        {
+            var packed = human.Equipment[(int)part.Slot];
+            var set = checked((ushort)(packed & 0xFFFF));
+            var candidates = set == 0
+                ? BaseBodyCandidates(part.Slot, part.Suffix, adultCode, fallbackCode)
+                : EquipmentCandidates(part.Slot, part.Suffix, set, adultCode, fallbackCode)
+                    .Concat(BaseBodyCandidates(part.Slot, part.Suffix, adultCode, fallbackCode));
+            if (!candidates.Any())
+                continue;
+            assets.Add(FirstPresent(
+                ModelPreviewAssetKind.Model,
+                part.Label,
+                candidates,
+                part.Slot == OutfitSlot.Body));
+        }
+
+        assets.Add(FirstPresent(
+            ModelPreviewAssetKind.Skeleton,
+            "Skeleton",
+            Codes(specificCode, adultCode, fallbackCode).Select(code =>
+                $"chara/human/{code}/skeleton/base/b0001/skl_{code}b0001.sklb"),
+            false));
+
+        var requiredModels = assets.Where(static asset => asset.Kind == ModelPreviewAssetKind.Model && asset.IsRequired).ToArray();
+        var anyModel = assets.Any(static asset => asset.Kind == ModelPreviewAssetKind.Model && asset.IsPresent);
+        var readiness = requiredModels.Length > 0 && requiredModels.All(static asset => asset.IsPresent)
+            ? ModelPreviewReadiness.AssetsComplete
+            : anyModel
+                ? ModelPreviewReadiness.AssetsPartial
+                : ModelPreviewReadiness.AssetsMissing;
+        return new ModelPreviewAssetReport(model.ModelId, model.Category, readiness, assets);
+    }
+
+    private IEnumerable<string> BaseBodyCandidates(OutfitSlot slot, string suffix, string adultCode, string fallbackCode)
+    {
+        if (slot is not (OutfitSlot.Body or OutfitSlot.Hands or OutfitSlot.Legs or OutfitSlot.Feet))
+            return Array.Empty<string>();
+        return Codes(adultCode, fallbackCode).Select(code =>
+            $"chara/human/{code}/obj/body/b0001/model/{code}b0001_{suffix}.mdl");
+    }
+
+    private static IEnumerable<string> EquipmentCandidates(
+        OutfitSlot slot,
+        string suffix,
+        ushort set,
+        string adultCode,
+        string fallbackCode)
+    {
+        var prefix = slot >= OutfitSlot.Ears ? 'a' : 'e';
+        return Codes(adultCode, fallbackCode).Select(code =>
+            $"chara/{(prefix == 'a' ? "accessory" : "equipment")}/{prefix}{set:D4}/model/{code}{prefix}{set:D4}_{suffix}.mdl");
+    }
+
+    private ModelPreviewAsset FirstPresent(
+        ModelPreviewAssetKind kind,
+        string label,
+        IEnumerable<string> candidates,
+        bool required)
+    {
+        string? first = null;
+        foreach (var candidate in candidates.Distinct(StringComparer.Ordinal))
+        {
+            first ??= candidate;
+            var asset = Asset(kind, label, candidate, required);
+            if (asset.IsPresent)
+                return asset;
+        }
+        return new ModelPreviewAsset(kind, label, first, false, required);
+    }
+
+    private static IEnumerable<string> Codes(params string[] codes)
+        => codes.Distinct(StringComparer.Ordinal);
+
+    private static int HumanModelFamily(byte race, byte tribe, byte sex)
+    {
+        if (sex > 1)
+            return 0;
+        var maleFamily = race switch
+        {
+            1 => tribe == 2 ? 3 : 1,
+            2 => 5,
+            3 => 11,
+            4 => 7,
+            5 => 9,
+            6 => 13,
+            7 => 15,
+            8 => 17,
+            _ => 0,
+        };
+        return maleFamily == 0 ? 0 : maleFamily + sex;
     }
 
     private ModelPreviewAssetReport ResolveMonster(ModelSearchEntry model)

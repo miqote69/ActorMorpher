@@ -62,21 +62,56 @@ public sealed class ModelPreviewAssetResolverTests
     }
 
     [Fact]
-    public void HumanReportsPreparedInMemoryAppearanceData()
+    public void HumanResolvesFaceAndBodyModelsForSoftwarePreview()
     {
         var customize = new byte[26];
         customize[0] = 1;
         customize[1] = 0;
         customize[2] = (byte)NpcAge.Normal;
         customize[4] = 1;
+        customize[5] = 1;
         var appearance = new HumanAppearance(customize, new ulong[10], 0, 0, false);
         var modelAppearance = AppearanceData.Create(100, ModelCategory.Human, 100, AppearanceCompleteness.Complete, customize, new ulong[10]);
         var entry = Entry(ModelCategory.Human, 1, 1, 1) with { HumanAppearance = appearance, ModelAppearance = modelAppearance };
+        var present = new HashSet<string>
+        {
+            "chara/human/c0101/obj/face/f0001/model/c0101f0001_fac.mdl",
+            "chara/human/c0101/obj/body/b0001/model/c0101b0001_top.mdl",
+        };
 
-        var report = new ModelPreviewAssetResolver(_ => false).Resolve(entry);
+        var report = new ModelPreviewAssetResolver(present.Contains).Resolve(entry);
 
-        Assert.Equal(ModelPreviewReadiness.HumanDataReady, report.Readiness);
-        Assert.Equal(1, report.PresentCount);
+        Assert.Equal(ModelPreviewReadiness.AssetsComplete, report.Readiness);
+        Assert.Contains(report.Assets, asset => asset.Label == "Face" && asset.IsPresent);
+        Assert.Contains(report.Assets, asset => asset.Label == "Body" && asset.IsPresent);
+    }
+
+    [Fact]
+    public void YoungHumanUsesYoungFaceAndAdultBodyFallback()
+    {
+        var customize = new byte[26];
+        customize[0] = 1;
+        customize[1] = 0;
+        customize[2] = (byte)NpcAge.Young;
+        customize[4] = 1;
+        customize[5] = 1;
+        customize[6] = 1;
+        var equipment = new ulong[10];
+        var appearance = new HumanAppearance(customize, equipment, 0, 0, false);
+        var modelAppearance = AppearanceData.Create(100, ModelCategory.Human, 100, AppearanceCompleteness.Complete, customize, equipment);
+        var entry = Entry(ModelCategory.Human, 1, 1, 1) with { HumanAppearance = appearance, ModelAppearance = modelAppearance };
+        var present = new HashSet<string>
+        {
+            "chara/human/c0104/obj/face/f0001/model/c0104f0001_fac.mdl",
+            "chara/human/c0104/obj/hair/h0001/model/c0104h0001_hir.mdl",
+            "chara/human/c0101/obj/body/b0001/model/c0101b0001_top.mdl",
+        };
+
+        var report = new ModelPreviewAssetResolver(present.Contains).Resolve(entry);
+
+        Assert.Contains(report.Assets, asset => asset.Path == "chara/human/c0104/obj/face/f0001/model/c0104f0001_fac.mdl");
+        Assert.Contains(report.Assets, asset => asset.Path == "chara/human/c0104/obj/hair/h0001/model/c0104h0001_hir.mdl");
+        Assert.Contains(report.Assets, asset => asset.Path == "chara/human/c0101/obj/body/b0001/model/c0101b0001_top.mdl");
     }
 
     [Fact]

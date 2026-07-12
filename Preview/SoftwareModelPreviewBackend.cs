@@ -38,13 +38,6 @@ public sealed class SoftwareModelPreviewBackend : IModelPreviewBackend
             Snapshot = new(generation, ModelPreviewState.Idle, null, "Select a model to inspect its preview status.");
             return;
         }
-        if (model.Category == ModelCategory.Human)
-        {
-            Snapshot = new(generation, ModelPreviewState.Unsupported, model.ModelId,
-                "Human preview requires verified CharaView slot and texture ownership.");
-            return;
-        }
-
         var assets = resolveAssets(model);
         var models = new List<ModelPreviewCpuModel>();
         foreach (var asset in assets.Assets.Where(static asset =>

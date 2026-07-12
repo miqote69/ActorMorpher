@@ -821,8 +821,7 @@ public sealed class MainWindow : Window, IDisposable
             }
 
             DrawPreviewAssetReport(plugin.GetModelPreviewAssets(model));
-            if (model.Category != ModelCategory.Human)
-                DrawPreviewGeometryReport(plugin.GetModelPreviewGeometry(model));
+            DrawPreviewGeometryReport(plugin.GetModelPreviewGeometry(model));
 
             if (model.Category == ModelCategory.Human)
             {

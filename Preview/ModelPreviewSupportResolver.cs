@@ -15,16 +15,19 @@ public sealed class ModelPreviewSupportResolver
 
     public ModelPreviewSupport Resolve(ModelSearchEntry model, ModelPreviewAssetReport assets)
         => model.Category == ModelCategory.Human
-            ? ResolveHuman(model)
+            ? ResolveHuman(model, assets)
             : ResolveAssetModel(assets);
 
-    private ModelPreviewSupport ResolveHuman(ModelSearchEntry model)
+    private ModelPreviewSupport ResolveHuman(ModelSearchEntry model, ModelPreviewAssetReport assets)
     {
         if (!humanBuilder.TryBuild(model, out _, out _))
             return Unsupported(
-                ModelPreviewBackendKind.CharaView,
+                ModelPreviewBackendKind.AssetRenderer,
                 PreviewCompleteness.InvalidHumanData,
                 ModelPreviewSupportReason.InvalidHumanData);
+
+        if (capabilities.HasAssetRenderer)
+            return ResolveAssetModel(assets);
 
         if (!capabilities.HasExclusiveCharaViewSlot && !capabilities.CanOwnCharaViewTexture)
             return Unsupported(

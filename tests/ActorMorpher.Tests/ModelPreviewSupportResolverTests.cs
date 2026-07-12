@@ -78,6 +78,25 @@ public sealed class ModelPreviewSupportResolverTests
         Assert.Equal(ModelPreviewSupportReason.None, support.Reason);
     }
 
+    [Fact]
+    public void SoftwareRendererCanPreviewHumanModelsWithoutCharaViewOwnership()
+    {
+        var model = HumanEntry();
+        var assets = new ModelPreviewAssetReport(
+            model.ModelId,
+            model.Category,
+            ModelPreviewReadiness.AssetsComplete,
+            [new(ModelPreviewAssetKind.Model, "Body", "body.mdl", true)]);
+
+        var support = new ModelPreviewSupportResolver(
+            humanBuilder,
+            ModelPreviewBackendCapabilities.SoftwarePreview).Resolve(model, assets);
+
+        Assert.True(support.CanPreview);
+        Assert.Equal(ModelPreviewBackendKind.AssetRenderer, support.PreferredBackend);
+        Assert.Equal(ModelPreviewSupportReason.None, support.Reason);
+    }
+
     [Theory]
     [InlineData(false, false, ModelPreviewSupportReason.MissingModelAndSkeleton)]
     [InlineData(false, true, ModelPreviewSupportReason.MissingModel)]

@@ -76,6 +76,23 @@ public sealed class SoftwareModelPreviewTests
         Assert.True(adjusted.Zoom > initial.Zoom);
     }
 
+    [Fact]
+    public void BackendUsesSoftwareGeometryForHumanModels()
+    {
+        var entry = AssetEntry() with { Category = ModelCategory.Human };
+        var assets = new ModelPreviewAssetReport(
+            entry.ModelId,
+            entry.Category,
+            ModelPreviewReadiness.AssetsComplete,
+            [new(ModelPreviewAssetKind.Model, "Body", "body.mdl", true)]);
+        using var backend = new SoftwareModelPreviewBackend(_ => assets, _ => Model([0, 1, 2]));
+
+        backend.Select(entry);
+
+        Assert.Equal(ModelPreviewState.Ready, backend.Snapshot.State);
+        Assert.NotNull(backend.GetView());
+    }
+
     private static ModelPreviewCpuModel Model(ushort[] indices)
     {
         var vertices = new[]
