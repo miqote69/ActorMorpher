@@ -3,7 +3,7 @@ namespace ActorMorpher.Preview;
 public sealed class SoftwareModelPreviewBackend : IModelPreviewBackend
 {
     private readonly Func<ModelSearchEntry, ModelPreviewAssetReport> resolveAssets;
-    private readonly Func<string, ModelPreviewCpuModel?> loadModel;
+    private readonly Func<string, byte, ModelPreviewCpuModel?> loadModel;
     private readonly SoftwareModelPreviewSceneBuilder sceneBuilder = new();
     private readonly object syncRoot = new();
     private ModelPreviewSelectionKey? selection;
@@ -15,7 +15,7 @@ public sealed class SoftwareModelPreviewBackend : IModelPreviewBackend
 
     public SoftwareModelPreviewBackend(
         Func<ModelSearchEntry, ModelPreviewAssetReport> resolveAssets,
-        Func<string, ModelPreviewCpuModel?> loadModel)
+        Func<string, byte, ModelPreviewCpuModel?> loadModel)
     {
         this.resolveAssets = resolveAssets;
         this.loadModel = loadModel;
@@ -45,7 +45,7 @@ public sealed class SoftwareModelPreviewBackend : IModelPreviewBackend
         {
             try
             {
-                if (loadModel(asset.Path!) is { } loaded)
+                if (loadModel(asset.Path!, asset.MaterialVariant) is { } loaded)
                     models.Add(loaded);
             }
             catch

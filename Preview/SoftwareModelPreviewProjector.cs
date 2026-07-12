@@ -40,8 +40,13 @@ public static class SoftwareModelPreviewProjector
                 ToScreen(first, center, scale),
                 ToScreen(second, center, scale),
                 ToScreen(third, center, scale),
+                triangle.FirstUv,
+                triangle.SecondUv,
+                triangle.ThirdUv,
                 (first.Z + second.Z + third.Z) / 3.0f,
-                color));
+                color,
+                new Vector4(brightness, brightness, brightness, 1.0f),
+                triangle.MaterialPath));
         }
         projected.Sort(static (left, right) => left.Depth.CompareTo(right.Depth));
         return projected;

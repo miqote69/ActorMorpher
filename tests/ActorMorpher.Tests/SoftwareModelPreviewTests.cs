@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Numerics;
 using ActorMorpher.Appearance;
@@ -10,17 +11,46 @@ namespace ActorMorpher.Tests;
 public sealed class SoftwareModelPreviewTests
 {
     [Fact]
-    public void SceneBuilderBoundsSampledTriangleCount()
+    public void SceneBuilderPreservesEveryTriangle()
     {
-        var indices = Enumerable.Range(0, SoftwareModelPreviewSceneBuilder.MaximumTriangleCount + 1)
+        const int triangleCount = 10_001;
+        var indices = Enumerable.Range(0, triangleCount)
             .SelectMany(static _ => new ushort[] { 0, 1, 2 })
             .ToArray();
         var model = Model(indices);
 
         var scene = new SoftwareModelPreviewSceneBuilder().Build([model]);
 
-        Assert.InRange(scene.Triangles.Count, 1, SoftwareModelPreviewSceneBuilder.MaximumTriangleCount);
-        Assert.Equal(SoftwareModelPreviewSceneBuilder.MaximumTriangleCount + 1, scene.SourceTriangleCount);
+        Assert.Equal(triangleCount, scene.Triangles.Count);
+        Assert.Equal(triangleCount, scene.SourceTriangleCount);
+    }
+
+    [Fact]
+    public void SceneBuilderRejectsInsteadOfCreatingHolesBeyondLimit()
+    {
+        var indices = Enumerable.Range(0, SoftwareModelPreviewSceneBuilder.MaximumTriangleCount + 1)
+            .SelectMany(static _ => new ushort[] { 0, 1, 2 })
+            .ToArray();
+
+        Assert.Throws<InvalidDataException>(() => new SoftwareModelPreviewSceneBuilder().Build([Model(indices)]));
+    }
+
+    [Fact]
+    public void SceneBuilderKeepsSmallFaceAndHairTriangles()
+    {
+        var vertices = new[]
+        {
+            Vertex(0, 0, 0),
+            Vertex(0.0001f, 0, 0),
+            Vertex(0, 0.0001f, 0),
+        };
+        var bounds = new ModelPreviewBounds(new Vector3(-1), new Vector3(1));
+        var mesh = new ModelPreviewCpuMesh(0, "face", vertices, [0, 1, 2], bounds);
+        var model = new ModelPreviewCpuModel([mesh], Array.Empty<ModelPreviewMeshIssue>(), bounds);
+
+        var scene = new SoftwareModelPreviewSceneBuilder().Build([model]);
+
+        Assert.Single(scene.Triangles);
     }
 
     [Fact]
@@ -62,7 +92,7 @@ public sealed class SoftwareModelPreviewTests
             entry.Category,
             ModelPreviewReadiness.AssetsPartial,
             [new(ModelPreviewAssetKind.Model, "Body", "body.mdl", true)]);
-        using var backend = new SoftwareModelPreviewBackend(_ => assets, _ => Model([0, 1, 2]));
+        using var backend = new SoftwareModelPreviewBackend(_ => assets, (_, _) => Model([0, 1, 2]));
 
         backend.Select(entry);
         var initial = Assert.IsType<SoftwareModelPreviewView>(backend.GetView());
@@ -85,7 +115,7 @@ public sealed class SoftwareModelPreviewTests
             entry.Category,
             ModelPreviewReadiness.AssetsComplete,
             [new(ModelPreviewAssetKind.Model, "Body", "body.mdl", true)]);
-        using var backend = new SoftwareModelPreviewBackend(_ => assets, _ => Model([0, 1, 2]));
+        using var backend = new SoftwareModelPreviewBackend(_ => assets, (_, _) => Model([0, 1, 2]));
 
         backend.Select(entry);
 

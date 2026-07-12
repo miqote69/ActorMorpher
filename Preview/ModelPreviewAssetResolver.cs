@@ -65,7 +65,8 @@ public sealed class ModelPreviewAssetResolver
                 "Face",
                 Codes(specificCode, adultCode, fallbackCode).Select(code =>
                     $"chara/human/{code}/obj/face/f{faceId:D4}/model/{code}f{faceId:D4}_fac.mdl"),
-                true),
+                true,
+                1),
         };
 
         if (hairId > 0)
@@ -75,13 +76,15 @@ public sealed class ModelPreviewAssetResolver
                 "Hair",
                 Codes(specificCode, adultCode, fallbackCode).Select(code =>
                     $"chara/human/{code}/obj/hair/h{hairId:D4}/model/{code}h{hairId:D4}_hir.mdl"),
-                false));
+                false,
+                1));
         }
 
         foreach (var part in HumanEquipmentParts)
         {
             var packed = human.Equipment[(int)part.Slot];
             var set = checked((ushort)(packed & 0xFFFF));
+            var variant = checked((byte)((packed >> 16) & 0xFF));
             var candidates = set == 0
                 ? BaseBodyCandidates(part.Slot, part.Suffix, adultCode, fallbackCode)
                 : EquipmentCandidates(part.Slot, part.Suffix, set, adultCode, fallbackCode)
@@ -92,7 +95,8 @@ public sealed class ModelPreviewAssetResolver
                 ModelPreviewAssetKind.Model,
                 part.Label,
                 candidates,
-                part.Slot == OutfitSlot.Body));
+                part.Slot == OutfitSlot.Body,
+                variant == 0 ? (byte)1 : variant));
         }
 
         assets.Add(FirstPresent(
@@ -100,7 +104,8 @@ public sealed class ModelPreviewAssetResolver
             "Skeleton",
             Codes(specificCode, adultCode, fallbackCode).Select(code =>
                 $"chara/human/{code}/skeleton/base/b0001/skl_{code}b0001.sklb"),
-            false));
+            false,
+            1));
 
         var requiredModels = assets.Where(static asset => asset.Kind == ModelPreviewAssetKind.Model && asset.IsRequired).ToArray();
         var anyModel = assets.Any(static asset => asset.Kind == ModelPreviewAssetKind.Model && asset.IsPresent);
@@ -136,17 +141,18 @@ public sealed class ModelPreviewAssetResolver
         ModelPreviewAssetKind kind,
         string label,
         IEnumerable<string> candidates,
-        bool required)
+        bool required,
+        byte materialVariant)
     {
         string? first = null;
         foreach (var candidate in candidates.Distinct(StringComparer.Ordinal))
         {
             first ??= candidate;
-            var asset = Asset(kind, label, candidate, required);
+            var asset = Asset(kind, label, candidate, required, materialVariant);
             if (asset.IsPresent)
                 return asset;
         }
-        return new ModelPreviewAsset(kind, label, first, false, required);
+        return new ModelPreviewAsset(kind, label, first, false, required, materialVariant);
     }
 
     private static IEnumerable<string> Codes(params string[] codes)
@@ -182,7 +188,7 @@ public sealed class ModelPreviewAssetResolver
         var assets = new[]
         {
             Asset(ModelPreviewAssetKind.Imc, "IMC", $"{root}/{body}.imc", false),
-            Asset(ModelPreviewAssetKind.Model, "Body", $"{root}/model/{monster}{body}.mdl"),
+            Asset(ModelPreviewAssetKind.Model, "Body", $"{root}/model/{monster}{body}.mdl", true, model.Variant),
             Asset(ModelPreviewAssetKind.Skeleton, "Skeleton", $"chara/monster/{monster}/skeleton/base/b0001/skl_{monster}b0001.sklb"),
         };
         return Report(model, assets, assets[1].IsPresent, assets[2].IsPresent);
@@ -204,7 +210,8 @@ public sealed class ModelPreviewAssetResolver
             ModelPreviewAssetKind.Model,
             part.Label,
             $"{root}/model/{demihuman}{equipment}_{part.Suffix}.mdl",
-            false)));
+            false,
+            model.Variant)));
         assets.Add(Asset(
             ModelPreviewAssetKind.Skeleton,
             "Skeleton",
@@ -214,15 +221,20 @@ public sealed class ModelPreviewAssetResolver
         return Report(model, assets, modelAssets.Any(static asset => asset.IsPresent), assets[^1].IsPresent);
     }
 
-    private ModelPreviewAsset Asset(ModelPreviewAssetKind kind, string label, string path, bool required = true)
+    private ModelPreviewAsset Asset(
+        ModelPreviewAssetKind kind,
+        string label,
+        string path,
+        bool required = true,
+        byte materialVariant = 1)
     {
         try
         {
-            return new ModelPreviewAsset(kind, label, path, fileExists(path), required);
+            return new ModelPreviewAsset(kind, label, path, fileExists(path), required, materialVariant);
         }
         catch
         {
-            return new ModelPreviewAsset(kind, label, path, false, required);
+            return new ModelPreviewAsset(kind, label, path, false, required, materialVariant);
         }
     }
 

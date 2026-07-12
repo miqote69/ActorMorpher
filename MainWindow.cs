@@ -927,20 +927,39 @@ public sealed class MainWindow : Window, IDisposable
         var maximum = position + canvasSize;
         drawList.PushClipRect(position, maximum, true);
         drawList.AddRectFilled(position, maximum, ImGui.GetColorU32(new Vector4(0.055f, 0.065f, 0.075f, 1.0f)));
+        ImTextureID activeTexture = default;
         foreach (var triangle in SoftwareModelPreviewProjector.Project(view, position, canvasSize))
         {
-            drawList.AddTriangleFilled(
-                triangle.First,
-                triangle.Second,
-                triangle.Third,
-                ImGui.GetColorU32(triangle.Color));
-            drawList.AddTriangle(
-                triangle.First,
-                triangle.Second,
-                triangle.Third,
-                ImGui.GetColorU32(new Vector4(0.03f, 0.035f, 0.04f, 0.28f)),
-                0.55f);
+            var texture = plugin.GetModelPreviewTextureHandle(triangle.MaterialPath);
+            if (texture == default)
+            {
+                if (activeTexture != default)
+                {
+                    drawList.PopTextureID();
+                    activeTexture = default;
+                }
+                drawList.AddTriangleFilled(
+                    triangle.First,
+                    triangle.Second,
+                    triangle.Third,
+                    ImGui.GetColorU32(triangle.Color));
+                continue;
+            }
+            if (activeTexture != texture)
+            {
+                if (activeTexture != default)
+                    drawList.PopTextureID();
+                drawList.PushTextureID(texture);
+                activeTexture = texture;
+            }
+            var color = ImGui.GetColorU32(triangle.TextureTint);
+            drawList.PrimReserve(3, 3);
+            drawList.PrimVtx(triangle.First, triangle.FirstUv, color);
+            drawList.PrimVtx(triangle.Second, triangle.SecondUv, color);
+            drawList.PrimVtx(triangle.Third, triangle.ThirdUv, color);
         }
+        if (activeTexture != default)
+            drawList.PopTextureID();
         drawList.PopClipRect();
     }
 

@@ -32,7 +32,16 @@ public sealed class MdlPreviewParserTests
         Assert.Throws<InvalidDataException>(() => new MdlPreviewParser().Parse(data));
     }
 
-    private static byte[] CreateTriangleMdl()
+    [Fact]
+    public void KeepsPrimaryVectorPositionWhenDeclarationContainsScalarPosition()
+    {
+        var parsed = new MdlPreviewParser().Parse(CreateTriangleMdl(true));
+        var model = new ModelPreviewMeshBuilder().Build(parsed.Meshes);
+
+        Assert.Equal(new Vector3(1, 0, 0), Assert.Single(model.Meshes).Vertices[1].Position);
+    }
+
+    private static byte[] CreateTriangleMdl(bool addScalarPosition = false)
     {
         const int declarationOffset = 0x44;
         const int declarationSize = 17 * 8;
@@ -64,7 +73,17 @@ public sealed class MdlPreviewParserTests
         writer.Byte(2);
         writer.Byte(0);
         writer.Skip(4);
-        for (var element = 1; element < 17; ++element)
+        var firstUnusedElement = 1;
+        if (addScalarPosition)
+        {
+            writer.Byte(0);
+            writer.Byte(0);
+            writer.Byte(0);
+            writer.Byte(0);
+            writer.Skip(4);
+            firstUnusedElement = 2;
+        }
+        for (var element = firstUnusedElement; element < 17; ++element)
         {
             writer.Byte(byte.MaxValue);
             writer.Skip(7);

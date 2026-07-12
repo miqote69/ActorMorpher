@@ -5,6 +5,8 @@ namespace ActorMorpher.Preview;
 
 public sealed class ModelPreviewMeshBuilder
 {
+    private const float MinimumNormalLengthSquared = 1e-20f;
+
     public const int MaximumMeshCount = 4096;
     public const int MaximumVerticesPerMesh = ushort.MaxValue + 1;
     public const long MaximumVerticesPerModel = 2_000_000;
@@ -85,7 +87,7 @@ public sealed class ModelPreviewMeshBuilder
             minimum = Vector3.Min(minimum, value);
             maximum = Vector3.Max(maximum, value);
 
-            if (input.Normal is { } normal && IsFinite(normal) && normal.LengthSquared() > 0.000001f)
+            if (input.Normal is { } normal && IsFinite(normal) && normal.LengthSquared() > MinimumNormalLengthSquared)
             {
                 normals[i] = Vector3.Normalize(normal);
                 hasNormal[i] = true;
@@ -105,7 +107,7 @@ public sealed class ModelPreviewMeshBuilder
             }
 
             var faceNormal = Vector3.Cross(positions[second] - positions[first], positions[third] - positions[first]);
-            if (!IsFinite(faceNormal) || faceNormal.LengthSquared() <= 0.000001f)
+            if (!IsFinite(faceNormal) || faceNormal.LengthSquared() <= MinimumNormalLengthSquared)
                 continue;
             generatedNormals[first] += faceNormal;
             generatedNormals[second] += faceNormal;
@@ -118,7 +120,7 @@ public sealed class ModelPreviewMeshBuilder
             var input = source.Vertices[i];
             var normal = hasNormal[i]
                 ? normals[i]
-                : generatedNormals[i].LengthSquared() > 0.000001f && IsFinite(generatedNormals[i])
+                : generatedNormals[i].LengthSquared() > MinimumNormalLengthSquared && IsFinite(generatedNormals[i])
                     ? Vector3.Normalize(generatedNormals[i])
                     : Vector3.UnitY;
             var uv = input.UV is { } sourceUv && IsFinite(sourceUv)

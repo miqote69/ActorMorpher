@@ -5,7 +5,8 @@ namespace ActorMorpher.Preview;
 
 public sealed class SoftwareModelPreviewSceneBuilder
 {
-    public const int MaximumTriangleCount = 6000;
+    public const int MaximumTriangleCount = 200_000;
+    private const float MinimumNormalLengthSquared = 1e-20f;
 
     private static readonly Vector4[] Palette =
     [
@@ -24,27 +25,33 @@ public sealed class SoftwareModelPreviewSceneBuilder
         var sourceTriangleCount = models.Sum(static model => model.IndexCount / 3);
         if (sourceTriangleCount <= 0)
             throw new InvalidDataException("CPU models contain no triangles.");
-        var stride = Math.Max(1L, (sourceTriangleCount + MaximumTriangleCount - 1) / MaximumTriangleCount);
-        var triangles = new List<SoftwareModelPreviewTriangle>(
-            checked((int)Math.Min(sourceTriangleCount, MaximumTriangleCount)));
-        long sourceTriangleIndex = 0;
+        if (sourceTriangleCount > MaximumTriangleCount)
+            throw new InvalidDataException("CPU models exceed the complete-preview triangle limit.");
+        var triangles = new List<SoftwareModelPreviewTriangle>(checked((int)sourceTriangleCount));
         var meshIndex = 0;
         foreach (var model in models)
         {
             foreach (var mesh in model.Meshes)
             {
                 var color = GetMeshColor(mesh.MaterialPath, meshIndex++);
-                for (var index = 0; index < mesh.Indices.Length; index += 3, sourceTriangleIndex++)
+                for (var index = 0; index < mesh.Indices.Length; index += 3)
                 {
-                    if (sourceTriangleIndex % stride != 0 || triangles.Count >= MaximumTriangleCount)
+                    var first = mesh.Vertices[mesh.Indices[index]];
+                    var second = mesh.Vertices[mesh.Indices[index + 1]];
+                    var third = mesh.Vertices[mesh.Indices[index + 2]];
+                    var normal = Vector3.Cross(second.Position - first.Position, third.Position - first.Position);
+                    if (!IsFinite(normal) || normal.LengthSquared() <= MinimumNormalLengthSquared)
                         continue;
-                    var first = mesh.Vertices[mesh.Indices[index]].Position;
-                    var second = mesh.Vertices[mesh.Indices[index + 1]].Position;
-                    var third = mesh.Vertices[mesh.Indices[index + 2]].Position;
-                    var normal = Vector3.Cross(second - first, third - first);
-                    if (!IsFinite(normal) || normal.LengthSquared() <= 0.000001f)
-                        continue;
-                    triangles.Add(new(first, second, third, Vector3.Normalize(normal), color));
+                    triangles.Add(new(
+                        first.Position,
+                        second.Position,
+                        third.Position,
+                        first.UV,
+                        second.UV,
+                        third.UV,
+                        Vector3.Normalize(normal),
+                        color,
+                        mesh.MaterialPath));
                 }
             }
         }

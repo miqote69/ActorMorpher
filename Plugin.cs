@@ -6,6 +6,7 @@ using Dalamud.IoC;
 using Dalamud.Interface.Textures;
 using Dalamud.Interface.Textures.TextureWraps;
 using Dalamud.Interface.Windowing;
+using Dalamud.Bindings.ImGui;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using Lumina.Excel.Sheets;
@@ -55,6 +56,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly ModelPreviewAssetResolver modelPreviewAssetResolver;
     private readonly ModelPreviewGeometryInspector modelPreviewGeometryInspector;
     private readonly LuminaModelGeometrySource modelPreviewGeometrySource;
+    private readonly ModelPreviewTextureCache modelPreviewTextureCache;
     private readonly LocalPlayerAppearancePersistence localPlayerAppearancePersistence = new();
     private readonly LocalPlayerOutfitPersistence localPlayerOutfitPersistence = new();
     private readonly BulkOutfitTargetResolver bulkOutfitTargetResolver = new();
@@ -68,6 +70,7 @@ public sealed class Plugin : IDalamudPlugin
     private long nextLocalOutfitReapplyTick;
     private long nextPinnedOutfitScanTick;
     private LogicalActorKey? pinnedOutfitOperationActor;
+    private ModelPreviewSelectionKey? previewTextureSelection;
 
     public Configuration Configuration { get; }
     public Localizer Localizer { get; }
@@ -113,6 +116,9 @@ public sealed class Plugin : IDalamudPlugin
             ModelPreviewBackendCapabilities.SoftwarePreview);
         modelPreviewGeometrySource = new LuminaModelGeometrySource(DataManager);
         modelPreviewGeometryInspector = new ModelPreviewGeometryInspector(modelPreviewGeometrySource.Load);
+        modelPreviewTextureCache = new ModelPreviewTextureCache(
+            TextureProvider,
+            new ModelPreviewTextureSource(DataManager));
         actorRegistry = new ActorRegistry(ObjectTable, ClientState, Framework, humanModelClassifier, diagnosticRouter);
         actorIdentity = new ActorIdentityService(diagnosticRouter);
         var clientContext = new DalamudClientContext(ClientState);
@@ -185,6 +191,7 @@ public sealed class Plugin : IDalamudPlugin
         windowSystem.RemoveAllWindows();
         mainWindow.Dispose();
         modelPreview.Dispose();
+        modelPreviewTextureCache.Dispose();
         gposeCoordinator.MappingsReady -= OnRepresentationContextChanged;
         gposeCoordinator.Exited -= OnRepresentationContextChanged;
         appearanceApplyService.OperationCompleted -= OnAppearanceOperationCompleted;
@@ -617,7 +624,18 @@ public sealed class Plugin : IDalamudPlugin
     public string AppearanceStatus => appearanceApplyService.LastStatus;
     public ModelPreviewSnapshot ModelPreview => modelPreview.Snapshot;
     public SoftwareModelPreviewView? SoftwareModelPreview => softwareModelPreviewBackend.GetView();
-    public void SelectPreviewModel(ModelSearchEntry? model) => modelPreview.Select(model);
+    public void SelectPreviewModel(ModelSearchEntry? model)
+    {
+        var next = ModelPreviewSelectionKey.From(model);
+        if (previewTextureSelection != next)
+        {
+            previewTextureSelection = next;
+            modelPreviewTextureCache.Select(model);
+        }
+        modelPreview.Select(model);
+    }
+    public ImTextureID GetModelPreviewTextureHandle(string materialPath)
+        => modelPreviewTextureCache.GetHandle(materialPath);
     public void SetModelPreviewActive(bool active) => modelPreview.SetActive(active);
     public void ResetModelPreviewCamera() => modelPreview.ResetCamera();
     public void OrbitModelPreview(float deltaX, float deltaY) => softwareModelPreviewBackend.Orbit(deltaX, deltaY);

@@ -22,7 +22,8 @@ public sealed record ModelPreviewAsset(
     string Label,
     string? Path,
     bool IsPresent,
-    bool IsRequired = true);
+    bool IsRequired = true,
+    byte MaterialVariant = 1);
 
 public sealed record ModelPreviewAssetReport(
     uint ModelCharaId,
