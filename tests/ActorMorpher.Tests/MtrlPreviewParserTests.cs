@@ -22,6 +22,8 @@ public sealed class MtrlPreviewParserTests
         Assert.Equal(1.0f, parsed.DiffuseRows[1].Y);
         Assert.True(parsed.TryGetConstantVector3(0x2C2A34DD, out var diffuseColor));
         Assert.Equal(new System.Numerics.Vector3(0.2415f, 0.2595833f, 0.35f), diffuseColor);
+        Assert.Equal(1u, parsed.ShaderFlags);
+        Assert.False(parsed.ShowBackfaces);
     }
 
     [Fact]
@@ -125,7 +127,7 @@ public sealed class MtrlPreviewParserTests
         writer.UInt16(0);
         writer.UInt16(1);
         writer.UInt16(2);
-        writer.UInt32(0);
+        writer.UInt32(1);
         writer.UInt32(0x2C2A34DD);
         writer.UInt16(0);
         writer.UInt16(12);

@@ -4,7 +4,7 @@ public sealed class SoftwareModelPreviewBackend : IModelPreviewBackend
 {
     private readonly Func<ModelSearchEntry, ModelPreviewAssetReport> resolveAssets;
     private readonly Func<string, byte, ushort, byte, ModelPreviewCpuModel?> loadModel;
-    private readonly SoftwareModelPreviewSceneBuilder sceneBuilder = new();
+    private readonly SoftwareModelPreviewSceneBuilder sceneBuilder;
     private readonly object syncRoot = new();
     private ModelPreviewSelectionKey? selection;
     private SoftwareModelPreviewScene? scene;
@@ -15,10 +15,12 @@ public sealed class SoftwareModelPreviewBackend : IModelPreviewBackend
 
     public SoftwareModelPreviewBackend(
         Func<ModelSearchEntry, ModelPreviewAssetReport> resolveAssets,
-        Func<string, byte, ushort, byte, ModelPreviewCpuModel?> loadModel)
+        Func<string, byte, ushort, byte, ModelPreviewCpuModel?> loadModel,
+        Func<string, bool>? showBackfaces = null)
     {
         this.resolveAssets = resolveAssets;
         this.loadModel = loadModel;
+        sceneBuilder = new SoftwareModelPreviewSceneBuilder(showBackfaces);
     }
 
     public ModelPreviewSnapshot Snapshot { get; private set; }

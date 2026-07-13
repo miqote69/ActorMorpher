@@ -17,6 +17,13 @@ public sealed class SoftwareModelPreviewSceneBuilder
         new(0.62f, 0.52f, 0.74f, 1.0f),
     ];
 
+    private readonly Func<string, bool> showBackfaces;
+
+    public SoftwareModelPreviewSceneBuilder(Func<string, bool>? showBackfaces = null)
+    {
+        this.showBackfaces = showBackfaces ?? (_ => true);
+    }
+
     public SoftwareModelPreviewScene Build(IReadOnlyList<ModelPreviewCpuModel> models)
     {
         if (models.Count == 0)
@@ -34,6 +41,7 @@ public sealed class SoftwareModelPreviewSceneBuilder
             foreach (var mesh in model.Meshes)
             {
                 var color = GetMeshColor(mesh.MaterialPath, meshIndex++);
+                var materialShowsBackfaces = ShowsBackfaces(mesh.MaterialPath);
                 for (var index = 0; index < mesh.Indices.Length; index += 3)
                 {
                     var first = mesh.Vertices[mesh.Indices[index]];
@@ -51,7 +59,8 @@ public sealed class SoftwareModelPreviewSceneBuilder
                         third.UV,
                         Vector3.Normalize(normal),
                         color,
-                        mesh.MaterialPath));
+                        mesh.MaterialPath,
+                        materialShowsBackfaces));
                 }
             }
         }
@@ -72,6 +81,18 @@ public sealed class SoftwareModelPreviewSceneBuilder
         foreach (var character in materialPath)
             hash = unchecked((hash ^ character) * 16777619);
         return Palette[(int)((hash + (uint)meshIndex) % Palette.Length)];
+    }
+
+    private bool ShowsBackfaces(string materialPath)
+    {
+        try
+        {
+            return showBackfaces(materialPath);
+        }
+        catch
+        {
+            return true;
+        }
     }
 
     private static bool IsFinite(Vector3 value)

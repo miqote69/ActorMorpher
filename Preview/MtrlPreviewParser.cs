@@ -44,13 +44,14 @@ public sealed class MtrlPreviewParser
 
         var samplers = new List<MtrlPreviewSampler>();
         var constants = new List<MtrlPreviewConstant>();
+        uint shaderFlags = 0;
         if (reader.Remaining >= ShaderHeaderSize)
         {
             var shaderValueListSize = reader.UInt16();
             var shaderKeyCount = reader.UInt16();
             var constantCount = reader.UInt16();
             var samplerCount = reader.UInt16();
-            reader.Skip(4);
+            shaderFlags = reader.UInt32();
             reader.Skip(checked(shaderKeyCount * ShaderKeySize));
             var constantHeaders = new (uint Id, ushort Offset, ushort Size)[constantCount];
             for (var index = 0; index < constantHeaders.Length; ++index)
@@ -89,7 +90,10 @@ public sealed class MtrlPreviewParser
             constants,
             isDawntrail,
             dyeRows,
-            ReadDiffuseRows(dataSet));
+            ReadDiffuseRows(dataSet))
+        {
+            ShaderFlags = shaderFlags,
+        };
     }
 
     private static uint ReadTableFlags(byte[] data)
@@ -214,6 +218,9 @@ public sealed record MtrlPreviewData(
     IReadOnlyList<MtrlPreviewDyeRow> DyeRows,
     IReadOnlyList<Vector3> DiffuseRows)
 {
+    public uint ShaderFlags { get; init; }
+    public bool ShowBackfaces => (ShaderFlags & 0x1u) == 0;
+
     public string? FindTexture(uint samplerId, params string[] suffixes)
         => Samplers.FirstOrDefault(sampler => sampler.SamplerId == samplerId)?.TexturePath
             ?? TexturePaths.FirstOrDefault(path => suffixes.Any(suffix => path.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)));

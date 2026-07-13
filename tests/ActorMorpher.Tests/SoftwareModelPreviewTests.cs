@@ -73,6 +73,35 @@ public sealed class SoftwareModelPreviewTests
     }
 
     [Fact]
+    public void ProjectorCullsBackfacesForOneSidedMaterials()
+    {
+        var scene = new SoftwareModelPreviewSceneBuilder(_ => false).Build([Model([0, 2, 1])]);
+
+        var projected = SoftwareModelPreviewProjector.Project(
+            new(scene, 0, 0, 1),
+            Vector2.Zero,
+            new Vector2(300, 300));
+
+        Assert.Empty(projected);
+    }
+
+    [Fact]
+    public void ProjectorDrawsTwoSidedBackfacesBeforeFrontFaces()
+    {
+        var scene = new SoftwareModelPreviewSceneBuilder(_ => true).Build([Model([0, 1, 2, 0, 2, 1])]);
+
+        var projected = SoftwareModelPreviewProjector.Project(
+            new(scene, 0, 0, 1),
+            Vector2.Zero,
+            new Vector2(300, 300));
+
+        Assert.Equal(2, projected.Count);
+        Assert.True(projected[0].IsBackFacing);
+        Assert.False(projected[1].IsBackFacing);
+        Assert.Equal(projected[0].TextureTint, projected[1].TextureTint);
+    }
+
+    [Fact]
     public void ZoomIncreasesProjectedSize()
     {
         var scene = new SoftwareModelPreviewSceneBuilder().Build([Model([0, 1, 2])]);

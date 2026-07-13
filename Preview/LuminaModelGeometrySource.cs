@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Dalamud.Plugin.Services;
 using Lumina.Data.Files;
 using Lumina.Models.Materials;
@@ -9,6 +10,8 @@ public sealed class LuminaModelGeometrySource
     private readonly IDataManager dataManager;
     private readonly ModelPreviewMeshBuilder meshBuilder = new();
     private readonly MdlPreviewParser parser = new();
+    private readonly MtrlPreviewParser materialParser = new();
+    private readonly ConcurrentDictionary<string, bool> materialBackfaceCache = new(StringComparer.Ordinal);
     private readonly HumanPbdDeformer? humanDeformer;
 
     public LuminaModelGeometrySource(IDataManager dataManager)
@@ -45,6 +48,13 @@ public sealed class LuminaModelGeometrySource
     public bool CanDeform(ushort targetCode, ushort modelCode)
         => targetCode == modelCode
         || humanDeformer?.CanDeform(targetCode, modelCode) == true;
+
+    public bool ShowsBackfaces(string materialPath)
+    {
+        if (string.IsNullOrWhiteSpace(materialPath))
+            return true;
+        return materialBackfaceCache.GetOrAdd(materialPath, LoadShowsBackfaces);
+    }
 
     public ModelPreviewCpuModel? LoadCpuModel(
         string path,
@@ -83,6 +93,20 @@ public sealed class LuminaModelGeometrySource
         if (start < 0 || start + 6 > path.Length)
             return false;
         return ushort.TryParse(path.AsSpan(start + 2, 4), out code);
+    }
+
+    private bool LoadShowsBackfaces(string materialPath)
+    {
+        try
+        {
+            var data = dataManager.GetFile(materialPath)?.Data;
+            return data is null || materialParser.Parse(data).ShowBackfaces;
+        }
+        catch
+        {
+            // Unknown materials stay visible instead of losing geometry.
+            return true;
+        }
     }
 
     private byte ResolveMaterialVariant(string modelPath, byte requestedVariant)

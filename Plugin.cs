@@ -127,7 +127,8 @@ public sealed class Plugin : IDalamudPlugin
         var clientContext = new DalamudClientContext(ClientState);
         softwareModelPreviewBackend = new SoftwareModelPreviewBackend(
             GetModelPreviewAssets,
-            modelPreviewGeometrySource.LoadCpuModel);
+            modelPreviewGeometrySource.LoadCpuModel,
+            modelPreviewGeometrySource.ShowsBackfaces);
         modelPreview = new ModelPreviewController(
             Framework,
             softwareModelPreviewBackend,

@@ -38,6 +38,8 @@ Enable Full diagnostics before testing native appearance operations. Stop after 
 - [ ] Miqo'te female previews skip incompatible `c0701` equipment and retain Body, Legs, Hands, and Feet through valid fallbacks
 - [ ] Human face previews show only FacialFeature submeshes selected by the NPC customization bitmask
 - [ ] Human iris and facial-feature meshes use the NPC eye and feature colors instead of fallback mesh colors
+- [ ] Rotating EventNpc 1036911 / 2B does not reveal bright lining patches through the black outfit
+- [ ] Two-sided skirt and coat materials remain visible from their intended inner side
 - [ ] Left-drag rotates the static preview and mouse wheel changes zoom
 - [ ] Reset Camera restores the initial static preview framing
 - [ ] Missing or malformed optional Demihuman parts do not suppress valid parts
