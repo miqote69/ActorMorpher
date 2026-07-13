@@ -73,13 +73,15 @@ public sealed class LuminaModelGeometrySource
         var data = dataManager.GetFile(path)?.Data;
         if (data is null)
             return null;
+        var imc = ResolveImcVariant(path, requestedVariant);
         var parsed = parser.Parse(
             data,
-            path.Contains("/obj/face/", StringComparison.Ordinal) ? facialFeatures : null);
-        var materialVariant = ResolveMaterialVariant(path, requestedVariant);
+            path.Contains("/obj/face/", StringComparison.Ordinal) ? facialFeatures : null,
+            imc.AttributeMask,
+            ResolveTailState(path, humanTargetCode));
         IReadOnlyList<ModelPreviewSourceMesh> sources = parsed.Meshes.Select(mesh => mesh with
         {
-            MaterialPath = ResolveMaterialPath(mesh.MaterialPath, materialVariant, requestedVariant),
+            MaterialPath = ResolveMaterialPath(mesh.MaterialPath, imc.MaterialId, requestedVariant),
         }).ToArray();
         if (humanTargetCode != 0
             && TryGetHumanCode(path, out var modelCode)
@@ -127,23 +129,34 @@ public sealed class LuminaModelGeometrySource
         }
     }
 
-    private byte ResolveMaterialVariant(string modelPath, byte requestedVariant)
+    private ImcRenderInfo ResolveImcVariant(string modelPath, byte requestedVariant)
     {
-        if (requestedVariant == 0 || !TryGetImc(modelPath, out var imcPath, out var partIndex))
-            return requestedVariant == 0 ? (byte)1 : requestedVariant;
+        requestedVariant = requestedVariant == 0 ? (byte)1 : requestedVariant;
+        if (!TryGetImc(modelPath, out var imcPath, out var partIndex))
+            return new ImcRenderInfo(requestedVariant, null);
         try
         {
             var imc = dataManager.GetFile<ImcFile>(imcPath);
             var variantIndex = requestedVariant - 1;
             if (imc is null || variantIndex >= imc.Count || partIndex >= imc.GetParts().Length)
-                return requestedVariant;
-            var materialId = imc.GetVariant(partIndex, variantIndex).MaterialId;
-            return materialId == 0 ? (byte)1 : materialId;
+                return new ImcRenderInfo(requestedVariant, null);
+            var variant = imc.GetVariant(partIndex, variantIndex);
+            return new ImcRenderInfo(
+                variant.MaterialId == 0 ? (byte)1 : variant.MaterialId,
+                variant.AttributeMask);
         }
         catch
         {
-            return requestedVariant;
+            return new ImcRenderInfo(requestedVariant, null);
         }
+    }
+
+    private static bool? ResolveTailState(string modelPath, ushort humanTargetCode)
+    {
+        if (humanTargetCode == 0 && !TryGetHumanCode(modelPath, out humanTargetCode))
+            return null;
+        var genderRace = humanTargetCode / 100;
+        return genderRace is 7 or 8 or 13 or 14 or 15 or 16;
     }
 
     private string ResolveMaterialPath(string materialPath, byte materialVariant, byte requestedVariant)
@@ -199,4 +212,6 @@ public sealed class LuminaModelGeometrySource
         bool ShowBackfaces,
         bool IsBodySkin,
         bool IsLowerBodyEquipment);
+
+    private readonly record struct ImcRenderInfo(byte MaterialId, ushort? AttributeMask);
 }

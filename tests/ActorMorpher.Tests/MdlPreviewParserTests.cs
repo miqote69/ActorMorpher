@@ -65,6 +65,30 @@ public sealed class MdlPreviewParserTests
         Assert.Equal(new ushort[] { 0, 2, 3 }, filtered.Indices);
     }
 
+    [Fact]
+    public void FiltersEquipmentVariantSubmeshesByImcAttributeMask()
+    {
+        var data = CreateAttributedMdl(["atr_tv_a", "atr_tv_b"], [1u, 2u]);
+
+        var variantB = Assert.Single(new MdlPreviewParser().Parse(
+            data,
+            imcAttributeMask: 0x0002).Meshes);
+
+        Assert.Equal(new ushort[] { 0, 2, 3 }, variantB.Indices);
+    }
+
+    [Fact]
+    public void FiltersTailSpecificSubmeshesByTargetRace()
+    {
+        var data = CreateAttributedMdl(["atr_tlh", "atr_tls", "atr_kod"], [1u, 6u]);
+
+        var noTail = Assert.Single(new MdlPreviewParser().Parse(data, hasTail: false).Meshes);
+        var withTail = Assert.Single(new MdlPreviewParser().Parse(data, hasTail: true).Meshes);
+
+        Assert.Equal(new ushort[] { 0, 1, 2 }, noTail.Indices);
+        Assert.Equal(new ushort[] { 0, 2, 3 }, withTail.Indices);
+    }
+
     private static byte[] CreateTriangleMdl(bool addScalarPosition = false)
     {
         const int declarationOffset = 0x44;
@@ -239,21 +263,25 @@ public sealed class MdlPreviewParserTests
     }
 
     private static byte[] CreateFaceVariantMdl()
+        => CreateAttributedMdl(["atr_fv_a", "atr_fv_e"], [1u, 2u]);
+
+    private static byte[] CreateAttributedMdl(string[] attributes, uint[] submeshMasks)
     {
+        Assert.Equal(2, submeshMasks.Length);
+        var strings = Encoding.UTF8.GetBytes(string.Join('\0', attributes) + '\0');
         const int declarationOffset = 0x44;
         const int declarationSize = 17 * 8;
         const int stringHeaderSize = 8;
-        const int stringSize = 18;
         const int modelHeaderSize = 0x38;
         const int lodsSize = 3 * 0x3C;
         const int meshSize = 0x24;
-        const int attributeOffsetsSize = 2 * 4;
+        var attributeOffsetsSize = attributes.Length * 4;
         const int submeshSize = 2 * 16;
         const int vertexSize = 4 * 12;
         const int indexSize = 6 * 2;
-        const int vertexOffset = declarationOffset + declarationSize + stringHeaderSize + stringSize
+        var vertexOffset = declarationOffset + declarationSize + stringHeaderSize + strings.Length
             + modelHeaderSize + lodsSize + meshSize + attributeOffsetsSize + submeshSize;
-        const int indexOffset = vertexOffset + vertexSize;
+        var indexOffset = vertexOffset + vertexSize;
         var data = new byte[indexOffset + indexSize];
         var writer = new SpanWriter(data);
 
@@ -276,14 +304,14 @@ public sealed class MdlPreviewParserTests
             writer.Skip(7);
         }
 
-        writer.UInt16(2);
+        writer.UInt16(attributes.Length);
         writer.Skip(2);
-        writer.UInt32(stringSize);
-        writer.Bytes(Encoding.UTF8.GetBytes("atr_fv_a\0atr_fv_e\0"));
+        writer.UInt32(strings.Length);
+        writer.Bytes(strings);
 
         writer.Skip(4);
         writer.UInt16(1);
-        writer.UInt16(2);
+        writer.UInt16(attributes.Length);
         writer.UInt16(2);
         writer.Skip(modelHeaderSize - 10);
 
@@ -306,15 +334,19 @@ public sealed class MdlPreviewParserTests
         writer.Byte(0);
         writer.Byte(1);
 
-        writer.UInt32(0);
-        writer.UInt32(9);
+        var stringOffset = 0;
+        foreach (var attribute in attributes)
+        {
+            writer.UInt32(stringOffset);
+            stringOffset += Encoding.UTF8.GetByteCount(attribute) + 1;
+        }
         writer.UInt32(0);
         writer.UInt32(3);
-        writer.UInt32(1);
+        writer.UInt32(checked((int)submeshMasks[0]));
         writer.Skip(4);
         writer.UInt32(3);
         writer.UInt32(3);
-        writer.UInt32(2);
+        writer.UInt32(checked((int)submeshMasks[1]));
         writer.Skip(4);
 
         writer.Single(0); writer.Single(0); writer.Single(0);

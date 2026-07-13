@@ -38,10 +38,10 @@ Enable Full diagnostics before testing native appearance operations. Stop after 
 - [ ] Miqo'te female previews skip incompatible `c0701` equipment and retain Body, Legs, Hands, and Feet through valid fallbacks
 - [ ] Human face previews show only FacialFeature submeshes selected by the NPC customization bitmask
 - [ ] Human iris and facial-feature meshes use the NPC eye and feature colors instead of fallback mesh colors
-- [ ] Rotating EventNpc 1036911 / 2B does not reveal bright lining patches through the black outfit
+- [ ] EventNpc 1036911 / 2B and 1031836 / 2P exclude the IMC-disabled `atr_tv_a` body submesh
 - [ ] EventNpc 1033925 / 2B keeps body skin behind the bodice while exposed skin remains visible
 - [ ] EventNpc 1031836 / 2P keeps lower-body underwear behind the white skirt while stockings remain visible
-- [ ] EventNpc 1025107 / Yotsuyu keeps lower-body equipment behind the robe at the waist
+- [ ] EventNpc 1025107 / Yotsuyu excludes the `atr_tls` tail insert while keeping the robe and valid lower-body geometry
 - [ ] BattleNpc 8764 / Yotsuyu cloth shades smoothly without moving triangular facets
 - [ ] Two-sided skirt and coat materials remain visible from their intended inner side
 - [ ] Left-drag rotates the static preview and mouse wheel changes zoom

@@ -16,7 +16,11 @@ public sealed class MdlPreviewParser
     private const int ExtraLodSize = 0x28;
     private const int MeshSize = 0x24;
 
-    public MdlPreviewParseResult Parse(byte[] data, byte? facialFeatures = null)
+    public MdlPreviewParseResult Parse(
+        byte[] data,
+        byte? facialFeatures = null,
+        ushort? imcAttributeMask = null,
+        bool? hasTail = null)
     {
         ArgumentNullException.ThrowIfNull(data);
         if (data.Length < FileHeaderSize)
@@ -161,7 +165,9 @@ public sealed class MdlPreviewParser
                 mesh,
                 submeshes,
                 attributes,
-                facialFeatures);
+                facialFeatures,
+                imcAttributeMask,
+                hasTail);
             if (indices.Length == 0)
                 continue;
             var material = mesh.MaterialIndex < materials.Length ? materials[mesh.MaterialIndex] : string.Empty;
@@ -250,7 +256,9 @@ public sealed class MdlPreviewParser
         Mesh mesh,
         IReadOnlyList<Submesh> submeshes,
         IReadOnlyList<string> attributes,
-        byte? facialFeatures)
+        byte? facialFeatures,
+        ushort? imcAttributeMask,
+        bool? hasTail)
     {
         var count = checked((int)mesh.IndexCount);
         var start = checked((long)bufferOffset + (long)mesh.StartIndex * sizeof(ushort));
@@ -262,7 +270,7 @@ public sealed class MdlPreviewParser
         var indices = new ushort[count];
         for (var index = 0; index < count; ++index)
             indices[index] = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(checked((int)start + index * 2)));
-        if (facialFeatures is null || mesh.SubmeshCount == 0)
+        if ((facialFeatures is null && imcAttributeMask is null && hasTail is null) || mesh.SubmeshCount == 0)
             return indices;
         if (mesh.SubmeshIndex > submeshes.Count - mesh.SubmeshCount)
             throw new InvalidDataException("MDL mesh submesh range is invalid.");
@@ -272,7 +280,12 @@ public sealed class MdlPreviewParser
         for (var submeshIndex = mesh.SubmeshIndex; submeshIndex < endSubmesh; ++submeshIndex)
         {
             var submesh = submeshes[submeshIndex];
-            if (!IncludesFacialFeature(submesh.AttributeMask, attributes, facialFeatures.Value))
+            if (!IncludesEnabledAttributes(
+                    submesh.AttributeMask,
+                    attributes,
+                    facialFeatures,
+                    imcAttributeMask,
+                    hasTail))
                 continue;
             if (submesh.IndexOffset < mesh.StartIndex)
                 throw new InvalidDataException("MDL submesh index range precedes its mesh.");
@@ -285,24 +298,56 @@ public sealed class MdlPreviewParser
         return selected.ToArray();
     }
 
-    private static bool IncludesFacialFeature(uint attributeMask, IReadOnlyList<string> attributes, byte facialFeatures)
+    private static bool IncludesEnabledAttributes(
+        uint attributeMask,
+        IReadOnlyList<string> attributes,
+        byte? facialFeatures,
+        ushort? imcAttributeMask,
+        bool? hasTail)
     {
         var hasFacialVariant = false;
+        var includesFacialVariant = false;
         for (var index = 0; index < Math.Min(attributes.Count, 32); ++index)
         {
             if ((attributeMask & (1u << index)) == 0)
                 continue;
             var attribute = attributes[index];
-            if (attribute.Length != 8
-                || !attribute.StartsWith("atr_fv_", StringComparison.Ordinal)
-                || attribute[7] is < 'a' or > 'g')
+            if (facialFeatures is not null
+                && attribute.Length == 8
+                && attribute.StartsWith("atr_fv_", StringComparison.Ordinal)
+                && attribute[7] is >= 'a' and <= 'g')
+            {
+                hasFacialVariant = true;
+                var feature = 1 << (attribute[7] - 'a');
+                includesFacialVariant |= (facialFeatures.Value & feature) != 0;
                 continue;
-            hasFacialVariant = true;
-            var feature = 1 << (attribute[7] - 'a');
-            if ((facialFeatures & feature) != 0)
-                return true;
+            }
+            if (imcAttributeMask is not null
+                && TryGetImcAttributeBit(attribute, out var imcBit)
+                && (imcAttributeMask.Value & (1 << imcBit)) == 0)
+                return false;
+            if (hasTail is not null
+                && (attribute == "atr_tls" && !hasTail.Value
+                    || attribute == "atr_tlh" && hasTail.Value))
+                return false;
         }
-        return !hasFacialVariant;
+        return !hasFacialVariant || includesFacialVariant;
+    }
+
+    private static bool TryGetImcAttributeBit(string attribute, out int bit)
+    {
+        bit = 0;
+        if (!attribute.StartsWith("atr_", StringComparison.Ordinal)
+            || attribute.Length < 7
+            || attribute[^2] != '_'
+            || attribute[^1] is < 'a' or > 'j')
+            return false;
+        var category = attribute[4..^2];
+        if (category is not ("mv" or "tv" or "gv" or "dv" or "sv"
+            or "ev" or "nv" or "wv" or "rv" or "bv" or "parts" or "hv"))
+            return false;
+        bit = attribute[^1] - 'a';
+        return true;
     }
 
     private static Vector4 ReadVector(ReadOnlySpan<byte> source, byte type)
