@@ -110,6 +110,7 @@ public sealed class HumanPbdDeformer
             vertices[index] = vertex with
             {
                 Position = DeformPosition(vertex.Position, vertex.BoneWeights, vertex.BoneIndices, source.Bones, matrices),
+                Normal = null,
             };
         }
         return source with { Vertices = vertices };

@@ -128,7 +128,8 @@ public sealed class Plugin : IDalamudPlugin
         softwareModelPreviewBackend = new SoftwareModelPreviewBackend(
             GetModelPreviewAssets,
             modelPreviewGeometrySource.LoadCpuModel,
-            modelPreviewGeometrySource.ShowsBackfaces);
+            modelPreviewGeometrySource.ShowsBackfaces,
+            modelPreviewGeometrySource.IsBodySkin);
         modelPreview = new ModelPreviewController(
             Framework,
             softwareModelPreviewBackend,

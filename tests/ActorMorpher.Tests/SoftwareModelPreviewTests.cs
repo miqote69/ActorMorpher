@@ -98,7 +98,69 @@ public sealed class SoftwareModelPreviewTests
         Assert.Equal(2, projected.Count);
         Assert.True(projected[0].IsBackFacing);
         Assert.False(projected[1].IsBackFacing);
-        Assert.Equal(projected[0].TextureTint, projected[1].TextureTint);
+        Assert.Equal(projected[0].FirstTextureTint, projected[1].FirstTextureTint);
+    }
+
+    [Fact]
+    public void ProjectorUsesVertexNormalsForSmoothLighting()
+    {
+        var vertices = new[]
+        {
+            Vertex(-1, -1, 0),
+            Vertex(1, -1, 0),
+            Vertex(1, 1, 0),
+            Vertex(-1, 1, 1),
+        };
+        var bounds = new ModelPreviewBounds(new Vector3(-1, -1, 0), new Vector3(1, 1, 1));
+        var mesh = new ModelPreviewCpuMesh(0, "cloth", vertices, [0, 1, 2, 0, 2, 3], bounds);
+        var scene = new SoftwareModelPreviewSceneBuilder(_ => false).Build(
+            [new ModelPreviewCpuModel([mesh], Array.Empty<ModelPreviewMeshIssue>(), bounds)]);
+
+        var projected = SoftwareModelPreviewProjector.Project(
+            new(scene, 0, 0, 1),
+            Vector2.Zero,
+            new Vector2(300, 300));
+
+        var tints = projected.SelectMany(static triangle => new[]
+        {
+            triangle.FirstTextureTint,
+            triangle.SecondTextureTint,
+            triangle.ThirdTextureTint,
+        });
+        Assert.Single(tints.Distinct());
+    }
+
+    [Fact]
+    public void ProjectorOffsetsBodySkinBehindNearbyClothing()
+    {
+        var skinVertices = new[]
+        {
+            Vertex(-1, -1, 0.01f),
+            Vertex(1, -1, 0.01f),
+            Vertex(1, 1, 0.01f),
+        };
+        var clothVertices = new[]
+        {
+            Vertex(-1, -1, 0),
+            Vertex(1, -1, 0),
+            Vertex(1, 1, 0),
+        };
+        var bounds = new ModelPreviewBounds(new Vector3(-1, -1, 0), new Vector3(1, 1, 0.01f));
+        var skin = new ModelPreviewCpuMesh(0, "body-skin", skinVertices, [0, 1, 2], bounds);
+        var cloth = new ModelPreviewCpuMesh(1, "cloth", clothVertices, [0, 1, 2], bounds);
+        var scene = new SoftwareModelPreviewSceneBuilder(
+            _ => false,
+            path => path == "body-skin").Build(
+            [new ModelPreviewCpuModel([skin, cloth], Array.Empty<ModelPreviewMeshIssue>(), bounds)]);
+
+        var projected = SoftwareModelPreviewProjector.Project(
+            new(scene, 0, 0, 1),
+            Vector2.Zero,
+            new Vector2(300, 300));
+
+        Assert.Equal(2, projected.Count);
+        Assert.True(projected[0].IsBodySkin);
+        Assert.False(projected[1].IsBodySkin);
     }
 
     [Fact]

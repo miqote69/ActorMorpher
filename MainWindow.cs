@@ -972,11 +972,10 @@ public sealed class MainWindow : Window, IDisposable
                 drawList.PushTextureID(texture);
                 activeTexture = texture;
             }
-            var color = ImGui.GetColorU32(triangle.TextureTint);
             drawList.PrimReserve(3, 3);
-            drawList.PrimVtx(triangle.First, triangle.FirstUv, color);
-            drawList.PrimVtx(triangle.Second, triangle.SecondUv, color);
-            drawList.PrimVtx(triangle.Third, triangle.ThirdUv, color);
+            drawList.PrimVtx(triangle.First, triangle.FirstUv, ImGui.GetColorU32(triangle.FirstTextureTint));
+            drawList.PrimVtx(triangle.Second, triangle.SecondUv, ImGui.GetColorU32(triangle.SecondTextureTint));
+            drawList.PrimVtx(triangle.Third, triangle.ThirdUv, ImGui.GetColorU32(triangle.ThirdTextureTint));
         }
         if (activeTexture != default)
             drawList.PopTextureID();

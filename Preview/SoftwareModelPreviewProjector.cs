@@ -4,6 +4,7 @@ namespace ActorMorpher.Preview;
 
 public static class SoftwareModelPreviewProjector
 {
+    private const float BodySkinDepthOffsetFactor = 0.025f;
     private static readonly Vector3 LightDirection = Vector3.Normalize(new Vector3(-0.35f, 0.55f, 0.75f));
 
     public static IReadOnlyList<SoftwareModelPreviewProjectedTriangle> Project(
@@ -29,12 +30,14 @@ public static class SoftwareModelPreviewProjector
             var first = Vector3.Transform(triangle.First - scene.Bounds.Center, rotation);
             var second = Vector3.Transform(triangle.Second - scene.Bounds.Center, rotation);
             var third = Vector3.Transform(triangle.Third - scene.Bounds.Center, rotation);
-            var normal = Vector3.TransformNormal(triangle.Normal, rotation);
-            var isBackFacing = normal.Z < 0.0f;
+            var faceNormal = Vector3.TransformNormal(triangle.FaceNormal, rotation);
+            var isBackFacing = faceNormal.Z < 0.0f;
             if (isBackFacing && !triangle.ShowBackfaces)
                 continue;
-            var lightingNormal = isBackFacing ? -normal : normal;
-            var brightness = 0.28f + 0.72f * MathF.Max(0.0f, Vector3.Dot(lightingNormal, LightDirection));
+            var firstBrightness = GetBrightness(triangle.FirstNormal, faceNormal, rotation, isBackFacing);
+            var secondBrightness = GetBrightness(triangle.SecondNormal, faceNormal, rotation, isBackFacing);
+            var thirdBrightness = GetBrightness(triangle.ThirdNormal, faceNormal, rotation, isBackFacing);
+            var brightness = (firstBrightness + secondBrightness + thirdBrightness) / 3.0f;
             var color = new Vector4(
                 Math.Clamp(triangle.Color.X * brightness, 0.0f, 1.0f),
                 Math.Clamp(triangle.Color.Y * brightness, 0.0f, 1.0f),
@@ -47,11 +50,15 @@ public static class SoftwareModelPreviewProjector
                 triangle.FirstUv,
                 triangle.SecondUv,
                 triangle.ThirdUv,
-                (first.Z + second.Z + third.Z) / 3.0f,
+                (first.Z + second.Z + third.Z) / 3.0f
+                    - (triangle.IsBodySkin ? maximumExtent * BodySkinDepthOffsetFactor : 0.0f),
                 color,
-                new Vector4(brightness, brightness, brightness, 1.0f),
+                Tint(firstBrightness),
+                Tint(secondBrightness),
+                Tint(thirdBrightness),
                 triangle.MaterialPath,
-                isBackFacing));
+                isBackFacing,
+                triangle.IsBodySkin));
         }
         projected.Sort(static (left, right) =>
         {
@@ -63,4 +70,21 @@ public static class SoftwareModelPreviewProjector
 
     private static Vector2 ToScreen(Vector3 value, Vector2 center, float scale)
         => new(center.X + value.X * scale, center.Y - value.Y * scale);
+
+    private static float GetBrightness(
+        Vector3 sourceNormal,
+        Vector3 faceNormal,
+        Matrix4x4 rotation,
+        bool isBackFacing)
+    {
+        var normal = Vector3.TransformNormal(sourceNormal, rotation);
+        if (Vector3.Dot(normal, faceNormal) < 0.0f)
+            normal = -normal;
+        if (isBackFacing)
+            normal = -normal;
+        return 0.28f + 0.72f * MathF.Max(0.0f, Vector3.Dot(normal, LightDirection));
+    }
+
+    private static Vector4 Tint(float brightness)
+        => new(brightness, brightness, brightness, 1.0f);
 }

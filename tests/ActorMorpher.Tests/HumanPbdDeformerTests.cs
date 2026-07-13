@@ -14,7 +14,7 @@ public sealed class HumanPbdDeformerTests
         var deformer = new HumanPbdDeformer(CreatePbd());
         var vertex = new ModelPreviewSourceVertex(
             new Vector4(1, 1, 1, 1),
-            null,
+            Vector3.UnitZ,
             null,
             null,
             Vector4.UnitX,
@@ -25,6 +25,7 @@ public sealed class HumanPbdDeformerTests
 
         Assert.True(result);
         Assert.Equal(new Vector4(1, 3, 1, 1), Assert.Single(meshes).Vertices[0].Position);
+        Assert.Null(Assert.Single(meshes).Vertices[0].Normal);
     }
 
     [Fact]

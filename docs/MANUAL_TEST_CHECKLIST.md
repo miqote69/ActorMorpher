@@ -39,6 +39,8 @@ Enable Full diagnostics before testing native appearance operations. Stop after 
 - [ ] Human face previews show only FacialFeature submeshes selected by the NPC customization bitmask
 - [ ] Human iris and facial-feature meshes use the NPC eye and feature colors instead of fallback mesh colors
 - [ ] Rotating EventNpc 1036911 / 2B does not reveal bright lining patches through the black outfit
+- [ ] EventNpc 1033925 / 2B keeps body skin behind the bodice while exposed skin remains visible
+- [ ] BattleNpc 8764 / Yotsuyu cloth shades smoothly without moving triangular facets
 - [ ] Two-sided skirt and coat materials remain visible from their intended inner side
 - [ ] Left-drag rotates the static preview and mouse wheel changes zoom
 - [ ] Reset Camera restores the initial static preview framing

@@ -9,10 +9,14 @@ public readonly record struct SoftwareModelPreviewTriangle(
     Vector2 FirstUv,
     Vector2 SecondUv,
     Vector2 ThirdUv,
-    Vector3 Normal,
+    Vector3 FirstNormal,
+    Vector3 SecondNormal,
+    Vector3 ThirdNormal,
+    Vector3 FaceNormal,
     Vector4 Color,
     string MaterialPath,
-    bool ShowBackfaces);
+    bool ShowBackfaces,
+    bool IsBodySkin);
 
 public sealed record SoftwareModelPreviewScene(
     IReadOnlyList<SoftwareModelPreviewTriangle> Triangles,
@@ -34,6 +38,9 @@ public readonly record struct SoftwareModelPreviewProjectedTriangle(
     Vector2 ThirdUv,
     float Depth,
     Vector4 Color,
-    Vector4 TextureTint,
+    Vector4 FirstTextureTint,
+    Vector4 SecondTextureTint,
+    Vector4 ThirdTextureTint,
     string MaterialPath,
-    bool IsBackFacing);
+    bool IsBackFacing,
+    bool IsBodySkin);

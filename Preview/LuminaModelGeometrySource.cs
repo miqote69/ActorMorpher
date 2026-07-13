@@ -11,7 +11,7 @@ public sealed class LuminaModelGeometrySource
     private readonly ModelPreviewMeshBuilder meshBuilder = new();
     private readonly MdlPreviewParser parser = new();
     private readonly MtrlPreviewParser materialParser = new();
-    private readonly ConcurrentDictionary<string, bool> materialBackfaceCache = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, MaterialRenderInfo> materialRenderCache = new(StringComparer.Ordinal);
     private readonly HumanPbdDeformer? humanDeformer;
 
     public LuminaModelGeometrySource(IDataManager dataManager)
@@ -53,8 +53,12 @@ public sealed class LuminaModelGeometrySource
     {
         if (string.IsNullOrWhiteSpace(materialPath))
             return true;
-        return materialBackfaceCache.GetOrAdd(materialPath, LoadShowsBackfaces);
+        return GetMaterialRenderInfo(materialPath).ShowBackfaces;
     }
+
+    public bool IsBodySkin(string materialPath)
+        => !string.IsNullOrWhiteSpace(materialPath)
+        && GetMaterialRenderInfo(materialPath).IsBodySkin;
 
     public ModelPreviewCpuModel? LoadCpuModel(
         string path,
@@ -95,17 +99,25 @@ public sealed class LuminaModelGeometrySource
         return ushort.TryParse(path.AsSpan(start + 2, 4), out code);
     }
 
-    private bool LoadShowsBackfaces(string materialPath)
+    private MaterialRenderInfo GetMaterialRenderInfo(string materialPath)
+        => materialRenderCache.GetOrAdd(materialPath, LoadMaterialRenderInfo);
+
+    private MaterialRenderInfo LoadMaterialRenderInfo(string materialPath)
     {
         try
         {
             var data = dataManager.GetFile(materialPath)?.Data;
-            return data is null || materialParser.Parse(data).ShowBackfaces;
+            if (data is null)
+                return MaterialRenderInfo.Unknown;
+            var material = materialParser.Parse(data);
+            var isBodySkin = materialPath.Contains("/obj/body/", StringComparison.Ordinal)
+                && material.ShaderPackage.EndsWith("skin.shpk", StringComparison.OrdinalIgnoreCase);
+            return new MaterialRenderInfo(material.ShowBackfaces, isBodySkin);
         }
         catch
         {
             // Unknown materials stay visible instead of losing geometry.
-            return true;
+            return MaterialRenderInfo.Unknown;
         }
     }
 
@@ -175,5 +187,10 @@ public sealed class LuminaModelGeometrySource
             _ => 0,
         };
         return true;
+    }
+
+    private readonly record struct MaterialRenderInfo(bool ShowBackfaces, bool IsBodySkin)
+    {
+        public static MaterialRenderInfo Unknown => new(true, false);
     }
 }

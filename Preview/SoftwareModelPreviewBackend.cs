@@ -16,11 +16,12 @@ public sealed class SoftwareModelPreviewBackend : IModelPreviewBackend
     public SoftwareModelPreviewBackend(
         Func<ModelSearchEntry, ModelPreviewAssetReport> resolveAssets,
         Func<string, byte, ushort, byte, ModelPreviewCpuModel?> loadModel,
-        Func<string, bool>? showBackfaces = null)
+        Func<string, bool>? showBackfaces = null,
+        Func<string, bool>? isBodySkin = null)
     {
         this.resolveAssets = resolveAssets;
         this.loadModel = loadModel;
-        sceneBuilder = new SoftwareModelPreviewSceneBuilder(showBackfaces);
+        sceneBuilder = new SoftwareModelPreviewSceneBuilder(showBackfaces, isBodySkin);
     }
 
     public ModelPreviewSnapshot Snapshot { get; private set; }

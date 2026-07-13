@@ -18,10 +18,14 @@ public sealed class SoftwareModelPreviewSceneBuilder
     ];
 
     private readonly Func<string, bool> showBackfaces;
+    private readonly Func<string, bool> isBodySkin;
 
-    public SoftwareModelPreviewSceneBuilder(Func<string, bool>? showBackfaces = null)
+    public SoftwareModelPreviewSceneBuilder(
+        Func<string, bool>? showBackfaces = null,
+        Func<string, bool>? isBodySkin = null)
     {
         this.showBackfaces = showBackfaces ?? (_ => true);
+        this.isBodySkin = isBodySkin ?? (_ => false);
     }
 
     public SoftwareModelPreviewScene Build(IReadOnlyList<ModelPreviewCpuModel> models)
@@ -42,6 +46,7 @@ public sealed class SoftwareModelPreviewSceneBuilder
             {
                 var color = GetMeshColor(mesh.MaterialPath, meshIndex++);
                 var materialShowsBackfaces = ShowsBackfaces(mesh.MaterialPath);
+                var materialIsBodySkin = IsBodySkin(mesh.MaterialPath);
                 for (var index = 0; index < mesh.Indices.Length; index += 3)
                 {
                     var first = mesh.Vertices[mesh.Indices[index]];
@@ -57,10 +62,14 @@ public sealed class SoftwareModelPreviewSceneBuilder
                         first.UV,
                         second.UV,
                         third.UV,
+                        first.Normal,
+                        second.Normal,
+                        third.Normal,
                         Vector3.Normalize(normal),
                         color,
                         mesh.MaterialPath,
-                        materialShowsBackfaces));
+                        materialShowsBackfaces,
+                        materialIsBodySkin));
                 }
             }
         }
@@ -92,6 +101,18 @@ public sealed class SoftwareModelPreviewSceneBuilder
         catch
         {
             return true;
+        }
+    }
+
+    private bool IsBodySkin(string materialPath)
+    {
+        try
+        {
+            return isBodySkin(materialPath);
+        }
+        catch
+        {
+            return false;
         }
     }
 
