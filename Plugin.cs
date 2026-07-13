@@ -110,11 +110,14 @@ public sealed class Plugin : IDalamudPlugin
             isDev);
         diagnosticController.Start();
         humanModelClassifier = new HumanModelClassifier(DataManager);
-        modelPreviewAssetResolver = new ModelPreviewAssetResolver(DataManager.FileExists, humanPreviewDataBuilder);
+        modelPreviewGeometrySource = new LuminaModelGeometrySource(DataManager);
+        modelPreviewAssetResolver = new ModelPreviewAssetResolver(
+            DataManager.FileExists,
+            humanPreviewDataBuilder,
+            modelPreviewGeometrySource.CanDeform);
         modelPreviewSupportResolver = new ModelPreviewSupportResolver(
             humanPreviewDataBuilder,
             ModelPreviewBackendCapabilities.SoftwarePreview);
-        modelPreviewGeometrySource = new LuminaModelGeometrySource(DataManager);
         modelPreviewGeometryInspector = new ModelPreviewGeometryInspector(modelPreviewGeometrySource.Load);
         modelPreviewTextureCache = new ModelPreviewTextureCache(
             TextureProvider,

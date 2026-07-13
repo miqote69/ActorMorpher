@@ -54,6 +54,11 @@ public sealed class HumanPbdDeformer
         return true;
     }
 
+    public bool CanDeform(ushort targetCode, ushort modelCode)
+        => targetCode != 0
+        && modelCode != 0
+        && (targetCode == modelCode || TryBuildMatrices(targetCode, modelCode, out _));
+
     private bool TryBuildMatrices(
         ushort targetCode,
         ushort modelCode,

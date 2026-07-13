@@ -324,7 +324,10 @@ public sealed class ModelPreviewAssetResolverTests
             "chara/equipment/e0001/model/c0201e0001_sho.mdl",
         };
 
-        var report = new ModelPreviewAssetResolver(present.Contains).Resolve(entry);
+        var report = new ModelPreviewAssetResolver(
+            present.Contains,
+            canDeform: (target, source) => target == source || target == 1201 && source is 1101 or 101)
+            .Resolve(entry);
 
         Assert.Equal((ushort)1201, report.HumanTargetCode);
         Assert.Contains(report.Assets, asset => asset.Label == "Hands"
@@ -333,6 +336,54 @@ public sealed class ModelPreviewAssetResolverTests
         Assert.Contains(report.Assets, asset => asset.Label == "Feet"
             && asset.Path == "chara/equipment/e0001/model/c1101e0001_sho.mdl"
             && asset.IsPresent);
+    }
+
+    [Fact]
+    public void MiqoteFemaleSkipsExistingMaleLegsWhenPbdCannotDeformThem()
+    {
+        var customize = new byte[26];
+        customize[0] = 4;
+        customize[1] = 1;
+        customize[2] = (byte)NpcAge.Normal;
+        customize[4] = 8;
+        customize[5] = 1;
+        customize[6] = 1;
+        var equipment = new ulong[10];
+        equipment[(int)OutfitSlot.Body] = 51UL | (2UL << 16);
+        equipment[(int)OutfitSlot.Legs] = 51UL | (2UL << 16);
+        equipment[(int)OutfitSlot.Feet] = 1UL | (3UL << 16);
+        var appearance = new HumanAppearance(customize, equipment, 0, 0, false);
+        var modelAppearance = AppearanceData.Create(
+            0, ModelCategory.Human, 1008130, AppearanceCompleteness.Complete, customize, equipment);
+        var entry = Entry(ModelCategory.Human, 1, 0, 1) with
+        {
+            RowId = 0,
+            Source = ModelSource.EventNpc,
+            SourceId = 1008130,
+            HumanAppearance = appearance,
+            ModelAppearance = modelAppearance,
+        };
+        var present = new HashSet<string>
+        {
+            "chara/human/c0801/obj/face/f0001/model/c0801f0001_fac.mdl",
+            "chara/human/c0801/obj/hair/h0001/model/c0801h0001_hir.mdl",
+            "chara/equipment/e0051/model/c0201e0051_top.mdl",
+            "chara/equipment/e0000/model/c0201e0000_glv.mdl",
+            "chara/equipment/e0051/model/c0701e0051_dwn.mdl",
+            "chara/equipment/e0051/model/c0201e0051_dwn.mdl",
+            "chara/equipment/e0001/model/c0201e0001_sho.mdl",
+        };
+
+        var report = new ModelPreviewAssetResolver(
+            present.Contains,
+            canDeform: (target, source) => target == source || target == 801 && source is 201 or 101)
+            .Resolve(entry);
+
+        Assert.Equal((ushort)801, report.HumanTargetCode);
+        Assert.Contains(report.Assets, asset => asset.Label == "Legs"
+            && asset.Path == "chara/equipment/e0051/model/c0201e0051_dwn.mdl"
+            && asset.IsPresent);
+        Assert.DoesNotContain(report.Assets, asset => asset.Path == "chara/equipment/e0051/model/c0701e0051_dwn.mdl");
     }
 
     [Fact]

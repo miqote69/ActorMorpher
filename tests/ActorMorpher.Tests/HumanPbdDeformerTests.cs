@@ -48,6 +48,17 @@ public sealed class HumanPbdDeformerTests
         Assert.False(deformer.TryDeform(9999, 101, [], out _));
     }
 
+    [Fact]
+    public void ReportsOnlyReachablePbdPathsAsCompatible()
+    {
+        var deformer = new HumanPbdDeformer(CreatePbd());
+
+        Assert.True(deformer.CanDeform(201, 101));
+        Assert.True(deformer.CanDeform(201, 201));
+        Assert.False(deformer.CanDeform(101, 201));
+        Assert.False(deformer.CanDeform(9999, 101));
+    }
+
     private static byte[] CreatePbd()
     {
         using var stream = new MemoryStream();

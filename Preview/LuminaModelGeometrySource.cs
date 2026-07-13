@@ -42,6 +42,10 @@ public sealed class LuminaModelGeometrySource
     public ModelPreviewCpuModel? LoadCpuModel(string path)
         => LoadCpuModel(path, 1, 0, 0);
 
+    public bool CanDeform(ushort targetCode, ushort modelCode)
+        => targetCode == modelCode
+        || humanDeformer?.CanDeform(targetCode, modelCode) == true;
+
     public ModelPreviewCpuModel? LoadCpuModel(
         string path,
         byte requestedVariant,

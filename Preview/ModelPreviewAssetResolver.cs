@@ -27,11 +27,16 @@ public sealed class ModelPreviewAssetResolver
 
     private readonly Func<string, bool> fileExists;
     private readonly HumanPreviewDataBuilder humanBuilder;
+    private readonly Func<ushort, ushort, bool> canDeform;
 
-    public ModelPreviewAssetResolver(Func<string, bool> fileExists, HumanPreviewDataBuilder? humanBuilder = null)
+    public ModelPreviewAssetResolver(
+        Func<string, bool> fileExists,
+        HumanPreviewDataBuilder? humanBuilder = null,
+        Func<ushort, ushort, bool>? canDeform = null)
     {
         this.fileExists = fileExists;
         this.humanBuilder = humanBuilder ?? new HumanPreviewDataBuilder();
+        this.canDeform = canDeform ?? ((_, _) => true);
     }
 
     public ModelPreviewAssetReport Resolve(ModelSearchEntry model)
@@ -58,7 +63,10 @@ public sealed class ModelPreviewAssetResolver
         var adultCode = $"c{family:D2}01";
         var sharedRaceCode = $"c{family - human.Sex:D2}01";
         var fallbackCode = human.Sex == 0 ? "c0101" : "c0201";
-        var modelCodes = ModelCodes(specificCode, adultCode, sharedRaceCode, fallbackCode, bodyType);
+        var targetCode = ushort.Parse(specificCode.AsSpan(1));
+        var modelCodes = ModelCodes(specificCode, adultCode, sharedRaceCode, fallbackCode, bodyType)
+            .Where(code => canDeform(targetCode, ushort.Parse(code.AsSpan(1))))
+            .ToArray();
         var faceId = human.Customize[5];
         var hairId = human.Customize[6];
         var assets = new List<ModelPreviewAsset>
@@ -123,7 +131,7 @@ public sealed class ModelPreviewAssetResolver
             model.Category,
             readiness,
             assets,
-            ushort.Parse(specificCode.AsSpan(1)));
+            targetCode);
     }
 
     private static IEnumerable<string> BaseBodyCandidates(
