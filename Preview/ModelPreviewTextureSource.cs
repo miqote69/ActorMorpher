@@ -19,8 +19,8 @@ public sealed class ModelPreviewTextureSource(IDataManager dataManager)
 
     public ModelPreviewTextureContext CreateContext(ModelSearchEntry? model)
     {
-        if (model is not ({ Category: ModelCategory.Human, HumanAppearance.Customize.Length: >= 12 }
-            or { Category: ModelCategory.Demihuman, ModelAppearance.Customize.Length: >= 12 }))
+        if (model is not ({ Category: ModelCategory.Human, HumanAppearance.Customize.Length: >= 26 }
+            or { Category: ModelCategory.Demihuman, ModelAppearance.Customize.Length: >= 26 }))
             return ModelPreviewTextureContext.Default;
         if (!humanCmpLoaded)
         {
@@ -39,6 +39,25 @@ public sealed class ModelPreviewTextureSource(IDataManager dataManager)
             return null;
         var material = parser.Parse(materialData);
         material = stainSource.Apply(material, context.StainsForMaterial(materialPath));
+        if (string.Equals(material.ShaderPackage, "iris.shpk", StringComparison.OrdinalIgnoreCase))
+        {
+            var diffusePath = material.FindTexture(SamplerDiffuse, "_d.tex", "_base.tex");
+            var maskPath = material.FindTexture(SamplerMask, "_m.tex", "_mask.tex");
+            var diffuseTexture = diffusePath is null ? null : dataManager.GetFile<TexFile>(diffusePath);
+            var maskTexture = maskPath is null ? null : dataManager.GetFile<TexFile>(maskPath);
+            if (diffuseTexture is not null && maskTexture is not null)
+                return ModelPreviewTextureComposer.ComposeIrisBaseColor(context, diffuseTexture, maskTexture);
+        }
+        if (string.Equals(material.ShaderPackage, "charactertattoo.shpk", StringComparison.OrdinalIgnoreCase))
+        {
+            var normalPath = material.FindTexture(SamplerNormal, "_n.tex", "_norm.tex");
+            var normalTexture = normalPath is null ? null : dataManager.GetFile<TexFile>(normalPath);
+            if (normalTexture is not null)
+                return ModelPreviewTextureComposer.ComposeCharacterTattooBaseColor(context, normalTexture);
+        }
+        if (string.Equals(material.ShaderPackage, "characterocclusion.shpk", StringComparison.OrdinalIgnoreCase)
+            && material.TexturePaths.FirstOrDefault() is { } occlusionPath)
+            return ModelPreviewTexturePayload.FromGame(occlusionPath);
         if (string.Equals(material.ShaderPackage, "hair.shpk", StringComparison.OrdinalIgnoreCase))
         {
             var normalPath = material.FindTexture(SamplerNormal, "_n.tex", "_norm.tex");
@@ -93,6 +112,11 @@ public sealed record ModelPreviewTextureContext(
     Vector4 HairColor,
     Vector4 HairHighlightColor,
     Vector4 SkinColor,
+    Vector4 EyeColor,
+    Vector4 HeterochromiaColor,
+    Vector4 FacialFeatureColor,
+    Vector4 FacePaintColor,
+    byte FacePaint,
     bool UseMaterialHairColor,
     IReadOnlyList<ModelPreviewStains> EquipmentStains)
 {
@@ -102,6 +126,11 @@ public sealed record ModelPreviewTextureContext(
         new Vector4(130, 64, 13, 255) / 255.0f,
         new Vector4(77, 126, 240, 255) / 255.0f,
         Vector4.One,
+        new Vector4(75, 55, 40, 255) / 255.0f,
+        new Vector4(75, 55, 40, 255) / 255.0f,
+        new Vector4(40, 25, 20, 255) / 255.0f,
+        new Vector4(80, 45, 45, 255) / 255.0f,
+        0,
         false,
         Array.Empty<ModelPreviewStains>());
 
@@ -109,9 +138,9 @@ public sealed record ModelPreviewTextureContext(
     {
         IReadOnlyList<byte>? customize = model switch
         {
-            { Category: ModelCategory.Human, HumanAppearance.Customize.Length: >= 12 } human
+            { Category: ModelCategory.Human, HumanAppearance.Customize.Length: >= 26 } human
                 => human.HumanAppearance.Customize,
-            { Category: ModelCategory.Demihuman, ModelAppearance.Customize.Length: >= 12 } demihuman
+            { Category: ModelCategory.Demihuman, ModelAppearance.Customize.Length: >= 26 } demihuman
                 => demihuman.ModelAppearance.Customize,
             _ => null,
         };
@@ -140,15 +169,22 @@ public sealed record ModelPreviewTextureContext(
         var hair = fallback.HairColor;
         var highlight = fallback.HairHighlightColor;
         var skin = fallback.SkinColor;
-        if (!HumanCmpPreviewPalette.TryGetHairColors(
-                humanCmp,
-                customize[4],
-                customize[1],
-                customize[10],
-                customize[11],
-                out hair,
-                out highlight))
-            return fallback;
+        var eye = fallback.EyeColor;
+        var heterochromia = fallback.HeterochromiaColor;
+        var facialFeature = fallback.FacialFeatureColor;
+        var facePaint = fallback.FacePaintColor;
+        if (HumanCmpPreviewPalette.TryGetHairColors(
+            humanCmp,
+            customize[4],
+            customize[1],
+            customize[10],
+            customize[11],
+            out var resolvedHair,
+            out var resolvedHighlight))
+        {
+            hair = resolvedHair;
+            highlight = resolvedHighlight;
+        }
         if (customize[7] == 0)
             highlight = hair;
         HumanCmpPreviewPalette.TryGetSkinColor(
@@ -159,7 +195,28 @@ public sealed record ModelPreviewTextureContext(
             out skin);
         if (skin == default)
             skin = fallback.SkinColor;
-        return new ModelPreviewTextureContext(hair, highlight, skin, useMaterialHairColor, equipmentStains);
+        if (HumanCmpPreviewPalette.TryGetEyeColor(humanCmp, customize[15], out var resolvedEye))
+            eye = resolvedEye;
+        heterochromia = customize[9] == 0
+            ? eye
+            : HumanCmpPreviewPalette.TryGetEyeColor(humanCmp, customize[9], out var resolvedHeterochromia)
+                ? resolvedHeterochromia
+                : eye;
+        if (HumanCmpPreviewPalette.TryGetFacialFeatureColor(humanCmp, customize[13], out var resolvedFeature))
+            facialFeature = resolvedFeature;
+        if (HumanCmpPreviewPalette.TryGetFacePaintColor(humanCmp, customize[25], out var resolvedFacePaint))
+            facePaint = resolvedFacePaint;
+        return new ModelPreviewTextureContext(
+            hair,
+            highlight,
+            skin,
+            eye,
+            heterochromia,
+            facialFeature,
+            facePaint,
+            customize[24],
+            useMaterialHairColor,
+            equipmentStains);
     }
 
     public ModelPreviewTextureContext ForHairMaterial(MtrlPreviewData material)

@@ -3,7 +3,7 @@ namespace ActorMorpher.Preview;
 public sealed class SoftwareModelPreviewBackend : IModelPreviewBackend
 {
     private readonly Func<ModelSearchEntry, ModelPreviewAssetReport> resolveAssets;
-    private readonly Func<string, byte, ushort, ModelPreviewCpuModel?> loadModel;
+    private readonly Func<string, byte, ushort, byte, ModelPreviewCpuModel?> loadModel;
     private readonly SoftwareModelPreviewSceneBuilder sceneBuilder = new();
     private readonly object syncRoot = new();
     private ModelPreviewSelectionKey? selection;
@@ -15,7 +15,7 @@ public sealed class SoftwareModelPreviewBackend : IModelPreviewBackend
 
     public SoftwareModelPreviewBackend(
         Func<ModelSearchEntry, ModelPreviewAssetReport> resolveAssets,
-        Func<string, byte, ushort, ModelPreviewCpuModel?> loadModel)
+        Func<string, byte, ushort, byte, ModelPreviewCpuModel?> loadModel)
     {
         this.resolveAssets = resolveAssets;
         this.loadModel = loadModel;
@@ -41,12 +41,16 @@ public sealed class SoftwareModelPreviewBackend : IModelPreviewBackend
         var assets = resolveAssets(model);
         var models = new List<ModelPreviewCpuModel>();
         var requiredModelFailed = false;
+        var facialFeatures = model.Category == ModelCategory.Human
+            && model.HumanAppearance is { Customize.Length: > 12 }
+                ? model.HumanAppearance.Customize[12]
+                : (byte)0;
         foreach (var asset in assets.Assets.Where(static asset =>
                      asset.Kind == ModelPreviewAssetKind.Model && asset.IsPresent && asset.Path is not null))
         {
             try
             {
-                if (loadModel(asset.Path!, asset.MaterialVariant, assets.HumanTargetCode) is { } loaded)
+                if (loadModel(asset.Path!, asset.MaterialVariant, assets.HumanTargetCode, facialFeatures) is { } loaded)
                     models.Add(loaded);
             }
             catch

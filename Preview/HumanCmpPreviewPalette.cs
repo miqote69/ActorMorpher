@@ -12,6 +12,10 @@ public static class HumanCmpPreviewPalette
     private const int HairParametersOffset = 1_024;
     private const int HairColorSize = 8;
     private const int HighlightParametersOffset = 1_024;
+    private const int EyeParametersOffset = 0;
+    private const int FacePaintDarkParametersOffset = 2_560;
+    private const int FacialFeatureParametersOffset = 3_072;
+    private const int FacePaintLightParametersOffset = 4_608;
 
     public static bool TryGetHairColors(
         byte[] data,
@@ -60,6 +64,30 @@ public static class HumanCmpPreviewPalette
         if (offset > data.Length - 4)
             return false;
 
+        color = ReadRgba(data, offset);
+        return true;
+    }
+
+    public static bool TryGetEyeColor(byte[] data, byte colorIndex, out Vector4 color)
+        => TryGetSharedColor(data, EyeParametersOffset, colorIndex, out color);
+
+    public static bool TryGetFacialFeatureColor(byte[] data, byte colorIndex, out Vector4 color)
+        => TryGetSharedColor(data, FacialFeatureParametersOffset, colorIndex, out color);
+
+    public static bool TryGetFacePaintColor(byte[] data, byte packedColorIndex, out Vector4 color)
+    {
+        var offset = (packedColorIndex & 0x80) == 0
+            ? FacePaintDarkParametersOffset
+            : FacePaintLightParametersOffset;
+        return TryGetSharedColor(data, offset, checked((byte)(packedColorIndex & 0x7F)), out color);
+    }
+
+    private static bool TryGetSharedColor(byte[] data, int parameterOffset, byte colorIndex, out Vector4 color)
+    {
+        color = default;
+        var offset = parameterOffset + colorIndex * 4;
+        if (offset > data.Length - 4)
+            return false;
         color = ReadRgba(data, offset);
         return true;
     }

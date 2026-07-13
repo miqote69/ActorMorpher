@@ -136,4 +136,53 @@ public sealed class HumanCmpPreviewPaletteTests
             default(ModelPreviewStains),
             context.StainsForMaterial("chara/equipment/e0559/material/v0001/mt_c0101e0559_sho_a.mtrl"));
     }
+
+    [Fact]
+    public void ReadsEyeFacialFeatureAndFacePaintColorsFromSharedCmpPalettes()
+    {
+        var data = new byte[18432 + 32 * 5120];
+        WriteRgba(data, 130 * 4, 10, 20, 30, 255);
+        WriteRgba(data, 3072 + 42 * 4, 40, 50, 60, 255);
+        WriteRgba(data, 4608 + 7 * 4, 70, 80, 90, 255);
+
+        Assert.True(HumanCmpPreviewPalette.TryGetEyeColor(data, 130, out var eye));
+        Assert.True(HumanCmpPreviewPalette.TryGetFacialFeatureColor(data, 42, out var feature));
+        Assert.True(HumanCmpPreviewPalette.TryGetFacePaintColor(data, 0x87, out var facePaint));
+        Assert.Equal(new Vector4(10, 20, 30, 255) / 255.0f, eye);
+        Assert.Equal(new Vector4(40, 50, 60, 255) / 255.0f, feature);
+        Assert.Equal(new Vector4(70, 80, 90, 255) / 255.0f, facePaint);
+
+        var customize = new byte[26];
+        customize[0] = 1;
+        customize[1] = 1;
+        customize[4] = 1;
+        customize[9] = 130;
+        customize[13] = 42;
+        customize[15] = 130;
+        customize[24] = 5;
+        customize[25] = 0x87;
+        var equipment = new ulong[10];
+        var human = new HumanAppearance(customize, equipment, 0, 0, false);
+        var appearance = AppearanceData.Create(
+            0, ModelCategory.Human, 1, AppearanceCompleteness.Complete, customize, equipment);
+        var model = new ModelSearchEntry(
+            0, ModelCategory.Human, ModelSource.EventNpc, 1, "Face", 1, 0, 1, 1,
+            1, 1, (byte)NpcAge.Normal, human, AppearanceCompleteness.Complete, appearance);
+
+        var context = ModelPreviewTextureContext.FromModel(model, data);
+
+        Assert.Equal(eye, context.EyeColor);
+        Assert.Equal(eye, context.HeterochromiaColor);
+        Assert.Equal(feature, context.FacialFeatureColor);
+        Assert.Equal(facePaint, context.FacePaintColor);
+        Assert.Equal((byte)5, context.FacePaint);
+    }
+
+    private static void WriteRgba(byte[] data, int offset, byte red, byte green, byte blue, byte alpha)
+    {
+        data[offset] = red;
+        data[offset + 1] = green;
+        data[offset + 2] = blue;
+        data[offset + 3] = alpha;
+    }
 }

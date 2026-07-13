@@ -40,14 +40,20 @@ public sealed class LuminaModelGeometrySource
     }
 
     public ModelPreviewCpuModel? LoadCpuModel(string path)
-        => LoadCpuModel(path, 1, 0);
+        => LoadCpuModel(path, 1, 0, 0);
 
-    public ModelPreviewCpuModel? LoadCpuModel(string path, byte requestedVariant, ushort humanTargetCode)
+    public ModelPreviewCpuModel? LoadCpuModel(
+        string path,
+        byte requestedVariant,
+        ushort humanTargetCode,
+        byte facialFeatures)
     {
         var data = dataManager.GetFile(path)?.Data;
         if (data is null)
             return null;
-        var parsed = parser.Parse(data);
+        var parsed = parser.Parse(
+            data,
+            path.Contains("/obj/face/", StringComparison.Ordinal) ? facialFeatures : null);
         var materialVariant = ResolveMaterialVariant(path, requestedVariant);
         IReadOnlyList<ModelPreviewSourceMesh> sources = parsed.Meshes.Select(mesh => mesh with
         {

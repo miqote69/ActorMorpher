@@ -34,6 +34,9 @@ Enable Full diagnostics before testing native appearance operations. Stop after 
 - [ ] Au Ra Young NPC Face values such as 102 resolve the corresponding `f0002` model and render clan skin color
 - [ ] Human equipment previews apply Stain 1 and Stain 2 only to MTRL rows assigned to the corresponding dye channel
 - [ ] Human Feet and Hands use a shared `c0101` model with PBD deformation when the gender-specific model is absent
+- [ ] Lalafell female previews render bare Hands and Feet through the same-race `c1101` fallback
+- [ ] Human face previews show only FacialFeature submeshes selected by the NPC customization bitmask
+- [ ] Human iris and facial-feature meshes use the NPC eye and feature colors instead of fallback mesh colors
 - [ ] Left-drag rotates the static preview and mouse wheel changes zoom
 - [ ] Reset Camera restores the initial static preview framing
 - [ ] Missing or malformed optional Demihuman parts do not suppress valid parts

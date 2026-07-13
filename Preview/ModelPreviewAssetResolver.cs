@@ -56,8 +56,9 @@ public sealed class ModelPreviewAssetResolver
             ? human.Sex == 0 ? "c0103" : "c0203"
             : $"c{family:D2}{bodyType:D2}";
         var adultCode = $"c{family:D2}01";
+        var sharedRaceCode = $"c{family - human.Sex:D2}01";
         var fallbackCode = human.Sex == 0 ? "c0101" : "c0201";
-        var modelCodes = ModelCodes(specificCode, adultCode, fallbackCode, bodyType);
+        var modelCodes = ModelCodes(specificCode, adultCode, sharedRaceCode, fallbackCode, bodyType);
         var faceId = human.Customize[5];
         var hairId = human.Customize[6];
         var assets = new List<ModelPreviewAsset>
@@ -179,13 +180,14 @@ public sealed class ModelPreviewAssetResolver
     private static IReadOnlyList<string> ModelCodes(
         string specificCode,
         string adultCode,
+        string sharedRaceCode,
         string fallbackCode,
         byte bodyType)
         => bodyType switch
         {
             (byte)NpcAge.Young => Codes(specificCode, "c0104", "c0101").ToArray(),
             (byte)NpcAge.Old => Codes(specificCode, "c0103", "c0101").ToArray(),
-            _ => Codes(adultCode, fallbackCode, "c0101").ToArray(),
+            _ => Codes(adultCode, sharedRaceCode, fallbackCode, "c0101").ToArray(),
         };
 
     private static int HumanModelFamily(byte race, byte tribe, byte sex)

@@ -289,6 +289,53 @@ public sealed class ModelPreviewAssetResolverTests
     }
 
     [Fact]
+    public void LalafellFemaleBareHandsAndFeetPreferDeformableLalafellMaleModels()
+    {
+        var customize = new byte[26];
+        customize[0] = 3;
+        customize[1] = 1;
+        customize[2] = (byte)NpcAge.Normal;
+        customize[4] = 6;
+        customize[5] = 2;
+        customize[6] = 9;
+        var equipment = new ulong[10];
+        equipment[(int)OutfitSlot.Body] = 51UL | (2UL << 16);
+        equipment[(int)OutfitSlot.Feet] = 1UL | (2UL << 16);
+        var appearance = new HumanAppearance(customize, equipment, 0, 0, false);
+        var modelAppearance = AppearanceData.Create(
+            0, ModelCategory.Human, 1008131, AppearanceCompleteness.Complete, customize, equipment);
+        var entry = Entry(ModelCategory.Human, 1, 0, 1) with
+        {
+            RowId = 0,
+            Source = ModelSource.EventNpc,
+            SourceId = 1008131,
+            HumanAppearance = appearance,
+            ModelAppearance = modelAppearance,
+        };
+        var present = new HashSet<string>
+        {
+            "chara/human/c1201/obj/face/f0002/model/c1201f0002_fac.mdl",
+            "chara/human/c1201/obj/hair/h0009/model/c1201h0009_hir.mdl",
+            "chara/equipment/e0051/model/c1201e0051_top.mdl",
+            "chara/equipment/e0000/model/c1101e0000_glv.mdl",
+            "chara/equipment/e0000/model/c0201e0000_glv.mdl",
+            "chara/equipment/e0051/model/c1201e0051_dwn.mdl",
+            "chara/equipment/e0001/model/c1101e0001_sho.mdl",
+            "chara/equipment/e0001/model/c0201e0001_sho.mdl",
+        };
+
+        var report = new ModelPreviewAssetResolver(present.Contains).Resolve(entry);
+
+        Assert.Equal((ushort)1201, report.HumanTargetCode);
+        Assert.Contains(report.Assets, asset => asset.Label == "Hands"
+            && asset.Path == "chara/equipment/e0000/model/c1101e0000_glv.mdl"
+            && asset.IsPresent);
+        Assert.Contains(report.Assets, asset => asset.Label == "Feet"
+            && asset.Path == "chara/equipment/e0001/model/c1101e0001_sho.mdl"
+            && asset.IsPresent);
+    }
+
+    [Fact]
     public void FileLookupFailureIsContainedToTheAffectedAssets()
     {
         var report = new ModelPreviewAssetResolver(_ => throw new IOException("Unavailable"))

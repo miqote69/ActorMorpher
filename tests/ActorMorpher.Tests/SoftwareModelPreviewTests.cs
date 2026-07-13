@@ -92,7 +92,7 @@ public sealed class SoftwareModelPreviewTests
             entry.Category,
             ModelPreviewReadiness.AssetsPartial,
             [new(ModelPreviewAssetKind.Model, "Body", "body.mdl", true)]);
-        using var backend = new SoftwareModelPreviewBackend(_ => assets, (_, _, _) => Model([0, 1, 2]));
+        using var backend = new SoftwareModelPreviewBackend(_ => assets, (_, _, _, _) => Model([0, 1, 2]));
 
         backend.Select(entry);
         var initial = Assert.IsType<SoftwareModelPreviewView>(backend.GetView());
@@ -115,7 +115,7 @@ public sealed class SoftwareModelPreviewTests
             entry.Category,
             ModelPreviewReadiness.AssetsComplete,
             [new(ModelPreviewAssetKind.Model, "Body", "body.mdl", true)]);
-        using var backend = new SoftwareModelPreviewBackend(_ => assets, (_, _, _) => Model([0, 1, 2]));
+        using var backend = new SoftwareModelPreviewBackend(_ => assets, (_, _, _, _) => Model([0, 1, 2]));
 
         backend.Select(entry);
 
@@ -137,12 +137,43 @@ public sealed class SoftwareModelPreviewTests
             ]);
         using var backend = new SoftwareModelPreviewBackend(
             _ => assets,
-            (path, _, _) => path == "body.mdl" ? throw new InvalidDataException("PBD failed") : Model([0, 1, 2]));
+            (path, _, _, _) => path == "body.mdl" ? throw new InvalidDataException("PBD failed") : Model([0, 1, 2]));
 
         backend.Select(entry);
 
         Assert.Equal(ModelPreviewState.Failed, backend.Snapshot.State);
         Assert.Null(backend.GetView());
+    }
+
+    [Fact]
+    public void BackendPassesSelectedHumanFacialFeaturesToFaceParser()
+    {
+        var customize = new byte[26];
+        customize[12] = 0x10;
+        var entry = AssetEntry() with
+        {
+            Category = ModelCategory.Human,
+            HumanAppearance = new HumanAppearance(customize, new ulong[10], 0, 0, false),
+        };
+        var assets = new ModelPreviewAssetReport(
+            entry.ModelId,
+            entry.Category,
+            ModelPreviewReadiness.AssetsComplete,
+            [new(ModelPreviewAssetKind.Model, "Face", "face.mdl", true)],
+            1201);
+        byte passedFeatures = 0;
+        using var backend = new SoftwareModelPreviewBackend(
+            _ => assets,
+            (_, _, _, features) =>
+            {
+                passedFeatures = features;
+                return Model([0, 1, 2]);
+            });
+
+        backend.Select(entry);
+
+        Assert.Equal((byte)0x10, passedFeatures);
+        Assert.Equal(ModelPreviewState.Ready, backend.Snapshot.State);
     }
 
     private static ModelPreviewCpuModel Model(ushort[] indices)

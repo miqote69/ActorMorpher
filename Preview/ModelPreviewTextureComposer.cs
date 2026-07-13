@@ -60,6 +60,51 @@ public static class ModelPreviewTextureComposer
         return ModelPreviewTexturePayload.FromBgra(width, height, output);
     }
 
+    public static ModelPreviewTexturePayload ComposeIrisBaseColor(
+        ModelPreviewTextureContext context,
+        TexFile diffuse,
+        TexFile mask)
+    {
+        var width = diffuse.Header.Width;
+        var height = diffuse.Header.Height;
+        ValidateDimensions(width, height);
+        var output = new byte[checked(width * height * 4)];
+        for (var y = 0; y < height; ++y)
+        {
+            for (var x = 0; x < width; ++x)
+            {
+                var targetOffset = (y * width + x) * 4;
+                var diffuseOffset = SampleOffset(diffuse, x, y, width, height);
+                var maskOffset = SampleOffset(mask, x, y, width, height);
+                var influence = mask.ImageData[maskOffset] / 255.0f;
+                var tint = Vector4.Lerp(Vector4.One, context.EyeColor, influence);
+                output[targetOffset] = ToByte(diffuse.ImageData[diffuseOffset] / 255.0f * tint.Z);
+                output[targetOffset + 1] = ToByte(diffuse.ImageData[diffuseOffset + 1] / 255.0f * tint.Y);
+                output[targetOffset + 2] = ToByte(diffuse.ImageData[diffuseOffset + 2] / 255.0f * tint.X);
+                output[targetOffset + 3] = diffuse.ImageData[diffuseOffset + 3];
+            }
+        }
+        return ModelPreviewTexturePayload.FromBgra(width, height, output);
+    }
+
+    public static ModelPreviewTexturePayload ComposeCharacterTattooBaseColor(
+        ModelPreviewTextureContext context,
+        TexFile normal)
+    {
+        var width = normal.Header.Width;
+        var height = normal.Header.Height;
+        ValidateDimensions(width, height);
+        var output = new byte[checked(width * height * 4)];
+        for (var offset = 0; offset < output.Length; offset += 4)
+        {
+            output[offset] = ToByte(context.FacialFeatureColor.Z);
+            output[offset + 1] = ToByte(context.FacialFeatureColor.Y);
+            output[offset + 2] = ToByte(context.FacialFeatureColor.X);
+            output[offset + 3] = normal.ImageData[offset + 3];
+        }
+        return ModelPreviewTexturePayload.FromBgra(width, height, output);
+    }
+
     public static ModelPreviewTexturePayload? ComposeCharacterBaseColor(
         MtrlPreviewData material,
         TexFile index,

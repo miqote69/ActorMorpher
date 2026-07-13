@@ -16,7 +16,7 @@ public sealed class MdlPreviewParser
     private const int ExtraLodSize = 0x28;
     private const int MeshSize = 0x24;
 
-    public MdlPreviewParseResult Parse(byte[] data)
+    public MdlPreviewParseResult Parse(byte[] data, byte? facialFeatures = null)
     {
         ArgumentNullException.ThrowIfNull(data);
         if (data.Length < FileHeaderSize)
@@ -95,7 +95,8 @@ public sealed class MdlPreviewParser
             reader.Skip(2);
             var indexCount = reader.ReadUInt32();
             var materialIndex = reader.ReadUInt16();
-            reader.Skip(4); // Submesh index and count.
+            var submeshIndex = reader.ReadUInt16();
+            var meshSubmeshCount = reader.ReadUInt16();
             var boneTableIndex = reader.ReadUInt16();
             var startIndex = reader.ReadUInt32();
             var streamOffsets = reader.ReadUInt32Array(3);
@@ -107,6 +108,8 @@ public sealed class MdlPreviewParser
                 vertexCount,
                 indexCount,
                 materialIndex,
+                submeshIndex,
+                meshSubmeshCount,
                 boneTableIndex,
                 startIndex,
                 streamOffsets,
@@ -114,9 +117,15 @@ public sealed class MdlPreviewParser
                 streamCount);
         }
 
-        reader.Skip(checked(attributeCount * sizeof(uint)));
+        var attributeOffsets = reader.ReadUInt32Array(attributeCount);
+        var attributes = attributeOffsets.Select(offset => ReadString(strings, offset)).ToArray();
         reader.Skip(checked(terrainShadowMeshCount * 20));
-        reader.Skip(checked(submeshCount * 16));
+        var submeshes = new Submesh[submeshCount];
+        for (var index = 0; index < submeshes.Length; ++index)
+        {
+            submeshes[index] = new Submesh(reader.ReadUInt32(), reader.ReadUInt32(), reader.ReadUInt32());
+            reader.Skip(4);
+        }
         reader.Skip(checked(terrainShadowSubmeshCount * 12));
         var materialOffsets = reader.ReadUInt32Array(materialCount);
         var materials = materialOffsets.Select(offset => ReadString(strings, offset)).ToArray();
@@ -145,7 +154,16 @@ public sealed class MdlPreviewParser
                 continue;
 
             var vertices = ReadVertices(data, vertexOffsets[0], vertexBufferSizes[0], mesh, declarations[meshIndex]);
-            var indices = ReadIndices(data, indexOffsets[0], indexBufferSizes[0], mesh);
+            var indices = ReadIndices(
+                data,
+                indexOffsets[0],
+                indexBufferSizes[0],
+                mesh,
+                submeshes,
+                attributes,
+                facialFeatures);
+            if (indices.Length == 0)
+                continue;
             var material = mesh.MaterialIndex < materials.Length ? materials[mesh.MaterialIndex] : string.Empty;
             var bones = mesh.BoneTableIndex < boneTables.Length
                 ? boneTables[mesh.BoneTableIndex]
@@ -225,7 +243,14 @@ public sealed class MdlPreviewParser
         return stride > 0 && valueSize <= stride && element.Offset <= stride - valueSize;
     }
 
-    private static ushort[] ReadIndices(byte[] data, uint bufferOffset, uint bufferSize, Mesh mesh)
+    private static ushort[] ReadIndices(
+        byte[] data,
+        uint bufferOffset,
+        uint bufferSize,
+        Mesh mesh,
+        IReadOnlyList<Submesh> submeshes,
+        IReadOnlyList<string> attributes,
+        byte? facialFeatures)
     {
         var count = checked((int)mesh.IndexCount);
         var start = checked((long)bufferOffset + (long)mesh.StartIndex * sizeof(ushort));
@@ -237,7 +262,47 @@ public sealed class MdlPreviewParser
         var indices = new ushort[count];
         for (var index = 0; index < count; ++index)
             indices[index] = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(checked((int)start + index * 2)));
-        return indices;
+        if (facialFeatures is null || mesh.SubmeshCount == 0)
+            return indices;
+        if (mesh.SubmeshIndex > submeshes.Count - mesh.SubmeshCount)
+            throw new InvalidDataException("MDL mesh submesh range is invalid.");
+
+        var selected = new List<ushort>(indices.Length);
+        var endSubmesh = mesh.SubmeshIndex + mesh.SubmeshCount;
+        for (var submeshIndex = mesh.SubmeshIndex; submeshIndex < endSubmesh; ++submeshIndex)
+        {
+            var submesh = submeshes[submeshIndex];
+            if (!IncludesFacialFeature(submesh.AttributeMask, attributes, facialFeatures.Value))
+                continue;
+            if (submesh.IndexOffset < mesh.StartIndex)
+                throw new InvalidDataException("MDL submesh index range precedes its mesh.");
+            var relativeOffset = checked((int)(submesh.IndexOffset - mesh.StartIndex));
+            var submeshIndexCount = checked((int)submesh.IndexCount);
+            if (relativeOffset > indices.Length - submeshIndexCount)
+                throw new InvalidDataException("MDL submesh index range is outside its mesh.");
+            selected.AddRange(indices.AsSpan(relativeOffset, submeshIndexCount).ToArray());
+        }
+        return selected.ToArray();
+    }
+
+    private static bool IncludesFacialFeature(uint attributeMask, IReadOnlyList<string> attributes, byte facialFeatures)
+    {
+        var hasFacialVariant = false;
+        for (var index = 0; index < Math.Min(attributes.Count, 32); ++index)
+        {
+            if ((attributeMask & (1u << index)) == 0)
+                continue;
+            var attribute = attributes[index];
+            if (attribute.Length != 8
+                || !attribute.StartsWith("atr_fv_", StringComparison.Ordinal)
+                || attribute[7] is < 'a' or > 'g')
+                continue;
+            hasFacialVariant = true;
+            var feature = 1 << (attribute[7] - 'a');
+            if ((facialFeatures & feature) != 0)
+                return true;
+        }
+        return !hasFacialVariant;
     }
 
     private static Vector4 ReadVector(ReadOnlySpan<byte> source, byte type)
@@ -364,11 +429,14 @@ public sealed class MdlPreviewParser
         ushort VertexCount,
         uint IndexCount,
         ushort MaterialIndex,
+        ushort SubmeshIndex,
+        ushort SubmeshCount,
         ushort BoneTableIndex,
         uint StartIndex,
         uint[] StreamOffsets,
         byte[] Strides,
         byte StreamCount);
+    private readonly record struct Submesh(uint IndexOffset, uint IndexCount, uint AttributeMask);
 
     private sealed class CheckedReader(byte[] data)
     {
