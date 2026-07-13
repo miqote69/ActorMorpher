@@ -1,5 +1,6 @@
 using System.Numerics;
 using ActorMorpher.Appearance;
+using ActorMorpher.BulkOutfit;
 using ActorMorpher.Preview;
 using Xunit;
 
@@ -108,5 +109,31 @@ public sealed class HumanCmpPreviewPaletteTests
 
         Assert.Equal(skin, context.SkinColor);
         Assert.False(context.UseMaterialHairColor);
+    }
+
+    [Fact]
+    public void HumanTextureContextMapsPackedBodyStainsToBodyMaterials()
+    {
+        var customize = new byte[26];
+        customize[0] = 1;
+        customize[1] = 1;
+        customize[4] = 1;
+        var equipment = new ulong[10];
+        equipment[(int)OutfitSlot.Body] = 428UL | (2UL << 16) | (51UL << 24);
+        var human = new HumanAppearance(customize, equipment, 0, 0, false);
+        var appearance = AppearanceData.Create(
+            0, ModelCategory.Human, 1037096, AppearanceCompleteness.Complete, customize, equipment);
+        var model = new ModelSearchEntry(
+            0, ModelCategory.Human, ModelSource.EventNpc, 1037096, "Alphinaud", 1, 0, 1, 1,
+            1, 1, (byte)NpcAge.Normal, human, AppearanceCompleteness.Complete, appearance);
+
+        var context = ModelPreviewTextureContext.FromModel(model, new byte[18432 + 32 * 5120]);
+
+        Assert.Equal(
+            new ModelPreviewStains(51, 0),
+            context.StainsForMaterial("chara/equipment/e0428/material/v0002/mt_c0201e0428_top_a.mtrl"));
+        Assert.Equal(
+            default(ModelPreviewStains),
+            context.StainsForMaterial("chara/equipment/e0559/material/v0001/mt_c0101e0559_sho_a.mtrl"));
     }
 }

@@ -13,6 +13,7 @@ public sealed class ModelPreviewTextureSource(IDataManager dataManager)
     private const uint SamplerMask = 0x8A4E82B6;
     private const uint CharacterIndexSampler = 1449103320;
     private readonly MtrlPreviewParser parser = new();
+    private readonly ModelPreviewStainSource stainSource = new(dataManager);
     private byte[]? humanCmp;
     private bool humanCmpLoaded;
 
@@ -37,6 +38,7 @@ public sealed class ModelPreviewTextureSource(IDataManager dataManager)
         if (materialData is null)
             return null;
         var material = parser.Parse(materialData);
+        material = stainSource.Apply(material, context.StainsForMaterial(materialPath));
         if (string.Equals(material.ShaderPackage, "hair.shpk", StringComparison.OrdinalIgnoreCase))
         {
             var normalPath = material.FindTexture(SamplerNormal, "_n.tex", "_norm.tex");
@@ -91,7 +93,8 @@ public sealed record ModelPreviewTextureContext(
     Vector4 HairColor,
     Vector4 HairHighlightColor,
     Vector4 SkinColor,
-    bool UseMaterialHairColor)
+    bool UseMaterialHairColor,
+    IReadOnlyList<ModelPreviewStains> EquipmentStains)
 {
     private const uint DiffuseColorConstant = 0x2C2A34DD;
 
@@ -99,7 +102,8 @@ public sealed record ModelPreviewTextureContext(
         new Vector4(130, 64, 13, 255) / 255.0f,
         new Vector4(77, 126, 240, 255) / 255.0f,
         Vector4.One,
-        false);
+        false,
+        Array.Empty<ModelPreviewStains>());
 
     public static ModelPreviewTextureContext FromModel(ModelSearchEntry? model, byte[]? humanCmp)
     {
@@ -111,8 +115,25 @@ public sealed record ModelPreviewTextureContext(
                 => demihuman.ModelAppearance.Customize,
             _ => null,
         };
+        IReadOnlyList<ulong>? equipment = model switch
+        {
+            { Category: ModelCategory.Human, HumanAppearance.Equipment.Length: 10 } human
+                => human.HumanAppearance.Equipment,
+            { Category: ModelCategory.Demihuman, ModelAppearance.Equipment.Length: 10 } demihuman
+                => demihuman.ModelAppearance.Equipment,
+            _ => null,
+        };
+        var equipmentStains = equipment is null
+            ? Array.Empty<ModelPreviewStains>()
+            : equipment.Select(static packed => new ModelPreviewStains(
+                checked((byte)((packed >> 24) & 0xFF)),
+                checked((byte)((packed >> 32) & 0xFF)))).ToArray();
         var useMaterialHairColor = model?.Category == ModelCategory.Demihuman;
-        var fallback = Default with { UseMaterialHairColor = useMaterialHairColor };
+        var fallback = Default with
+        {
+            UseMaterialHairColor = useMaterialHairColor,
+            EquipmentStains = equipmentStains,
+        };
         if (customize is null || humanCmp is null)
             return fallback;
 
@@ -138,7 +159,7 @@ public sealed record ModelPreviewTextureContext(
             out skin);
         if (skin == default)
             skin = fallback.SkinColor;
-        return new ModelPreviewTextureContext(hair, highlight, skin, useMaterialHairColor);
+        return new ModelPreviewTextureContext(hair, highlight, skin, useMaterialHairColor, equipmentStains);
     }
 
     public ModelPreviewTextureContext ForHairMaterial(MtrlPreviewData material)
@@ -153,4 +174,30 @@ public sealed record ModelPreviewTextureContext(
             HairHighlightColor = materialColor,
         };
     }
+
+    public ModelPreviewStains StainsForMaterial(string materialPath)
+    {
+        if (EquipmentStains.Count != 10)
+            return default;
+        foreach (var (token, slot) in MaterialSlots)
+        {
+            if (materialPath.Contains(token, StringComparison.OrdinalIgnoreCase))
+                return EquipmentStains[(int)slot];
+        }
+        return default;
+    }
+
+    private static readonly (string Token, OutfitSlot Slot)[] MaterialSlots =
+    [
+        ("_met_", OutfitSlot.Head),
+        ("_top_", OutfitSlot.Body),
+        ("_glv_", OutfitSlot.Hands),
+        ("_dwn_", OutfitSlot.Legs),
+        ("_sho_", OutfitSlot.Feet),
+        ("_ear_", OutfitSlot.Ears),
+        ("_nek_", OutfitSlot.Neck),
+        ("_wri_", OutfitSlot.Wrists),
+        ("_rir_", OutfitSlot.RightRing),
+        ("_ril_", OutfitSlot.LeftRing),
+    ];
 }

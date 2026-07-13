@@ -37,8 +37,10 @@ public sealed class MtrlPreviewParser
         var strings = reader.Bytes(stringTableSize);
         var texturePaths = textureOffsets.Select(offset => ReadString(strings, offset)).ToArray();
         var shaderPackage = ReadString(strings, shaderPackageOffset);
-        reader.Skip(additionalDataSize);
+        var additionalData = reader.Bytes(additionalDataSize);
         var dataSet = reader.Bytes(dataSetSize);
+        var tableFlags = ReadTableFlags(additionalData);
+        var (isDawntrail, dyeRows) = ReadDyeRows(dataSet, tableFlags);
 
         var samplers = new List<MtrlPreviewSampler>();
         var constants = new List<MtrlPreviewConstant>();
@@ -85,7 +87,66 @@ public sealed class MtrlPreviewParser
             texturePaths,
             samplers,
             constants,
+            isDawntrail,
+            dyeRows,
             ReadDiffuseRows(dataSet));
+    }
+
+    private static uint ReadTableFlags(byte[] data)
+    {
+        uint flags = 0;
+        for (var index = 0; index < Math.Min(sizeof(uint), data.Length); ++index)
+            flags |= (uint)data[index] << (index * 8);
+        return flags;
+    }
+
+    private static (bool IsDawntrail, IReadOnlyList<MtrlPreviewDyeRow> Rows) ReadDyeRows(
+        byte[] dataSet,
+        uint tableFlags)
+    {
+        var hasDyeTable = (tableFlags & 0x0C) == 0x0C;
+        var dimensions = (byte)((tableFlags >> 4) & 0xFF);
+        if (!hasDyeTable)
+        {
+            if (dataSet.Length != 16 * 32 + 16 * sizeof(ushort))
+                return (false, Array.Empty<MtrlPreviewDyeRow>());
+            dimensions = 0;
+        }
+        if (dimensions == 0)
+        {
+            const int tableSize = 16 * 32;
+            if (dataSet.Length < tableSize + 16 * sizeof(ushort))
+                return (false, Array.Empty<MtrlPreviewDyeRow>());
+            var rows = new MtrlPreviewDyeRow[16];
+            for (var index = 0; index < rows.Length; ++index)
+            {
+                var value = BinaryPrimitives.ReadUInt16LittleEndian(
+                    dataSet.AsSpan(tableSize + index * sizeof(ushort)));
+                rows[index] = new MtrlPreviewDyeRow(
+                    checked((ushort)(value >> 5)),
+                    0,
+                    (value & 0x01) != 0);
+            }
+            return (false, rows);
+        }
+        if (dimensions == 0x53)
+        {
+            const int tableSize = 32 * 64;
+            if (dataSet.Length < tableSize + 32 * sizeof(uint))
+                return (true, Array.Empty<MtrlPreviewDyeRow>());
+            var rows = new MtrlPreviewDyeRow[32];
+            for (var index = 0; index < rows.Length; ++index)
+            {
+                var value = BinaryPrimitives.ReadUInt32LittleEndian(
+                    dataSet.AsSpan(tableSize + index * sizeof(uint)));
+                rows[index] = new MtrlPreviewDyeRow(
+                    checked((ushort)((value >> 16) & 0x7FF)),
+                    checked((byte)((value >> 27) & 0x03)),
+                    (value & 0x01) != 0);
+            }
+            return (true, rows);
+        }
+        return (false, Array.Empty<MtrlPreviewDyeRow>());
     }
 
     private static IReadOnlyList<Vector3> ReadDiffuseRows(byte[] dataSet)
@@ -149,6 +210,8 @@ public sealed record MtrlPreviewData(
     IReadOnlyList<string> TexturePaths,
     IReadOnlyList<MtrlPreviewSampler> Samplers,
     IReadOnlyList<MtrlPreviewConstant> Constants,
+    bool IsDawntrail,
+    IReadOnlyList<MtrlPreviewDyeRow> DyeRows,
     IReadOnlyList<Vector3> DiffuseRows)
 {
     public string? FindTexture(uint samplerId, params string[] suffixes)
@@ -170,3 +233,4 @@ public sealed record MtrlPreviewData(
 
 public sealed record MtrlPreviewSampler(uint SamplerId, string TexturePath);
 public sealed record MtrlPreviewConstant(uint ConstantId, IReadOnlyList<float> Values);
+public readonly record struct MtrlPreviewDyeRow(ushort Template, byte Channel, bool DiffuseColor);

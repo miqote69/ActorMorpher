@@ -250,6 +250,45 @@ public sealed class ModelPreviewAssetResolverTests
     }
 
     [Fact]
+    public void FemaleHumanFeetFallBackToSharedMaleModelWhenFemalePartIsAbsent()
+    {
+        var customize = new byte[26];
+        customize[0] = 1;
+        customize[1] = 1;
+        customize[2] = (byte)NpcAge.Normal;
+        customize[4] = 1;
+        customize[5] = 5;
+        var equipment = new ulong[10];
+        equipment[(int)OutfitSlot.Body] = 0x000201AC;
+        equipment[(int)OutfitSlot.Feet] = 0x0001022F;
+        var appearance = new HumanAppearance(customize, equipment, 0, 0, false);
+        var modelAppearance = AppearanceData.Create(
+            0, ModelCategory.Human, 1037096, AppearanceCompleteness.Complete, customize, equipment);
+        var entry = Entry(ModelCategory.Human, 1, 0, 1) with
+        {
+            RowId = 0,
+            Source = ModelSource.EventNpc,
+            SourceId = 1037096,
+            HumanAppearance = appearance,
+            ModelAppearance = modelAppearance,
+        };
+        var present = new HashSet<string>
+        {
+            "chara/human/c0201/obj/face/f0005/model/c0201f0005_fac.mdl",
+            "chara/equipment/e0428/model/c0201e0428_top.mdl",
+            "chara/equipment/e0559/model/c0101e0559_sho.mdl",
+        };
+
+        var report = new ModelPreviewAssetResolver(present.Contains).Resolve(entry);
+
+        Assert.Equal(ModelPreviewReadiness.AssetsComplete, report.Readiness);
+        Assert.Equal((ushort)201, report.HumanTargetCode);
+        Assert.Contains(report.Assets, asset => asset.Label == "Feet"
+            && asset.Path == "chara/equipment/e0559/model/c0101e0559_sho.mdl"
+            && asset.IsPresent);
+    }
+
+    [Fact]
     public void FileLookupFailureIsContainedToTheAffectedAssets()
     {
         var report = new ModelPreviewAssetResolver(_ => throw new IOException("Unavailable"))

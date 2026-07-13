@@ -185,7 +185,7 @@ public sealed class ModelPreviewAssetResolver
         {
             (byte)NpcAge.Young => Codes(specificCode, "c0104", "c0101").ToArray(),
             (byte)NpcAge.Old => Codes(specificCode, "c0103", "c0101").ToArray(),
-            _ => Codes(adultCode, fallbackCode).ToArray(),
+            _ => Codes(adultCode, fallbackCode, "c0101").ToArray(),
         };
 
     private static int HumanModelFamily(byte race, byte tribe, byte sex)

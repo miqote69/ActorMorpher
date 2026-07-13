@@ -32,6 +32,8 @@ Enable Full diagnostics before testing native appearance operations. Stop after 
 - [ ] Young NPC previews with shared Human Hands or Feet render every equipped part
 - [ ] Demihuman hair stored in Head or Hands uses its MTRL `g_DiffuseColor` rather than the fallback palette
 - [ ] Au Ra Young NPC Face values such as 102 resolve the corresponding `f0002` model and render clan skin color
+- [ ] Human equipment previews apply Stain 1 and Stain 2 only to MTRL rows assigned to the corresponding dye channel
+- [ ] Human Feet and Hands use a shared `c0101` model with PBD deformation when the gender-specific model is absent
 - [ ] Left-drag rotates the static preview and mouse wheel changes zoom
 - [ ] Reset Camera restores the initial static preview framing
 - [ ] Missing or malformed optional Demihuman parts do not suppress valid parts
