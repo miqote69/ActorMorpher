@@ -19,13 +19,16 @@ public sealed class SoftwareModelPreviewSceneBuilder
 
     private readonly Func<string, bool> showBackfaces;
     private readonly Func<string, bool> isBodySkin;
+    private readonly Func<string, bool> isLowerBodyEquipment;
 
     public SoftwareModelPreviewSceneBuilder(
         Func<string, bool>? showBackfaces = null,
-        Func<string, bool>? isBodySkin = null)
+        Func<string, bool>? isBodySkin = null,
+        Func<string, bool>? isLowerBodyEquipment = null)
     {
         this.showBackfaces = showBackfaces ?? (_ => true);
         this.isBodySkin = isBodySkin ?? (_ => false);
+        this.isLowerBodyEquipment = isLowerBodyEquipment ?? (_ => false);
     }
 
     public SoftwareModelPreviewScene Build(IReadOnlyList<ModelPreviewCpuModel> models)
@@ -47,6 +50,7 @@ public sealed class SoftwareModelPreviewSceneBuilder
                 var color = GetMeshColor(mesh.MaterialPath, meshIndex++);
                 var materialShowsBackfaces = ShowsBackfaces(mesh.MaterialPath);
                 var materialIsBodySkin = IsBodySkin(mesh.MaterialPath);
+                var materialIsLowerBodyEquipment = IsLowerBodyEquipment(mesh.MaterialPath);
                 for (var index = 0; index < mesh.Indices.Length; index += 3)
                 {
                     var first = mesh.Vertices[mesh.Indices[index]];
@@ -69,7 +73,8 @@ public sealed class SoftwareModelPreviewSceneBuilder
                         color,
                         mesh.MaterialPath,
                         materialShowsBackfaces,
-                        materialIsBodySkin));
+                        materialIsBodySkin,
+                        materialIsLowerBodyEquipment));
                 }
             }
         }
@@ -109,6 +114,18 @@ public sealed class SoftwareModelPreviewSceneBuilder
         try
         {
             return isBodySkin(materialPath);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private bool IsLowerBodyEquipment(string materialPath)
+    {
+        try
+        {
+            return isLowerBodyEquipment(materialPath);
         }
         catch
         {

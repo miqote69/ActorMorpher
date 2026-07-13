@@ -60,6 +60,10 @@ public sealed class LuminaModelGeometrySource
         => !string.IsNullOrWhiteSpace(materialPath)
         && GetMaterialRenderInfo(materialPath).IsBodySkin;
 
+    public bool IsLowerBodyEquipment(string materialPath)
+        => !string.IsNullOrWhiteSpace(materialPath)
+        && GetMaterialRenderInfo(materialPath).IsLowerBodyEquipment;
+
     public ModelPreviewCpuModel? LoadCpuModel(
         string path,
         byte requestedVariant,
@@ -104,20 +108,22 @@ public sealed class LuminaModelGeometrySource
 
     private MaterialRenderInfo LoadMaterialRenderInfo(string materialPath)
     {
+        var isLowerBodyEquipment = materialPath.Contains("/equipment/", StringComparison.Ordinal)
+            && materialPath.Contains("_dwn_", StringComparison.OrdinalIgnoreCase);
         try
         {
             var data = dataManager.GetFile(materialPath)?.Data;
             if (data is null)
-                return MaterialRenderInfo.Unknown;
+                return new MaterialRenderInfo(true, false, isLowerBodyEquipment);
             var material = materialParser.Parse(data);
             var isBodySkin = materialPath.Contains("/obj/body/", StringComparison.Ordinal)
                 && material.ShaderPackage.EndsWith("skin.shpk", StringComparison.OrdinalIgnoreCase);
-            return new MaterialRenderInfo(material.ShowBackfaces, isBodySkin);
+            return new MaterialRenderInfo(material.ShowBackfaces, isBodySkin, isLowerBodyEquipment);
         }
         catch
         {
             // Unknown materials stay visible instead of losing geometry.
-            return MaterialRenderInfo.Unknown;
+            return new MaterialRenderInfo(true, false, isLowerBodyEquipment);
         }
     }
 
@@ -189,8 +195,8 @@ public sealed class LuminaModelGeometrySource
         return true;
     }
 
-    private readonly record struct MaterialRenderInfo(bool ShowBackfaces, bool IsBodySkin)
-    {
-        public static MaterialRenderInfo Unknown => new(true, false);
-    }
+    private readonly record struct MaterialRenderInfo(
+        bool ShowBackfaces,
+        bool IsBodySkin,
+        bool IsLowerBodyEquipment);
 }

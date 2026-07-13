@@ -4,7 +4,8 @@ namespace ActorMorpher.Preview;
 
 public static class SoftwareModelPreviewProjector
 {
-    private const float BodySkinDepthOffsetFactor = 0.025f;
+    private const float BodySkinDepthOffsetFactor = 0.05f;
+    private const float LowerBodyEquipmentDepthOffsetFactor = 0.025f;
     private static readonly Vector3 LightDirection = Vector3.Normalize(new Vector3(-0.35f, 0.55f, 0.75f));
 
     public static IReadOnlyList<SoftwareModelPreviewProjectedTriangle> Project(
@@ -50,15 +51,15 @@ public static class SoftwareModelPreviewProjector
                 triangle.FirstUv,
                 triangle.SecondUv,
                 triangle.ThirdUv,
-                (first.Z + second.Z + third.Z) / 3.0f
-                    - (triangle.IsBodySkin ? maximumExtent * BodySkinDepthOffsetFactor : 0.0f),
+                (first.Z + second.Z + third.Z) / 3.0f - maximumExtent * GetDepthOffsetFactor(triangle),
                 color,
                 Tint(firstBrightness),
                 Tint(secondBrightness),
                 Tint(thirdBrightness),
                 triangle.MaterialPath,
                 isBackFacing,
-                triangle.IsBodySkin));
+                triangle.IsBodySkin,
+                triangle.IsLowerBodyEquipment));
         }
         projected.Sort(static (left, right) =>
         {
@@ -87,4 +88,11 @@ public static class SoftwareModelPreviewProjector
 
     private static Vector4 Tint(float brightness)
         => new(brightness, brightness, brightness, 1.0f);
+
+    private static float GetDepthOffsetFactor(SoftwareModelPreviewTriangle triangle)
+        => triangle.IsBodySkin
+            ? BodySkinDepthOffsetFactor
+            : triangle.IsLowerBodyEquipment
+                ? LowerBodyEquipmentDepthOffsetFactor
+                : 0.0f;
 }

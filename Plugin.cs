@@ -129,7 +129,8 @@ public sealed class Plugin : IDalamudPlugin
             GetModelPreviewAssets,
             modelPreviewGeometrySource.LoadCpuModel,
             modelPreviewGeometrySource.ShowsBackfaces,
-            modelPreviewGeometrySource.IsBodySkin);
+            modelPreviewGeometrySource.IsBodySkin,
+            modelPreviewGeometrySource.IsLowerBodyEquipment);
         modelPreview = new ModelPreviewController(
             Framework,
             softwareModelPreviewBackend,

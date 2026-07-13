@@ -164,6 +164,42 @@ public sealed class SoftwareModelPreviewTests
     }
 
     [Fact]
+    public void ProjectorOrdersSkinThenLowerBodyThenOuterClothing()
+    {
+        static ModelPreviewCpuMesh Mesh(int index, string material, float z)
+        {
+            var vertices = new[]
+            {
+                Vertex(-1, -1, z),
+                Vertex(1, -1, z),
+                Vertex(1, 1, z),
+            };
+            var bounds = new ModelPreviewBounds(new Vector3(-1, -1, 0), new Vector3(1, 1, 0.02f));
+            return new ModelPreviewCpuMesh(index, material, vertices, [0, 1, 2], bounds);
+        }
+
+        var bounds = new ModelPreviewBounds(new Vector3(-1, -1, 0), new Vector3(1, 1, 0.02f));
+        var scene = new SoftwareModelPreviewSceneBuilder(
+            _ => false,
+            path => path == "body-skin",
+            path => path == "lower-body").Build(
+            [new ModelPreviewCpuModel(
+                [Mesh(0, "body-skin", 0.02f), Mesh(1, "lower-body", 0.01f), Mesh(2, "outer", 0)],
+                Array.Empty<ModelPreviewMeshIssue>(),
+                bounds)]);
+
+        var projected = SoftwareModelPreviewProjector.Project(
+            new(scene, 0, 0, 1),
+            Vector2.Zero,
+            new Vector2(300, 300));
+
+        Assert.Equal(3, projected.Count);
+        Assert.True(projected[0].IsBodySkin);
+        Assert.True(projected[1].IsLowerBodyEquipment);
+        Assert.Equal("outer", projected[2].MaterialPath);
+    }
+
+    [Fact]
     public void ZoomIncreasesProjectedSize()
     {
         var scene = new SoftwareModelPreviewSceneBuilder().Build([Model([0, 1, 2])]);
