@@ -4,6 +4,8 @@ Actor Morpher is a standalone Dalamud plugin for changing the appearance of visi
 
 It can search and apply Human, Demihuman, and Monster models, restore captured appearances, and apply outfits to multiple actors. It does not require Glamourer or Penumbra IPC.
 
+Its primary purpose is to support mod development by making it easier to verify mod behavior across different character types.
+
 > [!CAUTION]
 > Actor Morpher is under active development. Appearance application or restoration may fail, leave an actor in an incorrect visual state, or crash the game. Enable diagnostics before testing and use the plugin at your own risk.
 
