@@ -65,6 +65,7 @@ Bulk Outfit supports Head, Body, Hands, Legs, Feet, Ears, Neck, Wrists, Right Ri
 - Supports English, Japanese, German, and French UI text.
 - Model names, NPC names, race names, and item names follow the selected FFXIV data language.
 - The plugin language can follow the game automatically or be selected in Settings.
+- Korean and Chinese FFXIV client versions have not been tested because no compatible test environment is available; whether the plugin works correctly on those clients is unknown.
 
 ### Diagnostics
 
