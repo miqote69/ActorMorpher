@@ -86,6 +86,7 @@ Bulk Outfit supports Head, Body, Hands, Legs, Feet, Ears, Neck, Wrists, Right Ri
 
 ## Documentation
 
+- [Project Wiki](https://github.com/miqote69/ActorMorpher/wiki)
 - [Model preview architecture](docs/MODEL_PREVIEW.md)
 - [Penumbra compatibility](docs/PENUMBRA_COMPATIBILITY.md)
 - [Diagnostics](docs/DIAGNOSTICS.md)
