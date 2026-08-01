@@ -19,9 +19,9 @@
     "MinimumDalamudVersion": "15.0.0.0",
     "IsHide": false,
     "IsTestingExclusive": false,
-    "DownloadLinkInstall": "https://github.com/miqote69/ActorMorpher/releases/download/v0.0.0.44/ActorMorpher.zip",
-    "DownloadLinkTesting": "https://github.com/miqote69/ActorMorpher/releases/download/v0.0.0.44/ActorMorpher.zip",
-    "DownloadLinkUpdate": "https://github.com/miqote69/ActorMorpher/releases/download/v0.0.0.44/ActorMorpher.zip",
+    "DownloadLinkInstall": "https://downloads.miqote69.com/actor-morpher/v0.0.0.44/install",
+    "DownloadLinkTesting": "https://downloads.miqote69.com/actor-morpher/v0.0.0.44/testing",
+    "DownloadLinkUpdate": "https://downloads.miqote69.com/actor-morpher/v0.0.0.44/update",
     "DownloadCount": 0,
     "LastUpdate": 1785514581
   }
