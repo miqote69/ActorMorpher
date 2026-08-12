@@ -247,7 +247,7 @@ public sealed class Plugin : IDalamudPlugin
         => actorIdentity.TryResolve(actorRegistry, key, out actor);
 
     public BulkOutfitPreview GetBulkOutfitPreview(BulkOutfitSettings settings)
-        => bulkOutfitTargetResolver.Resolve(GetBulkOutfitActors(), settings);
+        => bulkOutfitTargetResolver.Resolve(GetBulkOutfitActors(), settings, SelectBulkOutfitRepresentation);
 
     public bool RefreshSourceOutfit(out string message)
     {
@@ -296,6 +296,9 @@ public sealed class Plugin : IDalamudPlugin
         => bulkOutfitService.Cancel();
 
     public OutfitData? SourceOutfit => bulkOutfitService.SourceOutfit;
+    public bool TryUnequipSourceOutfitSlot(OutfitSlot slot, out string message)
+        => bulkOutfitService.TryUnequipSourceSlot(slot, out message);
+
     public IReadOnlyList<EquipmentDisplayEntry> GetOutfitEquipment(OutfitData? outfit)
         => outfit is { } source
             ? source.Equipment.Select((armor, index) => CreateEquipmentDisplay(
@@ -370,6 +373,16 @@ public sealed class Plugin : IDalamudPlugin
             ClientState.IsGPosing,
             gposeCoordinator.State == GPoseState.Ready,
             key => actorRegistry.TryGetGPoseLocalPlayer(key, out _));
+
+    private ActorSnapshot? SelectBulkOutfitRepresentation(ActorEntry actor)
+    {
+        ActorSnapshot? directGPose = null;
+        if (ClientState.IsGPosing
+            && actor.IsLocalPlayer
+            && actorRegistry.TryGetGPoseLocalPlayer(actor.Key, out var resolvedGPose))
+            directGPose = resolvedGPose;
+        return RegistryActorResolver.SelectRepresentation(actor, ClientState.IsGPosing, directGPose);
+    }
 
     private bool CanStartBulkOutfitInCurrentContext(out string message)
     {

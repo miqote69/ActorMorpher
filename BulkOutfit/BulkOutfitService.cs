@@ -82,6 +82,28 @@ public sealed class BulkOutfitService : IDisposable
         return true;
     }
 
+    public bool TryUnequipSourceSlot(OutfitSlot slot, out string message)
+    {
+        if (SourceOutfit is null)
+        {
+            message = "Refresh the source outfit before editing it.";
+            return false;
+        }
+        if (!unequipProvider.TryGetNothing(slot, out var emptyAppearance))
+        {
+            message = $"The unequipped appearance for {slot} is unavailable.";
+            return false;
+        }
+
+        SourceOutfit = SourceOutfit with
+        {
+            Equipment = SourceOutfit.Equipment.SetItem((int)slot, emptyAppearance),
+        };
+        message = $"Removed {slot} from the source outfit.";
+        LastStatus = message;
+        return true;
+    }
+
     public bool StartApply(IReadOnlyList<LogicalActorKey> targets, out string message)
     {
         return Start(

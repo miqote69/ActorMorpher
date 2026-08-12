@@ -15,34 +15,40 @@ public sealed class BulkOutfitTargetResolver
         this.language = language ?? (() => ClientLanguage.English);
     }
 
-    public BulkOutfitPreview Resolve(IReadOnlyList<ActorEntry> actors, BulkOutfitSettings settings)
+    public BulkOutfitPreview Resolve(
+        IReadOnlyList<ActorEntry> actors,
+        BulkOutfitSettings settings,
+        Func<ActorEntry, ActorSnapshot?>? selectRepresentation = null)
     {
+        selectRepresentation ??= static actor => actor.Current;
         var included = actors
             .Where(actor => settings.IncludeYourself || !actor.IsLocalPlayer)
-            .Where(actor => Matches(actor, settings.Target))
+            .Select(actor => (Actor: actor, Representation: selectRepresentation(actor)))
+            .Where(static candidate => candidate.Representation is not null)
+            .Where(candidate => Matches(candidate.Actor, candidate.Representation!, settings.Target))
             .ToArray();
         var excluded = settings.Exclusion is { } exclusion
-            ? included.Where(actor => Matches(actor, exclusion)).ToArray()
-            : Array.Empty<ActorEntry>();
-        var excludedKeys = excluded.Select(static actor => actor.Key).ToHashSet();
-        var matching = included.Where(actor => !excludedKeys.Contains(actor.Key)).ToArray();
+            ? included.Where(candidate => Matches(candidate.Actor, candidate.Representation!, exclusion)).ToArray()
+            : [];
+        var excludedKeys = excluded.Select(static candidate => candidate.Actor.Key).ToHashSet();
+        var matching = included.Where(candidate => !excludedKeys.Contains(candidate.Actor.Key)).ToArray();
         var eligible = matching
-            .Where(static actor => actor.Representations.Count > 0 && actor.Current.Race is not null)
-            .Select(static actor => actor.Key)
+            .Where(static candidate => candidate.Actor.Representations.Count > 0 && candidate.Representation!.Race is not null)
+            .Select(static candidate => candidate.Actor.Key)
             .Distinct()
             .ToArray();
-        var unavailable = matching.Count(static actor => actor.Representations.Count == 0);
+        var unavailable = matching.Count(static candidate => candidate.Actor.Representations.Count == 0);
 
         return new BulkOutfitPreview(
             matching.Length,
             excluded.Length,
             eligible.Length,
-            matching.Count(static actor => actor.Representations.Count > 0 && actor.Current.Race is null),
+            matching.Count(static candidate => candidate.Actor.Representations.Count > 0 && candidate.Representation!.Race is null),
             unavailable,
             eligible);
     }
 
-    private bool Matches(ActorEntry actor, BulkOutfitFilter filter)
+    private bool Matches(ActorEntry actor, ActorSnapshot representation, BulkOutfitFilter filter)
     {
         if (!string.IsNullOrWhiteSpace(filter.Name)
             && !GameTextComparison.Contains(actor.Name, filter.Name, language()))
@@ -51,8 +57,11 @@ public sealed class BulkOutfitTargetResolver
             return false;
         if (filter.ActorType == ActorTargetType.Npcs && actor.Kind == ObjectKind.Pc)
             return false;
-        if (filter.Race != 0 && actor.Race != filter.Race)
+        if (filter.ActorType == ActorTargetType.YoungNpcs
+            && (actor.Kind == ObjectKind.Pc || representation.BodyType != (byte)NpcAge.Young))
             return false;
-        return filter.Gender is null || actor.Gender == filter.Gender;
+        if (filter.Race != 0 && representation.Race != filter.Race)
+            return false;
+        return filter.Gender is null || representation.Gender == filter.Gender;
     }
 }

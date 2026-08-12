@@ -5,6 +5,7 @@ public enum ActorTargetType
     All,
     Players,
     Npcs,
+    YoungNpcs,
 }
 
 public sealed record BulkOutfitFilter(

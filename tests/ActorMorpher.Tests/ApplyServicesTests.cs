@@ -324,6 +324,34 @@ public sealed class ApplyServicesTests
         Assert.All(desired.Equipment, static armor => Assert.Equal((ushort)0, armor.Set));
     }
 
+    [Fact]
+    public void SourceSlotUnequipClearsOnlyTheSelectedEquipmentSlot()
+    {
+        var actor = Snapshot(1);
+        var source = Outfit(20);
+        var memory = new FakeOutfitMemory(new Dictionary<LogicalActorKey, OutfitData>
+        {
+            [actor.LogicalKey] = source,
+        });
+        using var service = new BulkOutfitService(
+            new FakeResolver(actor),
+            memory,
+            new FakeContext(),
+            new OutfitOverrideStore(),
+            NullDiagnosticLog.Instance);
+
+        Assert.True(service.RefreshSource(actor.LogicalKey, out _));
+        Assert.True(service.TryUnequipSourceSlot(OutfitSlot.Body, out _));
+
+        var edited = Assert.IsType<OutfitData>(service.SourceOutfit);
+        Assert.Equal(default, edited.Equipment[(int)OutfitSlot.Body]);
+        foreach (var slot in Enum.GetValues<OutfitSlot>().Where(static slot => slot != OutfitSlot.Body))
+            Assert.Equal(source.Equipment[(int)slot], edited.Equipment[(int)slot]);
+        Assert.Equal(source.Facewear, edited.Facewear);
+        Assert.Equal(source.HatVisible, edited.HatVisible);
+        Assert.Equal(source.VisorToggled, edited.VisorToggled);
+    }
+
     private static void Process(RedrawCoordinator coordinator, int frames)
     {
         for (var frame = 0; frame < frames; ++frame)

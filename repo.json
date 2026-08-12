@@ -4,7 +4,7 @@
     "Name": "Actor Morpher",
     "Description": "Standalone Human, Demihuman, and Monster morphing with actor restore and bulk outfits.",
     "InternalName": "ActorMorpher",
-    "AssemblyVersion": "0.0.0.44",
+    "AssemblyVersion": "0.0.0.45",
     "TestingAssemblyVersion": null,
     "RepoUrl": "https://github.com/miqote69/ActorMorpher",
     "IconUrl": "https://raw.githubusercontent.com/miqote69/ActorMorpher/main/images/icon-v18.png",
@@ -19,10 +19,10 @@
     "MinimumDalamudVersion": "15.0.0.0",
     "IsHide": false,
     "IsTestingExclusive": false,
-    "DownloadLinkInstall": "https://downloads.miqote69.com/actor-morpher/v0.0.0.44/install",
-    "DownloadLinkTesting": "https://downloads.miqote69.com/actor-morpher/v0.0.0.44/testing",
-    "DownloadLinkUpdate": "https://downloads.miqote69.com/actor-morpher/v0.0.0.44/update",
+    "DownloadLinkInstall": "https://downloads.miqote69.com/actor-morpher/v0.0.0.45/install",
+    "DownloadLinkTesting": "https://downloads.miqote69.com/actor-morpher/v0.0.0.45/testing",
+    "DownloadLinkUpdate": "https://downloads.miqote69.com/actor-morpher/v0.0.0.45/update",
     "DownloadCount": 0,
-    "LastUpdate": 1785514581
+    "LastUpdate": 1786538665
   }
 ]

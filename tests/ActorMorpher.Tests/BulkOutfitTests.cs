@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System;
+using System.Linq;
 using ActorMorpher.Actors;
 using ActorMorpher.BulkOutfit;
 using Dalamud.Game.ClientState.Objects.Enums;
@@ -94,13 +95,61 @@ public sealed class BulkOutfitTests
         Assert.Equal(npc.Key, Assert.Single(preview.EligibleTargets));
     }
 
+    [Fact]
+    public void YoungNpcTargetIncludesOnlyYoungNpcActors()
+    {
+        var youngNpc = Entry(2, "Young NPC", ObjectKind.EventNpc, 0, false, bodyType: (byte)NpcAge.Young);
+        var adultNpc = Entry(3, "Adult NPC", ObjectKind.EventNpc, 0, false, bodyType: (byte)NpcAge.Normal);
+        var player = Entry(4, "Player", ObjectKind.Pc, 0, true, bodyType: (byte)NpcAge.Young);
+        var settings = new BulkOutfitSettings(ActorTargetType.YoungNpcs, 0, null, string.Empty, true);
+
+        var preview = new BulkOutfitTargetResolver().Resolve([youngNpc, adultNpc, player], settings);
+
+        Assert.Equal(1, preview.MatchingLogicalActors);
+        Assert.Equal(youngNpc.Key, Assert.Single(preview.EligibleTargets));
+    }
+
+    [Fact]
+    public void YoungNpcExclusionOverridesMatchingNpcTarget()
+    {
+        var youngNpc = Entry(2, "Young NPC", ObjectKind.EventNpc, 0, false, bodyType: (byte)NpcAge.Young);
+        var adultNpc = Entry(3, "Adult NPC", ObjectKind.EventNpc, 0, false, bodyType: (byte)NpcAge.Normal);
+        var settings = new BulkOutfitSettings(
+            new BulkOutfitFilter(ActorTargetType.Npcs, 0, null, string.Empty),
+            new BulkOutfitFilter(ActorTargetType.YoungNpcs, 0, null, string.Empty),
+            false);
+
+        var preview = new BulkOutfitTargetResolver().Resolve([youngNpc, adultNpc], settings);
+
+        Assert.Equal(1, preview.ExcludedLogicalActors);
+        Assert.Equal(adultNpc.Key, Assert.Single(preview.EligibleTargets));
+    }
+
+    [Fact]
+    public void YoungNpcFilterUsesTheRepresentationSelectedForApplication()
+    {
+        var normal = Snapshot(2, ObjectKind.EventNpc, false, (byte)NpcAge.Normal);
+        var gpose = Snapshot(202, ObjectKind.EventNpc, true, (byte)NpcAge.Young, normal.LogicalKey);
+        var actor = new ActorEntry(normal.LogicalKey, normal.Name, normal.ObjectKind, false, [normal, gpose]);
+        var settings = new BulkOutfitSettings(ActorTargetType.YoungNpcs, 0, null, string.Empty, false);
+
+        var preview = new BulkOutfitTargetResolver().Resolve(
+            [actor],
+            settings,
+            candidate => candidate.Representations.Single(representation => representation.RepresentationKey.IsGPoseRepresentation));
+
+        Assert.Equal(1, preview.MatchingLogicalActors);
+        Assert.Equal(actor.Key, Assert.Single(preview.EligibleTargets));
+    }
+
     private static ActorEntry Entry(
         ushort index,
         string name,
         ObjectKind kind,
         uint modelCharaId,
         bool isLocalPlayer,
-        bool? isHuman = null)
+        bool? isHuman = null,
+        byte? bodyType = null)
     {
         var human = isHuman ?? modelCharaId == 0;
         var logical = new LogicalActorKey(index, index, index, index, kind, 30);
@@ -114,10 +163,33 @@ public sealed class BulkOutfitTests
             modelCharaId,
             human ? (byte)1 : null,
             human ? (byte)0 : null,
-            human ? (byte)1 : null,
+            human ? bodyType ?? (byte)NpcAge.Normal : null,
             0,
             0,
             isLocalPlayer);
         return new ActorEntry(logical, name, kind, isLocalPlayer, new List<ActorSnapshot> { snapshot });
+    }
+
+    private static ActorSnapshot Snapshot(
+        ushort index,
+        ObjectKind kind,
+        bool isGPosing,
+        byte bodyType,
+        LogicalActorKey? logicalKey = null)
+    {
+        var logical = logicalKey ?? new LogicalActorKey(index, index, index, index, kind, 30);
+        return new ActorSnapshot(
+            logical,
+            new ActorRepresentationKey(index, index, index, isGPosing),
+            $"Actor {index}",
+            kind,
+            index,
+            0,
+            1,
+            0,
+            bodyType,
+            0,
+            0,
+            false);
     }
 }

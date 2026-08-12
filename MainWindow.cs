@@ -274,7 +274,7 @@ public sealed class MainWindow : Window, IDisposable
             plugin.RefreshSourceOutfit(out bulkActionStatus);
 
         var source = plugin.SourceOutfit;
-        DrawOutfitDisplay("source-outfit", source);
+        DrawOutfitDisplay("source-outfit", source, true);
 
         ImGui.Separator();
         ImGui.TextUnformatted(T(TextKey.TargetFilters));
@@ -397,7 +397,7 @@ public sealed class MainWindow : Window, IDisposable
         ImGui.InputTextWithHint($"{T(TextKey.Name)}###bulk-{id}-name", T(TextKey.FilterByName), ref name, 128);
     }
 
-    private void DrawOutfitDisplay(string id, OutfitData? outfit)
+    private void DrawOutfitDisplay(string id, OutfitData? outfit, bool allowSourceEditing = false)
     {
         var equipment = plugin.GetOutfitEquipment(outfit).ToDictionary(static item => item.Slot);
         if (ImGui.BeginTable($"##{id}-table", 6, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
@@ -415,7 +415,9 @@ public sealed class MainWindow : Window, IDisposable
                 equipment.TryGetValue(slot, out var item);
                 ImGui.TableNextRow();
                 ImGui.TableNextColumn(); ImGui.TextUnformatted(slot.ToString());
-                ImGui.TableNextColumn(); DrawEquipmentItem(outfit is not null, item);
+                ImGui.TableNextColumn();
+                if (DrawEquipmentItem(outfit is not null, item, allowSourceEditing))
+                    plugin.TryUnequipSourceOutfitSlot(slot, out bulkActionStatus);
                 ImGui.TableNextColumn(); ImGui.TextUnformatted(outfit is null ? "-" : EquipmentDisplayFormatting.FormatSet(slot, armor.Set));
                 ImGui.TableNextColumn(); ImGui.TextUnformatted(outfit is null ? "-" : EquipmentDisplayFormatting.FormatVariant(armor.Variant));
                 ImGui.TableNextColumn(); DrawStainSwatch($"{id}-{slot}-1", outfit is not null, armor.Stain1);
@@ -433,13 +435,22 @@ public sealed class MainWindow : Window, IDisposable
         ImGui.TextUnformatted($"{T(TextKey.Visor)}: {(outfit.VisorToggled ? T(TextKey.Toggled) : T(TextKey.Normal))}");
     }
 
-    private void DrawEquipmentItem(bool sourceAvailable, EquipmentDisplayEntry? item)
+    private bool DrawEquipmentItem(bool sourceAvailable, EquipmentDisplayEntry? item, bool allowSourceEditing)
     {
         var iconSize = new Vector2(32.0f, 32.0f);
+        var iconRendered = false;
         if (sourceAvailable && item is { IconId: > 0 } && plugin.TryGetIconTexture(item.IconId, out var texture))
+        {
             ImGui.Image(texture!.Handle, iconSize);
+            iconRendered = true;
+        }
         else
             ImGui.Dummy(iconSize);
+        var removeRequested = allowSourceEditing
+            && sourceAvailable
+            && iconRendered
+            && ImGui.IsItemHovered()
+            && ImGui.IsMouseClicked(ImGuiMouseButton.Right);
         ImGui.SameLine();
         ImGui.AlignTextToFramePadding();
         var name = !sourceAvailable
@@ -450,6 +461,7 @@ public sealed class MainWindow : Window, IDisposable
                     ? T(TextKey.Unavailable)
                     : item.Name;
         ImGui.TextWrapped(name);
+        return removeRequested;
     }
 
     private void DrawStainSwatch(string id, bool sourceAvailable, byte stainId)
@@ -1288,7 +1300,7 @@ public sealed class MainWindow : Window, IDisposable
     }
 
     private string[] CategoryNames() => [T(TextKey.Human), T(TextKey.Demihuman), T(TextKey.Monster)];
-    private string[] ActorTypeNames() => [T(TextKey.All), T(TextKey.Players), T(TextKey.Npcs)];
+    private string[] ActorTypeNames() => [T(TextKey.All), T(TextKey.Players), T(TextKey.Npcs), T(TextKey.YoungNpc)];
     private string GetRaceFilterName(int index) => HumanRaces[index] == 0 ? T(TextKey.AnyRace) : plugin.GetRaceName(HumanRaces[index]);
     private string GetTribeFilterName(uint tribe) => tribe == 0 ? T(TextKey.AnyTribe) : plugin.GetTribeName(tribe);
     private string GetGenderFilterName(int index) => HumanGenders[index] == byte.MaxValue ? T(TextKey.AnyGender) : GetGenderName(HumanGenders[index]);
