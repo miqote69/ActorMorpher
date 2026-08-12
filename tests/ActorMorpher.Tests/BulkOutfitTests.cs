@@ -52,7 +52,7 @@ public sealed class BulkOutfitTests
     public void ExclusionWinsWhenTargetAndExclusionConditionsAreIdentical()
     {
         var humanNpc = Entry(2, "Human", ObjectKind.EventNpc, 0, false);
-        var filter = new BulkOutfitFilter(ActorTargetType.Npcs, 1, 0, "Human");
+        var filter = new BulkOutfitFilter(ActorTargetType.Npcs, 1, 0, BulkOutfitAge.All, "Human");
         var settings = new BulkOutfitSettings(filter, filter, false);
 
         var preview = new BulkOutfitTargetResolver().Resolve([humanNpc], settings);
@@ -68,8 +68,8 @@ public sealed class BulkOutfitTests
         var first = Entry(2, "Young Human", ObjectKind.EventNpc, 0, false);
         var second = Entry(3, "Adult Human", ObjectKind.EventNpc, 0, false);
         var settings = new BulkOutfitSettings(
-            new BulkOutfitFilter(ActorTargetType.Npcs, 1, null, string.Empty),
-            new BulkOutfitFilter(ActorTargetType.Npcs, 1, null, "Young"),
+            new BulkOutfitFilter(ActorTargetType.Npcs, 1, null, BulkOutfitAge.All, string.Empty),
+            new BulkOutfitFilter(ActorTargetType.Npcs, 1, null, BulkOutfitAge.All, "Young"),
             false);
 
         var preview = new BulkOutfitTargetResolver().Resolve([first, second], settings);
@@ -85,8 +85,8 @@ public sealed class BulkOutfitTests
         var player = Entry(1, "Player", ObjectKind.Pc, 0, true);
         var npc = Entry(2, "Human", ObjectKind.EventNpc, 0, false);
         var settings = new BulkOutfitSettings(
-            new BulkOutfitFilter(ActorTargetType.All, 0, null, string.Empty),
-            new BulkOutfitFilter(ActorTargetType.Players, 0, null, string.Empty),
+            new BulkOutfitFilter(ActorTargetType.All, 0, null, BulkOutfitAge.All, string.Empty),
+            new BulkOutfitFilter(ActorTargetType.Players, 0, null, BulkOutfitAge.All, string.Empty),
             true);
 
         var preview = new BulkOutfitTargetResolver().Resolve([player, npc], settings);
@@ -96,27 +96,31 @@ public sealed class BulkOutfitTests
     }
 
     [Fact]
-    public void YoungNpcTargetIncludesOnlyYoungNpcActors()
+    public void ChildAgeIncludesOnlyYoungHumanActors()
     {
         var youngNpc = Entry(2, "Young NPC", ObjectKind.EventNpc, 0, false, bodyType: (byte)NpcAge.Young);
         var adultNpc = Entry(3, "Adult NPC", ObjectKind.EventNpc, 0, false, bodyType: (byte)NpcAge.Normal);
         var player = Entry(4, "Player", ObjectKind.Pc, 0, true, bodyType: (byte)NpcAge.Young);
-        var settings = new BulkOutfitSettings(ActorTargetType.YoungNpcs, 0, null, string.Empty, true);
+        var settings = new BulkOutfitSettings(
+            new BulkOutfitFilter(ActorTargetType.All, 0, null, BulkOutfitAge.Child, string.Empty),
+            null,
+            true);
 
         var preview = new BulkOutfitTargetResolver().Resolve([youngNpc, adultNpc, player], settings);
 
-        Assert.Equal(1, preview.MatchingLogicalActors);
-        Assert.Equal(youngNpc.Key, Assert.Single(preview.EligibleTargets));
+        Assert.Equal(2, preview.MatchingLogicalActors);
+        Assert.Contains(youngNpc.Key, preview.EligibleTargets);
+        Assert.Contains(player.Key, preview.EligibleTargets);
     }
 
     [Fact]
-    public void YoungNpcExclusionOverridesMatchingNpcTarget()
+    public void ChildAgeExclusionOverridesMatchingNpcTarget()
     {
         var youngNpc = Entry(2, "Young NPC", ObjectKind.EventNpc, 0, false, bodyType: (byte)NpcAge.Young);
         var adultNpc = Entry(3, "Adult NPC", ObjectKind.EventNpc, 0, false, bodyType: (byte)NpcAge.Normal);
         var settings = new BulkOutfitSettings(
-            new BulkOutfitFilter(ActorTargetType.Npcs, 0, null, string.Empty),
-            new BulkOutfitFilter(ActorTargetType.YoungNpcs, 0, null, string.Empty),
+            new BulkOutfitFilter(ActorTargetType.Npcs, 0, null, BulkOutfitAge.All, string.Empty),
+            new BulkOutfitFilter(ActorTargetType.Npcs, 0, null, BulkOutfitAge.Child, string.Empty),
             false);
 
         var preview = new BulkOutfitTargetResolver().Resolve([youngNpc, adultNpc], settings);
@@ -126,12 +130,15 @@ public sealed class BulkOutfitTests
     }
 
     [Fact]
-    public void YoungNpcFilterUsesTheRepresentationSelectedForApplication()
+    public void ChildAgeFilterUsesTheRepresentationSelectedForApplication()
     {
         var normal = Snapshot(2, ObjectKind.EventNpc, false, (byte)NpcAge.Normal);
         var gpose = Snapshot(202, ObjectKind.EventNpc, true, (byte)NpcAge.Young, normal.LogicalKey);
         var actor = new ActorEntry(normal.LogicalKey, normal.Name, normal.ObjectKind, false, [normal, gpose]);
-        var settings = new BulkOutfitSettings(ActorTargetType.YoungNpcs, 0, null, string.Empty, false);
+        var settings = new BulkOutfitSettings(
+            new BulkOutfitFilter(ActorTargetType.Npcs, 0, null, BulkOutfitAge.Child, string.Empty),
+            null,
+            false);
 
         var preview = new BulkOutfitTargetResolver().Resolve(
             [actor],
@@ -140,6 +147,27 @@ public sealed class BulkOutfitTests
 
         Assert.Equal(1, preview.MatchingLogicalActors);
         Assert.Equal(actor.Key, Assert.Single(preview.EligibleTargets));
+    }
+
+    [Fact]
+    public void AdultAgeIncludesNormalAndOldHumansButNotChildrenOrNonHumans()
+    {
+        var adult = Entry(2, "Adult", ObjectKind.EventNpc, 0, false, bodyType: (byte)NpcAge.Normal);
+        var old = Entry(3, "Old", ObjectKind.EventNpc, 0, false, bodyType: (byte)NpcAge.Old);
+        var child = Entry(4, "Child", ObjectKind.EventNpc, 0, false, bodyType: (byte)NpcAge.Young);
+        var monster = Entry(5, "Monster", ObjectKind.BattleNpc, 100, false);
+        var settings = new BulkOutfitSettings(
+            new BulkOutfitFilter(ActorTargetType.All, 0, null, BulkOutfitAge.Adult, string.Empty),
+            null,
+            false);
+
+        var preview = new BulkOutfitTargetResolver().Resolve([adult, old, child, monster], settings);
+
+        Assert.Equal(2, preview.MatchingLogicalActors);
+        Assert.Contains(adult.Key, preview.EligibleTargets);
+        Assert.Contains(old.Key, preview.EligibleTargets);
+        Assert.DoesNotContain(child.Key, preview.EligibleTargets);
+        Assert.DoesNotContain(monster.Key, preview.EligibleTargets);
     }
 
     private static ActorEntry Entry(

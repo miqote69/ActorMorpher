@@ -5,13 +5,20 @@ public enum ActorTargetType
     All,
     Players,
     Npcs,
-    YoungNpcs,
+}
+
+public enum BulkOutfitAge
+{
+    All,
+    Adult,
+    Child,
 }
 
 public sealed record BulkOutfitFilter(
     ActorTargetType ActorType,
     uint Race,
     byte? Gender,
+    BulkOutfitAge Age,
     string Name);
 
 public sealed record BulkOutfitSettings(
@@ -25,7 +32,7 @@ public sealed record BulkOutfitSettings(
         byte? gender,
         string name,
         bool includeYourself)
-        : this(new BulkOutfitFilter(actorType, race, gender, name), null, includeYourself)
+        : this(new BulkOutfitFilter(actorType, race, gender, BulkOutfitAge.All, name), null, includeYourself)
     {
     }
 }

@@ -57,11 +57,21 @@ public sealed class BulkOutfitTargetResolver
             return false;
         if (filter.ActorType == ActorTargetType.Npcs && actor.Kind == ObjectKind.Pc)
             return false;
-        if (filter.ActorType == ActorTargetType.YoungNpcs
-            && (actor.Kind == ObjectKind.Pc || representation.BodyType != (byte)NpcAge.Young))
+        if (!MatchesAge(representation, filter.Age))
             return false;
         if (filter.Race != 0 && representation.Race != filter.Race)
             return false;
         return filter.Gender is null || representation.Gender == filter.Gender;
     }
+
+    private static bool MatchesAge(ActorSnapshot representation, BulkOutfitAge age)
+        => age switch
+        {
+            BulkOutfitAge.All => true,
+            BulkOutfitAge.Adult => representation.Race is not null
+                && representation.BodyType != (byte)NpcAge.Young,
+            BulkOutfitAge.Child => representation.Race is not null
+                && representation.BodyType == (byte)NpcAge.Young,
+            _ => false,
+        };
 }

@@ -25,6 +25,8 @@ public enum TextKey
     Male,
     Female,
     Adult,
+    Child,
+    Everyone,
     Old,
     YoungNpc,
     Unknown,

@@ -31,11 +31,13 @@ public sealed class MainWindow : Window, IDisposable
     private int bulkActorType;
     private int bulkRace;
     private int bulkGender;
+    private int bulkAge;
     private bool bulkExclusionEnabled;
     private string bulkExcludeNameFilter = string.Empty;
     private int bulkExcludeActorType;
     private int bulkExcludeRace;
     private int bulkExcludeGender;
+    private int bulkExcludeAge;
     private bool bulkIncludeYourself;
     private string bulkActionStatus = string.Empty;
     private string diagnosticMarker = string.Empty;
@@ -279,14 +281,14 @@ public sealed class MainWindow : Window, IDisposable
         ImGui.Separator();
         ImGui.TextUnformatted(T(TextKey.TargetFilters));
         ImGui.Checkbox($"{T(TextKey.IncludeYourself)}###bulk-include-yourself", ref bulkIncludeYourself);
-        DrawBulkFilterControls("target", ref bulkActorType, ref bulkRace, ref bulkGender, ref bulkNameFilter);
+        DrawBulkFilterControls("target", ref bulkActorType, ref bulkRace, ref bulkGender, ref bulkAge, ref bulkNameFilter);
 
         ImGui.Spacing();
         ImGui.TextUnformatted(T(TextKey.ExclusionFilters));
         ImGui.Checkbox($"{T(TextKey.EnableExclusionFilters)}###bulk-exclusion-enabled", ref bulkExclusionEnabled);
         if (!bulkExclusionEnabled)
             ImGui.BeginDisabled();
-        DrawBulkFilterControls("exclude", ref bulkExcludeActorType, ref bulkExcludeRace, ref bulkExcludeGender, ref bulkExcludeNameFilter);
+        DrawBulkFilterControls("exclude", ref bulkExcludeActorType, ref bulkExcludeRace, ref bulkExcludeGender, ref bulkExcludeAge, ref bulkExcludeNameFilter);
         if (!bulkExclusionEnabled)
             ImGui.EndDisabled();
 
@@ -297,12 +299,14 @@ public sealed class MainWindow : Window, IDisposable
                 (ActorTargetType)bulkActorType,
                 HumanRaces[bulkRace],
                 gender == byte.MaxValue ? null : gender,
+                (BulkOutfitAge)bulkAge,
                 bulkNameFilter),
             bulkExclusionEnabled
                 ? new BulkOutfitFilter(
                     (ActorTargetType)bulkExcludeActorType,
                     HumanRaces[bulkExcludeRace],
                     excludeGender == byte.MaxValue ? null : excludeGender,
+                    (BulkOutfitAge)bulkExcludeAge,
                     bulkExcludeNameFilter)
                 : null,
             bulkIncludeYourself));
@@ -368,10 +372,11 @@ public sealed class MainWindow : Window, IDisposable
         ref int actorType,
         ref int race,
         ref int gender,
+        ref int age,
         ref string name)
     {
         ImGui.SetNextItemWidth(160.0f);
-        var actorTypeNames = ActorTypeNames();
+        var actorTypeNames = BulkActorTypeNames();
         ImGui.Combo($"{T(TextKey.ActorType)}###bulk-{id}-actor-type", ref actorType, actorTypeNames, actorTypeNames.Length);
         ImGui.SetNextItemWidth(160.0f);
         if (ImGui.BeginCombo($"{T(TextKey.Race)}###bulk-{id}-race", GetRaceFilterName(race)))
@@ -393,6 +398,9 @@ public sealed class MainWindow : Window, IDisposable
             }
             ImGui.EndCombo();
         }
+        ImGui.SetNextItemWidth(160.0f);
+        var ageNames = BulkAgeNames();
+        ImGui.Combo($"{T(TextKey.Age)}###bulk-{id}-age", ref age, ageNames, ageNames.Length);
         ImGui.SetNextItemWidth(260.0f);
         ImGui.InputTextWithHint($"{T(TextKey.Name)}###bulk-{id}-name", T(TextKey.FilterByName), ref name, 128);
     }
@@ -1301,6 +1309,8 @@ public sealed class MainWindow : Window, IDisposable
 
     private string[] CategoryNames() => [T(TextKey.Human), T(TextKey.Demihuman), T(TextKey.Monster)];
     private string[] ActorTypeNames() => [T(TextKey.All), T(TextKey.Players), T(TextKey.Npcs), T(TextKey.YoungNpc)];
+    private string[] BulkActorTypeNames() => [T(TextKey.All), T(TextKey.Players), T(TextKey.Npcs)];
+    private string[] BulkAgeNames() => [T(TextKey.Everyone), T(TextKey.Adult), T(TextKey.Child)];
     private string GetRaceFilterName(int index) => HumanRaces[index] == 0 ? T(TextKey.AnyRace) : plugin.GetRaceName(HumanRaces[index]);
     private string GetTribeFilterName(uint tribe) => tribe == 0 ? T(TextKey.AnyTribe) : plugin.GetTribeName(tribe);
     private string GetGenderFilterName(int index) => HumanGenders[index] == byte.MaxValue ? T(TextKey.AnyGender) : GetGenderName(HumanGenders[index]);
