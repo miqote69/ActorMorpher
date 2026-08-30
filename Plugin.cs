@@ -59,6 +59,8 @@ public sealed class Plugin : IDalamudPlugin
     private readonly ModelPreviewTextureCache modelPreviewTextureCache;
     private readonly LocalPlayerAppearancePersistence localPlayerAppearancePersistence = new();
     private readonly LocalPlayerOutfitPersistence localPlayerOutfitPersistence = new();
+    private readonly CommandRegistrationLease primaryCommandRegistration;
+    private readonly CommandRegistrationLease aliasCommandRegistration;
     private readonly BulkOutfitTargetResolver bulkOutfitTargetResolver = new();
     private readonly Dictionary<ClientLanguage, IReadOnlyList<ModelSearchEntry>> modelSearchCaches = new();
     private readonly Dictionary<ClientLanguage, IReadOnlyDictionary<(OutfitSlot Slot, uint ModelKey), EquipmentItemDisplay>> equipmentDisplayCaches = new();
@@ -172,14 +174,9 @@ public sealed class Plugin : IDalamudPlugin
         mainWindow = new MainWindow(this);
         windowSystem.AddWindow(mainWindow);
 
-        CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
-        {
-            HelpMessage = "Open Actor Morpher.",
-        });
-        CommandManager.AddHandler(CommandAlias, new CommandInfo(OnCommand)
-        {
-            HelpMessage = "Open Actor Morpher.",
-        });
+        primaryCommandRegistration = CreateCommandRegistration(CommandName);
+        aliasCommandRegistration = CreateCommandRegistration(CommandAlias);
+        EnsureCommandsRegistered();
 
         PluginInterface.UiBuilder.Draw += windowSystem.Draw;
         PluginInterface.UiBuilder.OpenConfigUi += ToggleMainUi;
@@ -191,8 +188,8 @@ public sealed class Plugin : IDalamudPlugin
         Framework.Update -= OnPluginFrameworkUpdate;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleMainUi;
         PluginInterface.UiBuilder.Draw -= windowSystem.Draw;
-        CommandManager.RemoveHandler(CommandName);
-        CommandManager.RemoveHandler(CommandAlias);
+        primaryCommandRegistration.Dispose();
+        aliasCommandRegistration.Dispose();
 
         windowSystem.RemoveAllWindows();
         mainWindow.Dispose();
@@ -805,6 +802,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnPluginFrameworkUpdate(IFramework framework)
     {
+        EnsureCommandsRegistered();
         var now = Environment.TickCount64;
         if (localPlayerAppearancePersistence.UpdateContext(ClientState.TerritoryType, ClientState.IsLoggedIn))
         {
@@ -875,6 +873,24 @@ public sealed class Plugin : IDalamudPlugin
         {
             nextLocalOutfitReapplyTick = now + 500;
         }
+    }
+
+    private CommandRegistrationLease CreateCommandRegistration(string command)
+    {
+        var info = new CommandInfo(OnCommand)
+        {
+            HelpMessage = "Open Actor Morpher.",
+        };
+        return new CommandRegistrationLease(
+            () => CommandManager.Commands.ContainsKey(command),
+            () => CommandManager.AddHandler(command, info),
+            () => CommandManager.RemoveHandler(command));
+    }
+
+    private void EnsureCommandsRegistered()
+    {
+        primaryCommandRegistration.EnsureRegistered();
+        aliasCommandRegistration.EnsureRegistered();
     }
 
     private bool TryReapplyPinnedOutfit(long now)

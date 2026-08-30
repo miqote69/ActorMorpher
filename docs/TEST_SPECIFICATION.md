@@ -25,3 +25,12 @@
 | AM-SCALE-019 | Returning from the cutscene replaced the Bulk Outfit with Ryne's Model Search equipment | AM-SCALE-017 is active in the cutscene | Leave the cutscene and let the field local player recreate its draw object | Ryne model/Customize/scale and the same latest successful Bulk Outfit equipment remain visible; no stale Model Search equipment is restored | Press Restore |
 
 Automated cases use existing fake resolver, memory, redraw backend, and client context only for managed state-machine behavior. AM-SCALE-008 through AM-SCALE-019 require the actual plugin path and actual native actor; fixture or mock results cannot replace them.
+
+## Command registration cases
+
+| ID | Requirement / failure | Preconditions and input | Actions | Expected result and evidence | Cleanup |
+| --- | --- | --- | --- | --- | --- |
+| AM-CMD-001 | A duplicate instance removed commands it never registered | First instance owns a command; second instance observes it occupied | Initialize then dispose the second registration lease | Second instance never calls Add or Remove and the first handler remains registered | Dispose first lease |
+| AM-CMD-002 | Commands stayed missing after the owning instance unloaded | Second instance initially observes an occupied command, then the first owner removes it | Run the remaining instance's next registration check | Remaining instance calls Add once, records ownership, and later removes only its own handler | Dispose remaining lease |
+| AM-CMD-003 | Normal lifecycle must remain unchanged | Command is initially free | Register, repeat the registration check, then dispose | Add runs once, repeated checks do nothing, Remove runs once | None |
+| AM-CMD-004 | Repository update plus Dev Plugin reload made both documented commands unavailable | Repository Actor Morpher and Dev ActorMorpher are loaded; one instance is then unloaded | Enter `/actormorpher`, close the window, then enter `/amorph` | Both commands are found and each opens Actor Morpher; Dalamud log has no repeated registration error after ownership transfers | Disable the duplicate instance |

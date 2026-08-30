@@ -2,15 +2,15 @@
 
 ## Objective and scope
 
-Verify that Model Search carries the source NPC model scale through apply, Human-to-Human transitions, game-triggered local-player and cutscene-copy CharacterBase recreation, rollback, territory reapply, and restore without changing unrelated game-object or draw-object scale layers. A cutscene copy and the returning local player must preserve the active morph's model, Customize, and model scale while using the latest successfully applied local-player outfit rather than stale equipment retained from Model Search.
+Verify that Model Search carries the source NPC model scale through apply, Human-to-Human transitions, game-triggered local-player and cutscene-copy CharacterBase recreation, rollback, territory reapply, and restore without changing unrelated game-object or draw-object scale layers. A cutscene copy and the returning local player must preserve the active morph's model, Customize, and model scale while using the latest successfully applied local-player outfit rather than stale equipment retained from Model Search. Also verify that duplicate Dev and repository instances cannot remove each other's `/actormorpher` or `/amorph` command registrations.
 
-The protected baseline is `v0.0.0.46` (`cfc4195`). This change covers `AppearanceData`, Model Search source construction, redraw finalization, application verification, override storage, and local-player persistence.
+The protected functional baseline is `v0.0.0.46` (`cfc4195`); the command-registration regression escaped in `v0.0.0.47` (`f056e43`). This change covers `AppearanceData`, Model Search source construction, redraw finalization, application verification, override storage, local-player persistence, and command-registration ownership.
 
 Excluded from this change are 3D preview scale, manual scale controls, Bulk Outfit behavior, collision height, animation scale, and release packaging.
 
 ## Test levels and techniques
 
-- Unit: value propagation, first-snapshot preservation, clean Human transition ordering, rollback, restore, and persistence.
+- Unit: value propagation, first-snapshot preservation, clean Human transition ordering, rollback, restore, persistence, and command-registration ownership transfer.
 - Build/static: Debug and Release compilation, full automated suite, `git diff --check`, review of native writes, and confirmation that the local-player hook uses the actual actor vtable entry rather than the static `GameObject` base vtable.
 - Runtime: apply `BNpcBase#10072` (Ryne), change the visible player outfit, enter a cutscene that creates a separate actor copied from the local player, inspect diagnostic model/customize/equipment/scale values, then restore the original player.
 - Visual/User acceptance: compare the resulting Ryne height with the original NPC. This remains separate from runtime numeric verification.
@@ -21,6 +21,7 @@ Test doubles are permitted only for managed application, restore, and persistenc
 
 - Current FFXIV client and Dalamud API 15 development environment.
 - Actor Morpher Debug DLL loaded through Dalamud Dev Plugin Locations with automatic reload.
+- The repository-installed Actor Morpher may be present simultaneously to reproduce duplicate command registration.
 - Full diagnostics plus the temporary `AM3010` standard-log scale record.
 - Current game data for `BNpcBase#10072`: `ModelCharaId=2720`, `Scale=0.84`, `Height=255`.
 
@@ -44,11 +45,14 @@ Exit requires:
 - runtime restore records the pre-apply player model scale and restores the original visible height;
 - restore and logout stop the retained local-player creation injection;
 - no unrelated scale layer is written by the implementation.
+- an instance that did not successfully register a command cannot remove the existing owner's handler;
+- after the owning instance unloads, the remaining instance acquires both commands without repeated registration errors;
+- `/actormorpher` and `/amorph` both open Actor Morpher after the duplicate-load transition.
 
 The automated suite and build are decided by their command results. Native runtime evidence is decided by the recorded values. Final visual acceptance belongs to the user.
 
 ## Regression, risks, and evidence
 
-Run the complete existing suite because `AppearanceData` is shared by Human, Demihuman, Monster, rollback, and persistence paths. The main risks are losing the original scale, resetting the desired scale during redraw, treating an invalid source scale as valid, declaring success before the recreated draw object has the requested scale, injecting retained data into an unrelated cutscene actor through a stale or guessed association, failing to update retained equipment after a successful local-player Bulk Outfit operation, replacing the player's current outfit with stale Model Search equipment, replacing the active morph Customize with normalized player backing data, requiring a draw object that is unavailable during the copy event, or invoking the static `GameObject` base `EnableDraw` implementation instead of the local actor's actual virtual implementation. The latter failure left the player hidden and must not recur. Cutscene persistence must remain generation-event driven; frame polling, name matching, redraw retries, automatic rollback, unrelated actor or saved-state lookup during cutscene creation, and unverified indirect `CopyPlayerCustomize` handling are excluded.
+Run the complete existing suite because `AppearanceData` is shared by Human, Demihuman, Monster, rollback, and persistence paths. The main risks are losing the original scale, resetting the desired scale during redraw, treating an invalid source scale as valid, declaring success before the recreated draw object has the requested scale, injecting retained data into an unrelated cutscene actor through a stale or guessed association, failing to update retained equipment after a successful local-player Bulk Outfit operation, replacing the player's current outfit with stale Model Search equipment, replacing the active morph Customize with normalized player backing data, requiring a draw object that is unavailable during the copy event, invoking the static `GameObject` base `EnableDraw` implementation instead of the local actor's actual virtual implementation, or unconditionally removing a command owned by another loaded instance. The static `GameObject` failure left the player hidden, and the command-ownership failure left both documented commands unavailable; neither may recur. Cutscene persistence must remain generation-event driven; frame polling, name matching, redraw retries, automatic rollback, unrelated actor or saved-state lookup during cutscene creation, and unverified indirect `CopyPlayerCustomize` handling are excluded.
 
 Retain the test command summaries, relevant `AM3010` lines, game-data source row values, and final Git diff. Runtime failure must leave the change unpublished.
