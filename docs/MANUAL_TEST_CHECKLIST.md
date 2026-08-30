@@ -75,6 +75,12 @@ Enable Full diagnostics before testing native appearance operations. Stop after 
 
 ## Native appearance verification
 
+- [ ] Ryne (`BNpcBase#10072`) Apply records `CharacterBase.ModelScale=0.84` and matches the original NPC height
+- [x] After Ryne Apply and a local-player Bulk Outfit, the cutscene and returning field player keep Ryne's face and the latest applied outfit (User visual acceptance, 2026-08-30)
+- [ ] Entering a cutscene after Ryne Apply keeps Ryne's original NPC height on the cutscene copy
+- [ ] Cutscene entry records `AM4006` for parent ObjectIndex 0 and `AM4005` with `isCutsceneCopy=true`
+- [ ] Leaving the cutscene or destroying its actor records `AM4007` and does not affect unrelated cutscene actors
+- [ ] Ryne Restore returns the exact pre-apply player model scale and visible height
 - [ ] Human Apply and Restore, including Young NPC bones
 - [ ] Monster Apply and Restore
 - [ ] complete Demihuman Apply and Restore

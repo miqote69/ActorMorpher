@@ -74,6 +74,11 @@ public sealed class AppearanceApplyService : IDisposable
             message = "The actor is no longer available.";
             return false;
         }
+        if (desired.ModelScale is not null && current.ModelScale is null)
+        {
+            message = "The actor's original model scale is not available.";
+            return false;
+        }
 
         WriteMorphLog(DiagnosticEventIds.MorphSnapshotCaptured, "Current appearance snapshot captured.", key, current.ModelCharaId, appearance: current);
 
@@ -352,6 +357,7 @@ public sealed class AppearanceApplyService : IDisposable
             ["category"] = appearance?.Category,
             ["sourceRowId"] = appearance?.SourceRowId,
             ["completeness"] = appearance?.Completeness,
+            ["modelScale"] = appearance?.ModelScale,
             ["bodyType"] = appearance is { Customize.Length: > 2 } ? appearance.Customize[2] : null,
             ["customizeLength"] = appearance?.Customize.Length,
             ["customizeSignature"] = appearance is null ? null : ByteSignature(appearance.Customize),

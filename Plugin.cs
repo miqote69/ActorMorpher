@@ -137,8 +137,8 @@ public sealed class Plugin : IDalamudPlugin
             clientContext,
             diagnosticRouter);
         var actorResolver = new RegistryActorResolver(actorRegistry, clientContext);
-        var appearanceMemory = new NativeAppearanceMemory(ObjectTable, humanModelClassifier, diagnosticRouter);
-        drawObjectInjector = new NativeDrawObjectInjector(GameInteropProvider, diagnosticRouter);
+        var appearanceMemory = new NativeAppearanceMemory(ObjectTable, humanModelClassifier, diagnosticRouter, Log);
+        drawObjectInjector = new NativeDrawObjectInjector(GameInteropProvider, ObjectTable, diagnosticRouter);
         redrawCoordinator = new RedrawCoordinator(
             Framework,
             actorResolver,
@@ -737,9 +737,15 @@ public sealed class Plugin : IDalamudPlugin
         if (succeeded && isLocalPlayer)
         {
             if (isRestore)
+            {
                 localPlayerAppearancePersistence.RecordRestored();
+                drawObjectInjector.ClearPersistentLocalAppearance();
+            }
             else if (appearanceApplyService.Store.TryGet(actor, out var localState))
+            {
                 localPlayerAppearancePersistence.RecordApplied(localState.DesiredData);
+                drawObjectInjector.SetPersistentLocalAppearance(actor, localState.DesiredData);
+            }
         }
 
         if (!succeeded)
@@ -789,6 +795,8 @@ public sealed class Plugin : IDalamudPlugin
             || actorRegistry.Entries.Any(entry => entry.IsLocalPlayer && entry.Key == actor);
         if (!succeeded || !isLocalPlayer)
             return;
+        if (desired is not null)
+            drawObjectInjector.UpdatePersistentLocalOutfit(desired);
         if (type == BulkOperationType.Restore)
             localPlayerOutfitPersistence.RecordRestored();
         else if (desired is not null)
@@ -799,7 +807,11 @@ public sealed class Plugin : IDalamudPlugin
     {
         var now = Environment.TickCount64;
         if (localPlayerAppearancePersistence.UpdateContext(ClientState.TerritoryType, ClientState.IsLoggedIn))
+        {
             nextLocalAppearanceReapplyTick = now + 500;
+            if (!ClientState.IsLoggedIn)
+                drawObjectInjector.ClearPersistentLocalAppearance();
+        }
         if (localPlayerOutfitPersistence.UpdateContext(ClientState.TerritoryType, ClientState.IsLoggedIn))
             nextLocalOutfitReapplyTick = now + 500;
         if (!ClientState.IsLoggedIn)
@@ -965,9 +977,9 @@ public sealed class Plugin : IDalamudPlugin
                 continue;
             var modelAppearance = model.Type switch
             {
-                1 when appearance is not null => CreateHumanModelAppearance(modelId, row.RowId, appearance),
+                1 when appearance is not null => CreateHumanModelAppearance(modelId, row.RowId, appearance, row.Scale),
                 2 => CreateDemihumanAppearance(row),
-                3 => CreateMonsterAppearance(modelId, row.RowId),
+                3 => CreateMonsterAppearance(modelId, row.RowId, row.Scale),
                 _ => null,
             };
 
@@ -1005,10 +1017,10 @@ public sealed class Plugin : IDalamudPlugin
                 : null;
             var modelAppearance = model.Type switch
             {
-                1 when appearance is not null => CreateHumanModelAppearance(modelId, row.RowId, appearance),
+                1 when appearance is not null => CreateHumanModelAppearance(modelId, row.RowId, appearance, row.Scale),
                 2 when customize is { } demihumanCustomize && npcEquip is { } demihumanEquip
-                    => CreateDemihumanAppearance(row.RowId, modelId, demihumanCustomize, demihumanEquip),
-                3 => CreateMonsterAppearance(modelId, row.RowId),
+                    => CreateDemihumanAppearance(row.RowId, modelId, demihumanCustomize, demihumanEquip, row.Scale),
+                3 => CreateMonsterAppearance(modelId, row.RowId, row.Scale),
                 _ => null,
             };
             if (model.Type == 1 && (appearance is null || names.Length == 0))
@@ -1049,7 +1061,7 @@ public sealed class Plugin : IDalamudPlugin
                 0,
                 0,
                 0,
-                modelAppearance: model.Type == 3 ? CreateMonsterAppearance(model.RowId, model.RowId) : null));
+                modelAppearance: model.Type == 3 ? CreateMonsterAppearance(model.RowId, model.RowId, 1.0f) : null));
         }
 
         return entries
@@ -1070,6 +1082,7 @@ public sealed class Plugin : IDalamudPlugin
             ':',
             appearance.ModelCharaId,
             appearance.Category,
+            appearance.ModelScale?.ToString("R", System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
             Convert.ToHexString(appearance.Customize.AsSpan()),
             string.Join(',', appearance.Equipment.Select(static value => value.ToString("X16"))));
 
@@ -1112,23 +1125,29 @@ public sealed class Plugin : IDalamudPlugin
             modelAppearance);
     }
 
-    private static AppearanceData CreateHumanModelAppearance(uint modelCharaId, uint sourceRowId, HumanAppearance appearance)
+    private static AppearanceData CreateHumanModelAppearance(
+        uint modelCharaId,
+        uint sourceRowId,
+        HumanAppearance appearance,
+        float? modelScale)
         => AppearanceData.Create(
             modelCharaId,
             ModelCategory.Human,
             sourceRowId,
             AppearanceCompleteness.Complete,
             appearance.Customize,
-            appearance.Equipment);
+            appearance.Equipment,
+            modelScale);
 
-    private static AppearanceData CreateMonsterAppearance(uint modelCharaId, uint sourceRowId)
+    private static AppearanceData CreateMonsterAppearance(uint modelCharaId, uint sourceRowId, float? modelScale)
         => AppearanceData.Create(
             modelCharaId,
             ModelCategory.Monster,
             sourceRowId,
             AppearanceCompleteness.ModelOnly,
             Array.Empty<byte>(),
-            Array.Empty<ulong>());
+            Array.Empty<ulong>(),
+            modelScale);
 
     private static HumanAppearance? CreateHumanAppearance(ENpcBase row)
     {
@@ -1186,14 +1205,16 @@ public sealed class Plugin : IDalamudPlugin
             row.RowId,
             AppearanceCompleteness.Complete,
             customize,
-            equipment);
+            equipment,
+            row.Scale);
     }
 
     private static AppearanceData CreateDemihumanAppearance(
         uint sourceRowId,
         uint modelCharaId,
         BNpcCustomize customizeRow,
-        NpcEquip equip)
+        NpcEquip equip,
+        float? modelScale)
     {
         var customize = new byte[]
         {
@@ -1212,7 +1233,8 @@ public sealed class Plugin : IDalamudPlugin
             sourceRowId,
             AppearanceCompleteness.Complete,
             customize,
-            CreateEquipment(equip));
+            CreateEquipment(equip),
+            modelScale);
     }
 
     private static HumanAppearance? CreateHumanAppearance(BNpcCustomize row, NpcEquip equip)

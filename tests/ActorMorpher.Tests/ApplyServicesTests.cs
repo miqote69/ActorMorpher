@@ -45,8 +45,8 @@ public sealed class ApplyServicesTests
     public void FailedAppearanceApplyRollsBackTheOverrideStore()
     {
         var actor = Snapshot(1);
-        var original = Appearance(0, 1);
-        var desired = Appearance(300, 3);
+        var original = Appearance(0, 1, 1.16f);
+        var desired = Appearance(300, 3, 0.84f);
         var memory = new FakeAppearanceMemory(original) { FailedAppearance = desired };
         var resolver = new FakeResolver(actor);
         var context = new FakeContext();
@@ -58,6 +58,7 @@ public sealed class ApplyServicesTests
         Process(redraw, 8);
 
         Assert.Same(original, memory.Current);
+        Assert.Equal(1.16f, memory.Current.ModelScale);
         Assert.False(store.TryGet(actor.LogicalKey, out _));
     }
 
@@ -65,9 +66,9 @@ public sealed class ApplyServicesTests
     public void HumanToHumanApplyPerformsCleanBaseTransitionBeforeFinalAppearance()
     {
         var actor = Snapshot(1);
-        var original = HumanAppearance(1, (byte)NpcAge.Normal);
-        var first = HumanAppearance(2, (byte)NpcAge.Young);
-        var second = HumanAppearance(3, (byte)NpcAge.Young);
+        var original = HumanAppearance(1, (byte)NpcAge.Normal, 1.16f);
+        var first = HumanAppearance(2, (byte)NpcAge.Young, 0.9f);
+        var second = HumanAppearance(3, (byte)NpcAge.Young, 0.84f);
         var memory = new FakeAppearanceMemory(original);
         var resolver = new FakeResolver(actor);
         using var redraw = new RedrawCoordinator(resolver, memory, new FakeRedrawBackend(), new FakeContext());
@@ -89,14 +90,15 @@ public sealed class ApplyServicesTests
         Assert.Same(second, memory.Current);
         Assert.Contains(original, memory.Writes);
         Assert.Same(second, memory.Writes[^1]);
+        Assert.Equal(0.84f, memory.Writes[^1].ModelScale);
     }
 
     [Fact]
     public void HumanRestoreRecreatesTheOriginalAppearanceTwice()
     {
         var actor = Snapshot(1);
-        var original = HumanAppearance(1, (byte)NpcAge.Normal);
-        var youngNpc = HumanAppearance(2, (byte)NpcAge.Young);
+        var original = HumanAppearance(1, (byte)NpcAge.Normal, 1.16f);
+        var youngNpc = HumanAppearance(2, (byte)NpcAge.Young, 0.84f);
         var memory = new FakeAppearanceMemory(original);
         var resolver = new FakeResolver(actor);
         var store = new AppearanceOverrideStore();
@@ -117,9 +119,67 @@ public sealed class ApplyServicesTests
         Process(redraw, 14);
 
         Assert.Same(original, memory.Current);
+        Assert.Equal(1.16f, memory.Current.ModelScale);
         Assert.Equal(4, memory.Writes.Count);
         Assert.All(memory.Writes, write => Assert.Same(original, write));
         Assert.False(store.TryGet(actor.LogicalKey, out _));
+    }
+
+    [Fact]
+    public void AppearanceApplyAndRestorePreserveModelScale()
+    {
+        var actor = Snapshot(1);
+        var original = HumanAppearance(1, (byte)NpcAge.Normal, 1.16f);
+        var desired = HumanAppearance(2, (byte)NpcAge.Normal, 0.84f);
+        var memory = new FakeAppearanceMemory(original);
+        var resolver = new FakeResolver(actor);
+        var store = new AppearanceOverrideStore();
+        using var redraw = new RedrawCoordinator(resolver, memory, new FakeRedrawBackend(), new FakeContext());
+        using var service = new AppearanceApplyService(
+            resolver,
+            memory,
+            new FakeContext(),
+            redraw,
+            store,
+            NullDiagnosticLog.Instance);
+
+        Assert.True(service.TryApply(actor.LogicalKey, desired, out _));
+        Process(redraw, 7);
+
+        Assert.Equal(0.84f, memory.Current.ModelScale);
+        Assert.True(store.TryGet(actor.LogicalKey, out var state));
+        Assert.Equal(1.16f, state.BaseData.ModelScale);
+
+        Assert.True(service.TryRestore(actor.LogicalKey, out _));
+        Process(redraw, 14);
+
+        Assert.Equal(1.16f, memory.Current.ModelScale);
+        Assert.False(store.TryGet(actor.LogicalKey, out _));
+    }
+
+    [Fact]
+    public void AppearanceApplyRejectsScaleWhenOriginalScaleIsUnavailable()
+    {
+        var actor = Snapshot(1);
+        var original = HumanAppearance(1, (byte)NpcAge.Normal);
+        var desired = HumanAppearance(2, (byte)NpcAge.Normal, 0.84f);
+        var memory = new FakeAppearanceMemory(original);
+        var resolver = new FakeResolver(actor);
+        var store = new AppearanceOverrideStore();
+        using var redraw = new RedrawCoordinator(resolver, memory, new FakeRedrawBackend(), new FakeContext());
+        using var service = new AppearanceApplyService(
+            resolver,
+            memory,
+            new FakeContext(),
+            redraw,
+            store,
+            NullDiagnosticLog.Instance);
+
+        Assert.False(service.TryApply(actor.LogicalKey, desired, out var message));
+
+        Assert.Contains("original model scale", message);
+        Assert.Same(original, memory.Current);
+        Assert.Equal(0, store.Count);
     }
 
     [Fact]
@@ -376,16 +436,17 @@ public sealed class ApplyServicesTests
             index == 1);
     }
 
-    private static AppearanceData Appearance(uint modelId, byte marker)
+    private static AppearanceData Appearance(uint modelId, byte marker, float? modelScale = null)
         => AppearanceData.Create(
             modelId,
             modelId == 0 ? ModelCategory.Human : ModelCategory.Monster,
             marker,
             modelId == 0 ? AppearanceCompleteness.Complete : AppearanceCompleteness.ModelOnly,
             modelId == 0 ? [marker] : [],
-            modelId == 0 ? [(ulong)marker] : []);
+            modelId == 0 ? [(ulong)marker] : [],
+            modelScale);
 
-    private static AppearanceData HumanAppearance(byte marker, byte bodyType)
+    private static AppearanceData HumanAppearance(byte marker, byte bodyType, float? modelScale = null)
     {
         var customize = Enumerable.Repeat(marker, 26).ToArray();
         customize[0] = 1;
@@ -398,7 +459,8 @@ public sealed class ApplyServicesTests
             marker,
             AppearanceCompleteness.Complete,
             customize,
-            Enumerable.Repeat((ulong)marker, 10));
+            Enumerable.Repeat((ulong)marker, 10),
+            modelScale);
     }
 
     private static OutfitData Outfit(ushort marker)

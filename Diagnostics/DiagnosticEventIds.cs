@@ -21,12 +21,15 @@ public static class DiagnosticEventIds
     public const string MorphDesiredUpdated = "AM3003";
     public const string MorphApplied = "AM3004";
     public const string MorphRestored = "AM3005";
+    public const string RuntimeScaleCaptured = "AM3010";
     public const string MorphOperationFailed = "AM3099";
     public const string RedrawOperationStarted = "AM4001";
     public const string RedrawStateChanged = "AM4002";
     public const string RedrawCompleted = "AM4003";
     public const string RedrawCancelled = "AM4004";
     public const string DrawObjectCreateInjected = "AM4005";
+    public const string CutsceneActorLinked = "AM4006";
+    public const string CutsceneActorUnlinked = "AM4007";
     public const string RedrawFailed = "AM4099";
     public const string GPoseEntered = "AM5001";
     public const string GPoseExited = "AM5002";
@@ -71,9 +74,11 @@ public static class DiagnosticEventIds
         [ActorValidationFailed] = "ActorValidationFailed", [MorphOperationStarted] = "MorphOperationStarted",
         [MorphSnapshotCaptured] = "MorphSnapshotCaptured", [MorphDesiredUpdated] = "MorphDesiredUpdated",
         [MorphApplied] = "MorphApplied", [MorphRestored] = "MorphRestored",
+        [RuntimeScaleCaptured] = "RuntimeScaleCaptured",
         [MorphOperationFailed] = "MorphOperationFailed", [RedrawOperationStarted] = "RedrawOperationStarted",
         [RedrawStateChanged] = "RedrawStateChanged", [RedrawCompleted] = "RedrawCompleted",
         [RedrawCancelled] = "RedrawCancelled", [DrawObjectCreateInjected] = "DrawObjectCreateInjected",
+        [CutsceneActorLinked] = "CutsceneActorLinked", [CutsceneActorUnlinked] = "CutsceneActorUnlinked",
         [RedrawFailed] = "RedrawFailed", [GPoseEntered] = "GPoseEntered",
         [GPoseExited] = "GPoseExited", [GPoseMappingResolved] = "GPoseMappingResolved",
         [GPoseMappingAmbiguous] = "GPoseMappingAmbiguous", [GPoseOperationFailed] = "GPoseOperationFailed",

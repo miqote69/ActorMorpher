@@ -19,7 +19,7 @@ The tests cover:
 * batch cancellation state
 * slot-specific Unequip planning and fail-closed behavior
 * redraw success, actor disappearance, and rollback with fake backends
-* appearance apply/restore and failed-write store rollback with fake memory
+* appearance apply/restore, model-scale preservation, invalid-scale rejection, and failed-write store rollback with fake memory
 * one-actor-per-frame Bulk Outfit apply and store-wide restore with fake memory
 * actor-local Bulk Outfit exception rollback and batch continuation
 * diagnostic defaults and configuration bounds

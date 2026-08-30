@@ -8,7 +8,8 @@ public sealed record AppearanceData(
     uint SourceRowId,
     AppearanceCompleteness Completeness,
     ImmutableArray<byte> Customize,
-    ImmutableArray<ulong> Equipment)
+    ImmutableArray<ulong> Equipment,
+    float? ModelScale)
 {
     public static AppearanceData Create(
         uint modelCharaId,
@@ -16,12 +17,19 @@ public sealed record AppearanceData(
         uint sourceRowId,
         AppearanceCompleteness completeness,
         IEnumerable<byte> customize,
-        IEnumerable<ulong> equipment)
+        IEnumerable<ulong> equipment,
+        float? modelScale = null)
         => new(
             modelCharaId,
             category,
             sourceRowId,
             completeness,
             customize.ToImmutableArray(),
-            equipment.ToImmutableArray());
+            equipment.ToImmutableArray(),
+            NormalizeModelScale(modelScale));
+
+    public static float? NormalizeModelScale(float? modelScale)
+        => modelScale is { } value && float.IsFinite(value) && value > 0
+            ? value
+            : null;
 }

@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Dalamud.Hooking;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
@@ -8,17 +9,32 @@ namespace ActorMorpher.Interop;
 
 public sealed unsafe class NativeDrawObjectInjector : IDisposable
 {
-    private readonly Hook<CreateCharacterBaseDelegate> hook;
+    private readonly IGameInteropProvider interop;
+    private readonly Hook<CreateCharacterBaseDelegate> createHook;
+    private readonly NativeCutsceneActorTracker cutsceneActors;
+    private readonly IObjectTable objectTable;
     private readonly IDiagnosticLog diagnostics;
-    private InjectionContext? active;
+    private Hook<EnableDrawDelegate>? localEnableDrawHook;
+    private nint localEnableDrawAddress;
+    private InjectionContext? persistentLocal;
     private bool disposed;
 
-    public NativeDrawObjectInjector(IGameInteropProvider interop, IDiagnosticLog diagnostics)
+    [ThreadStatic]
+    private static InjectionContext? active;
+
+    public NativeDrawObjectInjector(
+        IGameInteropProvider interop,
+        IObjectTable objectTable,
+        IDiagnosticLog diagnostics)
     {
+        this.interop = interop;
+        this.objectTable = objectTable;
         this.diagnostics = diagnostics;
-        hook = interop.HookFromAddress<CreateCharacterBaseDelegate>(
+        cutsceneActors = new NativeCutsceneActorTracker(interop, diagnostics);
+        createHook = interop.HookFromAddress<CreateCharacterBaseDelegate>(
             (nint)CharacterBase.MemberFunctionPointers.Create,
             CreateCharacterBaseDetour);
+        createHook.Enable();
     }
 
     public void Invoke(ActorSnapshot actor, AppearanceData appearance, GameObject* gameObject)
@@ -26,7 +42,6 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
         if (disposed || active is not null)
             throw new InvalidOperationException("Draw object injection is unavailable or already active.");
 
-        hook.Enable();
         active = new InjectionContext(actor.LogicalKey, appearance);
         try
         {
@@ -35,8 +50,55 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
         finally
         {
             active = null;
-            hook.Disable();
         }
+    }
+
+    public void SetPersistentLocalAppearance(LogicalActorKey actor, AppearanceData appearance)
+    {
+        if (disposed)
+            return;
+
+        var localPlayer = objectTable.LocalPlayer;
+        if (localPlayer is null || localPlayer.Address == nint.Zero)
+            return;
+
+        EnsureLocalEnableDrawHook((GameObject*)localPlayer.Address);
+        persistentLocal = new InjectionContext(actor, appearance);
+        cutsceneActors.Enable((Character*)localPlayer.Address);
+    }
+
+    public void ClearPersistentLocalAppearance()
+    {
+        persistentLocal = null;
+        cutsceneActors.Disable();
+        localEnableDrawHook?.Dispose();
+        localEnableDrawHook = null;
+        localEnableDrawAddress = nint.Zero;
+    }
+
+    public void UpdatePersistentLocalOutfit(OutfitData outfit)
+    {
+        var context = persistentLocal;
+        if (disposed || context is null || outfit.Equipment.Length != 10)
+            return;
+
+        var equipment = ImmutableArray.CreateBuilder<ulong>(outfit.Equipment.Length);
+        foreach (var source in outfit.Equipment)
+        {
+            var model = new EquipmentModelId
+            {
+                Id = source.Set,
+                Variant = source.Variant,
+                Stain0 = source.Stain1,
+                Stain1 = source.Stain2,
+            };
+            equipment.Add(model.Value);
+        }
+
+        persistentLocal = context with
+        {
+            Appearance = context.Appearance with { Equipment = equipment.MoveToImmutable() },
+        };
     }
 
     public void Dispose()
@@ -45,7 +107,65 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
             return;
         disposed = true;
         active = null;
-        hook.Dispose();
+        ClearPersistentLocalAppearance();
+        createHook.Dispose();
+        cutsceneActors.Dispose();
+    }
+
+    private void EnsureLocalEnableDrawHook(GameObject* gameObject)
+    {
+        var virtualTable = *(nint**)gameObject;
+        if (virtualTable is null)
+            throw new InvalidOperationException("The local player's virtual table is unavailable.");
+
+        const int enableDrawVtableIndex = 12;
+        var address = virtualTable[enableDrawVtableIndex];
+        if (address == nint.Zero)
+            throw new InvalidOperationException("The local player's EnableDraw function is unavailable.");
+        if (localEnableDrawHook is not null && localEnableDrawAddress == address)
+            return;
+
+        localEnableDrawHook?.Dispose();
+        localEnableDrawHook = interop.HookFromAddress<EnableDrawDelegate>(address, LocalEnableDrawDetour);
+        localEnableDrawAddress = address;
+        localEnableDrawHook.Enable();
+    }
+
+    private void LocalEnableDrawDetour(GameObject* gameObject)
+    {
+        var drawHook = localEnableDrawHook;
+        if (drawHook is null)
+            return;
+
+        if (disposed || active is not null || gameObject is null)
+        {
+            drawHook.Original(gameObject);
+            return;
+        }
+
+        var context = persistentLocal;
+        var localPlayer = objectTable.LocalPlayer;
+        var isDirectLocalPlayer = localPlayer is not null && localPlayer.Address == (nint)gameObject;
+        var isCutsceneCopy = cutsceneActors.IsLocalPlayerCopy(gameObject);
+        if (context is null || !isDirectLocalPlayer && !isCutsceneCopy)
+        {
+            drawHook.Original(gameObject);
+            return;
+        }
+
+        active = context with
+        {
+            RuntimeObjectIndex = gameObject->ObjectIndex,
+            IsCutsceneCopy = isCutsceneCopy,
+        };
+        try
+        {
+            drawHook.Original(gameObject);
+        }
+        finally
+        {
+            active = null;
+        }
     }
 
     private CharacterBase* CreateCharacterBaseDetour(
@@ -56,7 +176,7 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
     {
         var context = active;
         if (context is null)
-            return hook.Original(modelId, customize, equipment, unknown);
+            return createHook.Original(modelId, customize, equipment, unknown);
 
         var appearance = context.Appearance;
         var injectedCustomize = default(CustomizeData);
@@ -97,14 +217,18 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
                 ["equipmentInjected"] = equipmentArgument != equipment,
                 ["customizeSignature"] = Signature(appearance.Customize),
                 ["equipmentSignature"] = Signature(appearance.Equipment),
+                ["runtimeObjectIndex"] = context.RuntimeObjectIndex,
+                ["isCutsceneCopy"] = context.IsCutsceneCopy,
             },
         });
 
-        return hook.Original(
+        var created = createHook.Original(
             appearance.ModelCharaId,
             customizeArgument,
             equipmentArgument,
             unknown);
+        NativeModelScale.TryWrite(created, appearance.ModelScale);
+        return created;
     }
 
     private static string Signature(IEnumerable<byte> values)
@@ -144,5 +268,11 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
         EquipmentModelId* equipment,
         byte unknown);
 
-    private sealed record InjectionContext(LogicalActorKey Actor, AppearanceData Appearance);
+    private delegate void EnableDrawDelegate(GameObject* gameObject);
+
+    private sealed record InjectionContext(
+        LogicalActorKey Actor,
+        AppearanceData Appearance,
+        ushort? RuntimeObjectIndex = null,
+        bool IsCutsceneCopy = false);
 }
