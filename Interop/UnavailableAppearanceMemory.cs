@@ -7,10 +7,4 @@ public sealed class UnavailableAppearanceMemory : IAppearanceMemory
         appearance = null!;
         return false;
     }
-
-    public bool TryWrite(ActorSnapshot actor, AppearanceData appearance)
-        => false;
-
-    public bool IsApplied(ActorSnapshot actor, AppearanceData appearance)
-        => false;
 }

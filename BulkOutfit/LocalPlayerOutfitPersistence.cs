@@ -68,7 +68,7 @@ public sealed class LocalPlayerOutfitPersistence
         if (ActiveReapplyActor != actor)
             return;
         ActiveReapplyActor = null;
-        ReapplyPending = !succeeded && Desired is not null;
+        ReapplyPending = false;
     }
 
     private void Clear()

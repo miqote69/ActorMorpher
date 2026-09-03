@@ -2,34 +2,22 @@
 
 ## Automated
 
-Run:
+Test selection is governed by `TEST_PLAN.md` and `TEST_SPECIFICATION.md`. Do not run the entire suite or Release build by default. For the current appearance repair, run only the focused cases whose result can change acceptance, followed by one Debug build because the native plugin artifact must compile:
 
 ```powershell
-dotnet test tests\ActorMorpher.Tests\ActorMorpher.Tests.csproj
-dotnet build ActorMorpher.csproj -c Release
+dotnet test tests\ActorMorpher.Tests\ActorMorpher.Tests.csproj --no-restore --filter "FullyQualifiedName~NativeDrawObjectInjectorTests|FullyQualifiedName~ApplyServicesTests|FullyQualifiedName~RedrawCoordinatorTests"
+dotnet build ActorMorpher.csproj -c Debug --no-restore
 ```
 
-The tests cover:
+These checks protect only:
 
-* first-write-wins appearance and outfit state
-* revision increments and restore removal
-* identity changes across index, Entity ID, and territory
-* unique and ambiguous GPose mapping
-* Human-only Bulk Outfit target selection
-* batch cancellation state
-* slot-specific Unequip planning and fail-closed behavior
-* redraw success, actor disappearance, and rollback with fake backends
-* appearance apply/restore, model-scale preservation, invalid-scale rejection, and failed-write store rollback with fake memory
-* one-actor-per-frame Bulk Outfit apply and store-wide restore with fake memory
-* actor-local Bulk Outfit exception rollback and batch continuation
-* diagnostic defaults and configuration bounds
-* Off mode zero-file behavior and runtime mode switching
-* Errors Only filtering and Full JSONL output
-* operation completion, failure, abandonment, and elapsed context
-* session-salted Actor redaction
-* ring buffer ordering, warning suppression, and expanded snapshots
+* one synchronous Apply transaction and terminal result
+* one Human post-Create call for each equipment slot `0..9`, with no non-Human/failed-Create call or retry
+* rejection of a second pending Apply without cancelling the first
+* no pin/Bulk mutation on queued, rejected, failed, or succeeded Apply
+* failed Apply does not publish current C
 
-Automated tests do not prove native FF14 memory compatibility or visual correctness.
+Automated tests and a successful build do not prove native FF14 memory compatibility, the payload-free Restore redraw's runtime result, or visual correctness. Those remain `UNEXECUTED` until separately performed in the game.
 
 ## Static safety checks
 

@@ -9,7 +9,12 @@ public sealed record AppearanceData(
     AppearanceCompleteness Completeness,
     ImmutableArray<byte> Customize,
     ImmutableArray<ulong> Equipment,
-    float? ModelScale)
+    float? ModelScale,
+    ulong? Mainhand,
+    ulong? Offhand,
+    bool? VisorToggled,
+    ushort? FacewearModelId = null,
+    bool? HatVisible = null)
 {
     public static AppearanceData Create(
         uint modelCharaId,
@@ -18,7 +23,12 @@ public sealed record AppearanceData(
         AppearanceCompleteness completeness,
         IEnumerable<byte> customize,
         IEnumerable<ulong> equipment,
-        float? modelScale = null)
+        float? modelScale = null,
+        ulong? mainhand = null,
+        ulong? offhand = null,
+        bool? visorToggled = null,
+        ushort? facewearModelId = null,
+        bool? hatVisible = null)
         => new(
             modelCharaId,
             category,
@@ -26,10 +36,30 @@ public sealed record AppearanceData(
             completeness,
             customize.ToImmutableArray(),
             equipment.ToImmutableArray(),
-            NormalizeModelScale(modelScale));
+            modelScale,
+            mainhand,
+            offhand,
+            visorToggled,
+            facewearModelId,
+            hatVisible);
 
-    public static float? NormalizeModelScale(float? modelScale)
-        => modelScale is { } value && float.IsFinite(value) && value > 0
-            ? value
-            : null;
+    public AppearanceData WithOutfit(IEnumerable<ulong> equipment, bool visorToggled)
+        => this with
+        {
+            Equipment = equipment.ToImmutableArray(),
+            VisorToggled = visorToggled,
+        };
+
+    public AppearanceData WithOutfit(
+        IEnumerable<ulong> equipment,
+        bool visorToggled,
+        ushort? facewearModelId,
+        bool hatVisible)
+        => this with
+        {
+            Equipment = equipment.ToImmutableArray(),
+            VisorToggled = visorToggled,
+            FacewearModelId = facewearModelId,
+            HatVisible = hatVisible,
+        };
 }

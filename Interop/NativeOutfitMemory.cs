@@ -1,5 +1,7 @@
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
+using FFXIVClientStructs.FFXIV.Client.Game.Object;
+using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 
 namespace ActorMorpher.Interop;
 
@@ -37,21 +39,53 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
         return true;
     }
 
+    public bool TryCaptureRendered(ActorSnapshot actor, out OutfitData outfit)
+    {
+        if (!TryResolve(actor, out var character))
+        {
+            outfit = null!;
+            return false;
+        }
+
+        var characterBase = ((GameObject*)character)->GetCharacterBase();
+        if (characterBase is null || characterBase->GetModelType() != CharacterBase.ModelType.Human)
+        {
+            outfit = null!;
+            return false;
+        }
+
+        var human = (Human*)characterBase;
+        outfit = CaptureRendered(character, human);
+        return true;
+    }
+
+    internal static OutfitData CaptureRendered(Character* character, Human* human)
+    {
+        var equipment = human->EquipmentModels
+            .ToArray()
+            .Select(static item => new ArmorAppearance(item.Id, item.Variant, item.Stain0, item.Stain1));
+        return OutfitData.Create(
+            equipment,
+            new FacewearAppearance(true, checked((ushort)human->Glasses0.Id)),
+            !character->DrawData.IsHatHidden,
+            ((CharacterBase*)human)->VisorToggled);
+    }
+
     public bool TryApply(ActorSnapshot actor, OutfitData outfit)
     {
         if (!TryResolveHuman(actor, out var character)
             || outfit.Equipment.Length != character->DrawData.EquipmentModelIds.Length)
             return false;
 
+        var characterBase = ((GameObject*)character)->GetCharacterBase();
+        if (characterBase is null || characterBase->GetModelType() != CharacterBase.ModelType.Human)
+            return false;
+        var human = (Human*)characterBase;
+
         for (var index = 0; index < outfit.Equipment.Length; ++index)
         {
             var source = outfit.Equipment[index];
             var current = character->DrawData.EquipmentModelIds[index];
-            if (current.Id == source.Set
-                && current.Variant == source.Variant
-                && current.Stain0 == source.Stain1
-                && current.Stain1 == source.Stain2)
-                continue;
             var model = new EquipmentModelId
             {
                 Id = source.Set,
@@ -59,7 +93,10 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
                 Stain0 = source.Stain1,
                 Stain1 = source.Stain2,
             };
-            character->DrawData.LoadEquipment((DrawDataContainer.EquipmentSlot)index, &model, true);
+            if (current.Value != model.Value)
+                character->DrawData.LoadEquipment((DrawDataContainer.EquipmentSlot)index, &model, true);
+            if (human->EquipmentModels[index].Value != model.Value)
+                characterBase->SetEquipmentSlotModel((uint)index, &model);
         }
         if (outfit.Facewear.IsAvailable && character->DrawData.GlassesIds[0] != outfit.Facewear.ModelId)
             character->DrawData.SetGlasses(0, outfit.Facewear.ModelId);
@@ -70,39 +107,10 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
         return true;
     }
 
-    public bool IsApplied(ActorSnapshot actor, OutfitData outfit)
-    {
-        if (!TryResolveHuman(actor, out var character)
-            || outfit.Equipment.Length != character->DrawData.EquipmentModelIds.Length)
-            return false;
-        for (var index = 0; index < outfit.Equipment.Length; ++index)
-        {
-            var expected = outfit.Equipment[index];
-            var actual = character->DrawData.EquipmentModelIds[index];
-            if (actual.Id != expected.Set
-                || actual.Variant != expected.Variant
-                || actual.Stain0 != expected.Stain1
-                || actual.Stain1 != expected.Stain2)
-                return false;
-        }
-        return (!outfit.Facewear.IsAvailable || character->DrawData.GlassesIds[0] == outfit.Facewear.ModelId)
-            && character->DrawData.IsHatHidden == !outfit.HatVisible
-            && character->DrawData.IsVisorToggled == outfit.VisorToggled;
-    }
-
     private bool TryResolveHuman(ActorSnapshot expected, out Character* character)
     {
-        var key = expected.RepresentationKey;
-        var current = objectTable[key.ObjectIndex];
-        if (current is null
-            || current.Address == nint.Zero
-            || current.GameObjectId != key.GameObjectId
-            || current.EntityId != key.EntityId)
-        {
-            character = null;
+        if (!TryResolve(expected, out character))
             return false;
-        }
-        character = (Character*)current.Address;
         if (humanModelClassifier.IsHuman(checked((uint)character->ModelContainer.ModelCharaId)))
             return true;
         diagnostics.Write(new DiagnosticLogEntry
@@ -115,5 +123,22 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
         });
         character = null;
         return false;
+    }
+
+    private bool TryResolve(ActorSnapshot expected, out Character* character)
+    {
+        var key = expected.RepresentationKey;
+        var current = objectTable[key.ObjectIndex];
+        if (current is null
+            || current.Address == nint.Zero
+            || current.GameObjectId != key.GameObjectId
+            || current.EntityId != key.EntityId)
+        {
+            character = null;
+            return false;
+        }
+
+        character = (Character*)current.Address;
+        return true;
     }
 }

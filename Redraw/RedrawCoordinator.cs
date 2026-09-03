@@ -5,27 +5,22 @@ namespace ActorMorpher.Redraw;
 
 public sealed class RedrawCoordinator : IDisposable
 {
-    private const int TimeoutFrames = 180;
-
     private readonly IFramework? framework;
     private readonly IActorResolver resolver;
-    private readonly IAppearanceMemory appearanceMemory;
     private readonly IRedrawBackend redrawBackend;
     private readonly IClientContext clientContext;
     private readonly IDiagnosticLog diagnostics;
     private readonly Queue<RedrawOperation> queue = new();
     private RedrawOperation? current;
-    private ActorSnapshot? activeRepresentation;
     private bool disposed;
 
     public RedrawCoordinator(
         IFramework framework,
         IActorResolver resolver,
-        IAppearanceMemory appearanceMemory,
         IRedrawBackend redrawBackend,
         IClientContext clientContext,
         IDiagnosticLog? diagnostics = null)
-        : this(resolver, appearanceMemory, redrawBackend, clientContext, diagnostics)
+        : this(resolver, redrawBackend, clientContext, diagnostics)
     {
         this.framework = framework;
         framework.Update += OnFrameworkUpdate;
@@ -33,13 +28,11 @@ public sealed class RedrawCoordinator : IDisposable
 
     public RedrawCoordinator(
         IActorResolver resolver,
-        IAppearanceMemory appearanceMemory,
         IRedrawBackend redrawBackend,
         IClientContext clientContext,
         IDiagnosticLog? diagnostics = null)
     {
         this.resolver = resolver;
-        this.appearanceMemory = appearanceMemory;
         this.redrawBackend = redrawBackend;
         this.clientContext = clientContext;
         this.diagnostics = diagnostics ?? NullDiagnosticLog.Instance;
@@ -64,14 +57,34 @@ public sealed class RedrawCoordinator : IDisposable
 
     public void CancelAll(string reason)
     {
-        queue.Clear();
+        while (queue.TryDequeue(out var queued))
+            ReportFinished(queued with { Stage = RedrawStage.Cancelled, Error = reason });
         if (current is not null)
         {
-            if (activeRepresentation is not null)
-                redrawBackend.TryEnable(activeRepresentation, null);
             diagnostics.Write(CreateEntry(current, DiagnosticEventIds.RedrawCancelled, "Redraw operation cancelled.", DiagnosticLogLevel.Warning, reason));
             Finish(current with { Stage = RedrawStage.Cancelled, Error = reason });
         }
+    }
+
+    public void Cancel(LogicalActorKey actor, string reason)
+    {
+        if (queue.Count > 0)
+        {
+            var retained = new Queue<RedrawOperation>();
+            while (queue.TryDequeue(out var queued))
+            {
+                if (queued.Actor == actor)
+                    ReportFinished(queued with { Stage = RedrawStage.Cancelled, Error = reason });
+                else
+                    retained.Enqueue(queued);
+            }
+            while (retained.TryDequeue(out var queued))
+                queue.Enqueue(queued);
+        }
+
+        if (current?.Actor != actor)
+            return;
+        Finish(current with { Stage = RedrawStage.Cancelled, Error = reason });
     }
 
     public void Dispose()
@@ -107,65 +120,44 @@ public sealed class RedrawCoordinator : IDisposable
             return;
         }
 
-        if (operation.FrameCount > TimeoutFrames)
-        {
-            if (operation.Stage is RedrawStage.Rollback
-                or RedrawStage.RollbackDisable
-                or RedrawStage.RollbackHidden
-                or RedrawStage.RollbackEnable
-                or RedrawStage.RollbackRecreate
-                or RedrawStage.RollbackVerify)
-                Finish(operation with { Stage = RedrawStage.Failed, Error = "Rollback timed out." });
-            else
-                current = operation with { Stage = RedrawStage.Rollback, FrameCount = 0, Error = "Redraw timed out." };
-            return;
-        }
-
         if (!resolver.TryResolve(operation.Actor, out var actor))
         {
-            if (activeRepresentation is not null && operation.Stage != RedrawStage.Pending)
-                redrawBackend.TryEnable(activeRepresentation, null);
             Finish(operation with { Stage = RedrawStage.Cancelled, Error = "Actor is no longer available." });
             return;
         }
-        activeRepresentation = actor;
+        if (actor.RepresentationKey != operation.TargetRepresentation)
+        {
+            Finish(operation with { Stage = RedrawStage.Cancelled, Error = "Actor representation changed." });
+            return;
+        }
 
         var previousStage = operation.Stage;
+        bool? backendSucceeded = null;
+        try
+        {
+            if (operation.Stage == RedrawStage.Disable)
+                backendSucceeded = redrawBackend.TryDisable(actor);
+            else if (operation.Stage == RedrawStage.Enable)
+                backendSucceeded = redrawBackend.TryEnable(actor, operation.Desired, operation.OperationId);
+        }
+        catch (Exception exception)
+        {
+            Finish(operation with
+            {
+                Stage = RedrawStage.Failed,
+                Error = $"Redraw stage {operation.Stage} threw: {exception.Message}",
+            });
+            return;
+        }
         current = operation.Stage switch
         {
-            RedrawStage.Pending => operation with { Stage = RedrawStage.Apply },
-            RedrawStage.Apply when appearanceMemory.TryWrite(actor, operation.Desired) => operation with { Stage = RedrawStage.Disable },
-            RedrawStage.Disable when redrawBackend.TryDisable(actor) => operation with { Stage = RedrawStage.ApplyHidden },
-            RedrawStage.ApplyHidden when appearanceMemory.TryWrite(actor, operation.Desired) => operation with { Stage = RedrawStage.Enable },
-            RedrawStage.Enable when redrawBackend.TryEnable(actor, operation.Desired) => operation with { Stage = RedrawStage.Recreate },
-            RedrawStage.Recreate when appearanceMemory is not IAppearanceFinalizer recreateFinalizer
-                || recreateFinalizer.TryFinalize(actor, operation.Desired) => operation with { Stage = RedrawStage.Verify },
-            RedrawStage.Recreate => operation with { Stage = RedrawStage.Finalize },
-            RedrawStage.Finalize when appearanceMemory is not IAppearanceFinalizer finalizer
-                || finalizer.TryFinalize(actor, operation.Desired) => operation with { Stage = RedrawStage.Verify },
-            RedrawStage.Finalize => operation,
-            RedrawStage.Verify when appearanceMemory.IsApplied(actor, operation.Desired) => Complete(operation),
-            RedrawStage.Verify => operation,
-            RedrawStage.Rollback when appearanceMemory.TryWrite(actor, operation.Rollback)
-                => operation with { Stage = RedrawStage.RollbackDisable },
-            RedrawStage.RollbackDisable when redrawBackend.TryDisable(actor)
-                => operation with { Stage = RedrawStage.RollbackHidden },
-            RedrawStage.RollbackHidden when appearanceMemory.TryWrite(actor, operation.Rollback)
-                => operation with { Stage = RedrawStage.RollbackEnable },
-            RedrawStage.RollbackEnable when redrawBackend.TryEnable(actor, operation.Rollback)
-                => operation with { Stage = RedrawStage.RollbackRecreate },
-            RedrawStage.RollbackRecreate when appearanceMemory is not IAppearanceFinalizer rollbackRecreateFinalizer
-                || rollbackRecreateFinalizer.TryFinalize(actor, operation.Rollback) => operation with { Stage = RedrawStage.RollbackVerify },
-            RedrawStage.RollbackRecreate => operation with { Stage = RedrawStage.RollbackFinalize },
-            RedrawStage.RollbackFinalize when appearanceMemory is not IAppearanceFinalizer rollbackFinalizer
-                || rollbackFinalizer.TryFinalize(actor, operation.Rollback) => operation with { Stage = RedrawStage.RollbackVerify },
-            RedrawStage.RollbackFinalize => operation,
-            RedrawStage.RollbackVerify when appearanceMemory.IsApplied(actor, operation.Rollback) => Fail(operation),
-            RedrawStage.RollbackVerify => operation,
-            RedrawStage.Apply or RedrawStage.Disable or RedrawStage.ApplyHidden or RedrawStage.Enable
-                => operation with { Stage = RedrawStage.Rollback, FrameCount = 0, Error = operation.Error ?? "Redraw stage failed." },
-            RedrawStage.Rollback or RedrawStage.RollbackDisable or RedrawStage.RollbackHidden or RedrawStage.RollbackEnable
-                => Fail(operation),
+            RedrawStage.Pending => operation with { Stage = RedrawStage.Disable },
+            RedrawStage.Disable when backendSucceeded is true
+                => operation with { Stage = RedrawStage.Enable },
+            RedrawStage.Enable when backendSucceeded is true
+                => Complete(operation),
+            RedrawStage.Disable or RedrawStage.Enable
+                => FailWithoutRollback(operation, $"Redraw stage {operation.Stage} failed."),
             _ => operation,
         };
         if (current is { } changed && changed.Stage != previousStage)
@@ -184,11 +176,20 @@ public sealed class RedrawCoordinator : IDisposable
 
     private RedrawOperation Fail(RedrawOperation operation)
     {
-        Finish(operation with { Stage = RedrawStage.Failed, Error = operation.Error ?? "Rollback failed." });
+        Finish(operation with { Stage = RedrawStage.Failed, Error = operation.Error ?? "Redraw failed." });
         return null!;
     }
 
+    private RedrawOperation FailWithoutRollback(RedrawOperation operation, string error)
+        => Fail(operation with { Error = error });
+
     private void Finish(RedrawOperation operation)
+    {
+        current = null;
+        ReportFinished(operation);
+    }
+
+    private void ReportFinished(RedrawOperation operation)
     {
         LastResult = operation;
         var eventId = operation.Stage switch
@@ -203,8 +204,6 @@ public sealed class RedrawCoordinator : IDisposable
             $"Redraw operation {operation.Stage}.",
             operation.Stage is RedrawStage.Failed ? DiagnosticLogLevel.Error : DiagnosticLogLevel.Information,
             operation.Error));
-        current = null;
-        activeRepresentation = null;
         OperationFinished?.Invoke(operation);
     }
 

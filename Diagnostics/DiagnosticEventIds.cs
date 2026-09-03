@@ -30,6 +30,7 @@ public static class DiagnosticEventIds
     public const string DrawObjectCreateInjected = "AM4005";
     public const string CutsceneActorLinked = "AM4006";
     public const string CutsceneActorUnlinked = "AM4007";
+    public const string DrawObjectConsumerObserved = "AM4008";
     public const string RedrawFailed = "AM4099";
     public const string GPoseEntered = "AM5001";
     public const string GPoseExited = "AM5002";
@@ -41,7 +42,6 @@ public static class DiagnosticEventIds
     public const string OutfitSnapshotCaptured = "AM6003";
     public const string OutfitApplied = "AM6004";
     public const string OutfitSkipped = "AM6005";
-    public const string OutfitRolledBack = "AM6006";
     public const string BulkBatchCompleted = "AM6007";
     public const string BulkBatchCancelled = "AM6008";
     public const string BulkActorFailed = "AM6099";
@@ -79,12 +79,13 @@ public static class DiagnosticEventIds
         [RedrawStateChanged] = "RedrawStateChanged", [RedrawCompleted] = "RedrawCompleted",
         [RedrawCancelled] = "RedrawCancelled", [DrawObjectCreateInjected] = "DrawObjectCreateInjected",
         [CutsceneActorLinked] = "CutsceneActorLinked", [CutsceneActorUnlinked] = "CutsceneActorUnlinked",
+        [DrawObjectConsumerObserved] = "DrawObjectConsumerObserved",
         [RedrawFailed] = "RedrawFailed", [GPoseEntered] = "GPoseEntered",
         [GPoseExited] = "GPoseExited", [GPoseMappingResolved] = "GPoseMappingResolved",
         [GPoseMappingAmbiguous] = "GPoseMappingAmbiguous", [GPoseOperationFailed] = "GPoseOperationFailed",
         [BulkBatchStarted] = "BulkBatchStarted", [BulkTargetResolved] = "BulkTargetResolved",
         [OutfitSnapshotCaptured] = "OutfitSnapshotCaptured", [OutfitApplied] = "OutfitApplied",
-        [OutfitSkipped] = "OutfitSkipped", [OutfitRolledBack] = "OutfitRolledBack", [BulkBatchCompleted] = "BulkBatchCompleted",
+        [OutfitSkipped] = "OutfitSkipped", [BulkBatchCompleted] = "BulkBatchCompleted",
         [BulkBatchCancelled] = "BulkBatchCancelled", [BulkActorFailed] = "BulkActorFailed",
         [UnequipBatchStarted] = "UnequipBatchStarted", [RestoreBatchStarted] = "RestoreBatchStarted",
         [TroubleshootingCaptureStarted] = "TroubleshootingCaptureStarted",

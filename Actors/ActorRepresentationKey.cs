@@ -4,4 +4,5 @@ public readonly record struct ActorRepresentationKey(
     ushort ObjectIndex,
     ulong GameObjectId,
     uint EntityId,
-    bool IsGPoseRepresentation);
+    bool IsGPoseRepresentation,
+    uint TerritoryId = 0);

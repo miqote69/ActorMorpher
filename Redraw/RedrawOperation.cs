@@ -3,8 +3,8 @@ namespace ActorMorpher.Redraw;
 public sealed record RedrawOperation(
     Guid OperationId,
     LogicalActorKey Actor,
+    ActorRepresentationKey TargetRepresentation,
     AppearanceData Desired,
-    AppearanceData Rollback,
     long Revision,
     uint TerritoryId,
     RedrawStage Stage,
@@ -13,9 +13,18 @@ public sealed record RedrawOperation(
 {
     public static RedrawOperation Create(
         LogicalActorKey actor,
+        ActorRepresentationKey targetRepresentation,
         AppearanceData desired,
-        AppearanceData rollback,
         long revision,
         uint territoryId)
-        => new(Guid.NewGuid(), actor, desired, rollback, revision, territoryId, RedrawStage.Pending, 0, null);
+        => new(
+            Guid.NewGuid(),
+            actor,
+            targetRepresentation,
+            desired,
+            revision,
+            territoryId,
+            RedrawStage.Pending,
+            0,
+            null);
 }

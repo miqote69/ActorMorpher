@@ -21,5 +21,11 @@
     <Reference Update="Serilog">
       <Private>true</Private>
     </Reference>
+    <Reference Update="FFXIVClientStructs">
+      <Private>true</Private>
+    </Reference>
+    <Reference Update="InteropGenerator.Runtime">
+      <Private>true</Private>
+    </Reference>
   </ItemGroup>
 </Project>

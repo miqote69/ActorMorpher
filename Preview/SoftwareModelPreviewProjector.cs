@@ -2,11 +2,39 @@ using System.Numerics;
 
 namespace ActorMorpher.Preview;
 
-public static class SoftwareModelPreviewProjector
+public sealed class SoftwareModelPreviewProjector
 {
     private const float BodySkinDepthOffsetFactor = 0.05f;
     private const float LowerBodyEquipmentDepthOffsetFactor = 0.025f;
     private static readonly Vector3 LightDirection = Vector3.Normalize(new Vector3(-0.35f, 0.55f, 0.75f));
+
+    private SoftwareModelPreviewView? cachedView;
+    private Vector2 cachedPosition;
+    private Vector2 cachedSize;
+    private IReadOnlyList<SoftwareModelPreviewProjectedTriangle> cachedTriangles = Array.Empty<SoftwareModelPreviewProjectedTriangle>();
+
+    public IReadOnlyList<SoftwareModelPreviewProjectedTriangle> GetProjection(
+        SoftwareModelPreviewView view, Vector2 viewportPosition, Vector2 viewportSize)
+    {
+        if (cachedView is { } previous
+            && ReferenceEquals(previous.Scene, view.Scene)
+            && previous.Yaw == view.Yaw && previous.Pitch == view.Pitch && previous.Zoom == view.Zoom
+            && cachedPosition == viewportPosition && cachedSize == viewportSize)
+            return cachedTriangles;
+
+        var triangles = Project(view, viewportPosition, viewportSize);
+        cachedView = view;
+        cachedPosition = viewportPosition;
+        cachedSize = viewportSize;
+        cachedTriangles = triangles;
+        return triangles;
+    }
+
+    public void Clear()
+    {
+        cachedView = null;
+        cachedTriangles = Array.Empty<SoftwareModelPreviewProjectedTriangle>();
+    }
 
     public static IReadOnlyList<SoftwareModelPreviewProjectedTriangle> Project(
         SoftwareModelPreviewView view,

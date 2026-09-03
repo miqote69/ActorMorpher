@@ -7,7 +7,8 @@ public sealed record ActorEntry(
     string Name,
     ObjectKind Kind,
     bool IsLocalPlayer,
-    IReadOnlyList<ActorSnapshot> Representations)
+    IReadOnlyList<ActorSnapshot> Representations,
+    bool IsOwnMinion = false)
 {
     public ActorSnapshot Current => Representations[0];
     public ulong GameObjectId => Current.RepresentationKey.GameObjectId;

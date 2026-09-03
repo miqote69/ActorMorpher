@@ -25,6 +25,11 @@ public sealed class DiagnosticLogRouter : IDiagnosticLog, IDisposable
 
     public bool Switch(DiagnosticLogSettings settings, string sessionId)
     {
+        var previous = service;
+        service = null;
+        current = NullDiagnosticLog.Instance;
+        previous?.Dispose();
+
         DiagnosticLogService? next = null;
         try
         {
@@ -41,10 +46,8 @@ public sealed class DiagnosticLogRouter : IDiagnosticLog, IDisposable
             return false;
         }
 
-        var previous = service;
         service = next;
         current = next is null ? NullDiagnosticLog.Instance : next;
-        previous?.Dispose();
         return true;
     }
 

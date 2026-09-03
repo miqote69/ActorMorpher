@@ -12,6 +12,7 @@ using Dalamud.Plugin.Services;
 using Lumina.Excel.Sheets;
 using LuminaSupplemental.Excel.Model;
 using LuminaSupplemental.Excel.Services;
+using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using ActorMorpher.Localization;
 using ActorMorpher.Preview;
 
@@ -39,16 +40,18 @@ public sealed class Plugin : IDalamudPlugin
     private readonly DiagnosticLogRouter diagnosticRouter;
     private readonly DiagnosticController diagnosticController;
     private readonly ActorRegistry actorRegistry;
+    private readonly IActorResolver actorResolver;
     private readonly ActorIdentityService actorIdentity = new();
     private readonly RedrawCoordinator redrawCoordinator;
     private readonly GPoseCoordinator gposeCoordinator;
     private readonly AppearanceApplyService appearanceApplyService;
+    private readonly IAppearanceMemory appearanceMemory;
+    private readonly NativeOutfitMemory outfitMemory;
     private readonly BulkOutfitService bulkOutfitService;
     private readonly PinnedOutfitStore pinnedOutfitStore;
     private readonly IHumanModelClassifier humanModelClassifier;
     private readonly NativeDrawObjectInjector drawObjectInjector;
-    private readonly HashSet<LogicalActorKey> combinedRestorePending = new();
-    private readonly HashSet<LogicalActorKey> explicitModelApplyPending = new();
+    private readonly NativeRedrawBackend redrawBackend;
     private readonly ModelPreviewController modelPreview;
     private readonly SoftwareModelPreviewBackend softwareModelPreviewBackend;
     private readonly HumanPreviewDataBuilder humanPreviewDataBuilder = new();
@@ -68,10 +71,13 @@ public sealed class Plugin : IDalamudPlugin
     private readonly Dictionary<(uint RowId, ModelCategory Category, ModelSource Source, uint SourceId), ModelPreviewAssetReport> previewAssetCaches = new();
     private readonly Dictionary<(uint RowId, ModelCategory Category, ModelSource Source, uint SourceId), ModelPreviewSupport> previewSupportCaches = new();
     private readonly Dictionary<(uint RowId, ModelCategory Category, ModelSource Source, uint SourceId), ModelPreviewGeometryReport> previewGeometryCaches = new();
-    private long nextLocalAppearanceReapplyTick;
     private long nextLocalOutfitReapplyTick;
     private long nextPinnedOutfitScanTick;
     private LogicalActorKey? pinnedOutfitOperationActor;
+    private OutfitData? pinnedOutfitOperationObservedState;
+    private readonly Dictionary<LogicalActorKey, OutfitData> failedPinnedOutfitReapplyStates = new();
+    private readonly HashSet<LogicalActorKey> pendingActorRestoreRedraws = new();
+    private string restoreStatus = string.Empty;
     private ModelPreviewSelectionKey? previewTextureSelection;
 
     public Configuration Configuration { get; }
@@ -124,7 +130,13 @@ public sealed class Plugin : IDalamudPlugin
         modelPreviewTextureCache = new ModelPreviewTextureCache(
             TextureProvider,
             new ModelPreviewTextureSource(DataManager));
-        actorRegistry = new ActorRegistry(ObjectTable, ClientState, Framework, humanModelClassifier, diagnosticRouter);
+        actorRegistry = new ActorRegistry(
+            ObjectTable,
+            ClientState,
+            Framework,
+            humanModelClassifier,
+            diagnosticRouter,
+            localPlayerAppearancePersistence.GetRetainedAppearance);
         actorIdentity = new ActorIdentityService(diagnosticRouter);
         var clientContext = new DalamudClientContext(ClientState);
         softwareModelPreviewBackend = new SoftwareModelPreviewBackend(
@@ -138,34 +150,41 @@ public sealed class Plugin : IDalamudPlugin
             softwareModelPreviewBackend,
             clientContext,
             diagnosticRouter);
-        var actorResolver = new RegistryActorResolver(actorRegistry, clientContext);
-        var appearanceMemory = new NativeAppearanceMemory(ObjectTable, humanModelClassifier, diagnosticRouter, Log);
-        drawObjectInjector = new NativeDrawObjectInjector(GameInteropProvider, ObjectTable, diagnosticRouter);
+        actorResolver = new RegistryActorResolver(actorRegistry, clientContext);
+        drawObjectInjector = new NativeDrawObjectInjector(
+            GameInteropProvider,
+            ObjectTable,
+            ClientState,
+            diagnosticRouter,
+            localPlayerAppearancePersistence,
+            actorRegistry.GetPublishedAppearanceState);
+        appearanceMemory = new NativeAppearanceMemory(
+            ObjectTable,
+            humanModelClassifier,
+            diagnosticRouter,
+            Log);
+        redrawBackend = new NativeRedrawBackend(ObjectTable, drawObjectInjector);
         redrawCoordinator = new RedrawCoordinator(
             Framework,
             actorResolver,
-            appearanceMemory,
-            new NativeRedrawBackend(ObjectTable, drawObjectInjector),
+            redrawBackend,
             clientContext,
             diagnosticRouter);
         gposeCoordinator = new GPoseCoordinator(Framework, ClientState, actorRegistry, diagnosticRouter);
         appearanceApplyService = new AppearanceApplyService(
             Framework,
             actorResolver,
-            appearanceMemory,
             clientContext,
             redrawCoordinator,
-            new AppearanceOverrideStore(),
             diagnosticRouter);
+        outfitMemory = new NativeOutfitMemory(ObjectTable, humanModelClassifier, diagnosticRouter);
         bulkOutfitService = new BulkOutfitService(
             Framework,
             actorResolver,
-            new NativeOutfitMemory(ObjectTable, humanModelClassifier, diagnosticRouter),
+            outfitMemory,
             clientContext,
             new OutfitOverrideStore(),
             diagnosticRouter);
-        gposeCoordinator.MappingsReady += OnRepresentationContextChanged;
-        gposeCoordinator.Exited += OnRepresentationContextChanged;
         appearanceApplyService.OperationCompleted += OnAppearanceOperationCompleted;
         bulkOutfitService.ActorOperationCompleted += OnBulkOutfitActorOperationCompleted;
         bulkOutfitTargetResolver = new BulkOutfitTargetResolver(diagnosticRouter, () => ClientState.ClientLanguage);
@@ -195,8 +214,6 @@ public sealed class Plugin : IDalamudPlugin
         mainWindow.Dispose();
         modelPreview.Dispose();
         modelPreviewTextureCache.Dispose();
-        gposeCoordinator.MappingsReady -= OnRepresentationContextChanged;
-        gposeCoordinator.Exited -= OnRepresentationContextChanged;
         appearanceApplyService.OperationCompleted -= OnAppearanceOperationCompleted;
         bulkOutfitService.ActorOperationCompleted -= OnBulkOutfitActorOperationCompleted;
         bulkOutfitService.Dispose();
@@ -242,6 +259,16 @@ public sealed class Plugin : IDalamudPlugin
 
     public bool TryResolveActor(LogicalActorKey key, out ActorEntry actor)
         => actorIdentity.TryResolve(actorRegistry, key, out actor);
+
+    public bool TryResolveActorRepresentation(
+        LogicalActorKey key,
+        out ActorEntry actor,
+        out ActorSnapshot representation)
+    {
+        representation = null!;
+        return TryResolveActor(key, out actor)
+            && actorResolver.TryResolve(actor.Key, out representation);
+    }
 
     public BulkOutfitPreview GetBulkOutfitPreview(BulkOutfitSettings settings)
         => bulkOutfitTargetResolver.Resolve(GetBulkOutfitActors(), settings, SelectBulkOutfitRepresentation);
@@ -306,7 +333,12 @@ public sealed class Plugin : IDalamudPlugin
             : Array.Empty<EquipmentDisplayEntry>();
 
     public bool TryGetActorOutfit(LogicalActorKey actor, out OutfitData outfit)
-        => bulkOutfitService.TryCaptureOutfit(actor, out outfit);
+    {
+        if (actorResolver.TryResolve(actor, out var current))
+            return outfitMemory.TryCaptureRendered(current, out outfit);
+        outfit = null!;
+        return false;
+    }
 
     public StainDisplayEntry? GetStainDisplay(byte stainId)
     {
@@ -439,7 +471,6 @@ public sealed class Plugin : IDalamudPlugin
             operation.Fail(ex, "Model search cache build failed.");
             Log.Error(ex, "Failed to load model search data.");
             cache = Array.Empty<ModelSearchEntry>();
-            modelSearchCaches[language] = cache;
         }
 
         return cache;
@@ -541,54 +572,97 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     public bool TryApplyModelToLocalPlayer(ModelSearchEntry model, out string message)
+        => TryApplyModelToLocalPlayer(model, out _, out message);
+
+    public bool TryApplyModelToLocalPlayer(ModelSearchEntry model, out Guid operationId, out string message)
     {
+        operationId = Guid.Empty;
         var local = actorRegistry.Entries.FirstOrDefault(static actor => actor.IsLocalPlayer);
         if (local is null)
         {
             message = "Local player is not available.";
             return false;
         }
-        return TryApplyModel(local.Key, model, out message);
+        return TryApplyModel(local.Key, model, out operationId, out message);
     }
 
     public bool TryApplyModel(LogicalActorKey actor, ModelSearchEntry model, out string message)
+        => TryApplyModel(actor, model, out _, out message);
+
+    public bool TryApplyModel(LogicalActorKey actor, ModelSearchEntry model, out Guid operationId, out string message)
     {
-        if (model.ModelAppearance is not { } appearance)
-            return FailUnsupported(out message);
-        if (!appearanceApplyService.TryApply(actor, appearance, out message))
+        restoreStatus = string.Empty;
+        if (!appearanceApplyService.TryApply(actor, model.ModelAppearance, out operationId, out message))
             return false;
-        explicitModelApplyPending.Add(actor);
         return true;
     }
 
     public bool TryRestoreActor(LogicalActorKey actor, out string message)
     {
-        if (appearanceApplyService.Store.TryGet(actor, out _))
+        restoreStatus = string.Empty;
+        if (!actorResolver.TryResolve(actor, out var current))
         {
-            combinedRestorePending.Add(actor);
-            if (appearanceApplyService.TryRestore(actor, out message))
+            message = "The actor is no longer available.";
+            restoreStatus = message;
+            return false;
+        }
+        if (bulkOutfitService.Store.TryGet(actor, out _))
+        {
+            if (!pendingActorRestoreRedraws.Add(actor))
             {
-                UnpinActor(actor);
-                return true;
+                message = "Original outfit restore is already in progress.";
+                restoreStatus = message;
+                return false;
             }
-            combinedRestorePending.Remove(actor);
+            if (!bulkOutfitService.StartRestore(actor, out message))
+            {
+                pendingActorRestoreRedraws.Remove(actor);
+                restoreStatus = message;
+                return false;
+            }
+            redrawCoordinator.Cancel(actor, "Explicit restore requested.");
+
+            message = "Original outfit restore started; game appearance redraw will follow.";
+            restoreStatus = message;
+            return true;
+        }
+
+        redrawCoordinator.Cancel(actor, "Explicit restore requested.");
+        actorRegistry.ClearManagedAppearance(actor);
+        if (current.IsLocalPlayer)
+        {
+            localPlayerAppearancePersistence.RecordRestored();
+            drawObjectInjector.ClearPersistentLocalAppearance();
+            localPlayerOutfitPersistence.RecordRestored();
+        }
+        UnpinActor(actor);
+
+        var succeeded = TryRequestGameAppearanceRedraw(current, out message);
+        restoreStatus = message;
+        return succeeded;
+    }
+
+    private bool TryRequestGameAppearanceRedraw(ActorSnapshot actor, out string message)
+    {
+        if (!redrawBackend.TryDisable(actor) || !redrawBackend.TryEnable(actor, null, Guid.Empty))
+        {
+            message = "The actor could not be redrawn.";
             return false;
         }
 
-        var started = bulkOutfitService.StartRestore(actor, out message);
-        if (started)
-            UnpinActor(actor);
-        return started;
+        message = "Original game appearance regeneration requested.";
+        return true;
     }
-
-    public bool HasAppearanceOverride(LogicalActorKey actor)
-        => appearanceApplyService.Store.TryGet(actor, out _);
-
-    public bool TryGetAppearanceOverride(LogicalActorKey actor, out AppearanceOverrideState state)
-        => appearanceApplyService.Store.TryGet(actor, out state!);
 
     public bool HasOutfitOverride(LogicalActorKey actor)
         => bulkOutfitService.Store.TryGet(actor, out _);
+
+    public bool IsOutfitModified(LogicalActorKey actor)
+        => bulkOutfitService.IsOutfitModified(actor);
+
+    public bool IsActorModified(LogicalActorKey actor)
+        => (actorResolver.TryResolve(actor, out var current) && current.IsAppearanceManaged)
+            || IsOutfitModified(actor);
 
     public bool TryGetOutfitOverride(LogicalActorKey actor, out OutfitOverrideState state)
         => bulkOutfitService.Store.TryGet(actor, out state!);
@@ -615,6 +689,7 @@ public sealed class Plugin : IDalamudPlugin
         if (!pinned)
         {
             pinnedOutfitStore.Unpin(entry);
+            failedPinnedOutfitReapplyStates.Remove(actor);
             message = "Outfit pin removed.";
             return true;
         }
@@ -625,6 +700,7 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         pinnedOutfitStore.Pin(entry, state.Desired);
+        failedPinnedOutfitReapplyStates.Remove(actor);
         nextPinnedOutfitScanTick = Environment.TickCount64 + 500;
         message = "Applied outfit pinned.";
         return true;
@@ -637,7 +713,11 @@ public sealed class Plugin : IDalamudPlugin
         => actorRegistry.Entries.FirstOrDefault(static actor => actor.IsLocalPlayer) is { } local
         && appearanceApplyService.IsPending(local.Key);
 
-    public string AppearanceStatus => appearanceApplyService.LastStatus;
+    public string AppearanceStatus => string.IsNullOrWhiteSpace(restoreStatus)
+        ? appearanceApplyService.LastStatus
+        : restoreStatus;
+    public bool? AppearanceSucceeded => appearanceApplyService.LastSucceeded;
+    public Guid? AppearanceOperationId => appearanceApplyService.LastOperationId;
     public ModelPreviewSnapshot ModelPreview => modelPreview.Snapshot;
     public SoftwareModelPreviewView? SoftwareModelPreview => softwareModelPreviewBackend.GetView();
     public void SelectPreviewModel(ModelSearchEntry? model)
@@ -717,58 +797,36 @@ public sealed class Plugin : IDalamudPlugin
     private static (uint RowId, ModelCategory Category, ModelSource Source, uint SourceId) PreviewCacheKey(ModelSearchEntry model)
         => (model.RowId, model.Category, model.Source, model.SourceId);
 
-    private static bool FailUnsupported(out string message)
+    private void OnAppearanceOperationCompleted(
+        Guid _,
+        LogicalActorKey actor,
+        ActorRepresentationKey representation,
+        AppearanceData applied,
+        bool succeeded)
     {
-        message = "The selected model does not have an applicable appearance payload.";
-        return false;
+        if (!actorResolver.TryResolve(actor, out var current)
+            || !CanPublishAppearanceCompletion(succeeded, representation, current))
+            return;
+        var publishedAppearance = CreatePublishedAppearance(applied);
+        if (!actorRegistry.RecordAppliedAppearance(actor, representation, publishedAppearance))
+            return;
+
+        if (!current.IsLocalPlayer)
+            return;
+        var published = actorRegistry.GetPublishedAppearanceState(representation);
+        localPlayerAppearancePersistence.RecordApplied(
+            actor,
+            representation,
+            published.PublicationVersion,
+            publishedAppearance);
+        drawObjectInjector.EnablePersistentLocalAppearance();
     }
 
-    private void OnAppearanceOperationCompleted(LogicalActorKey actor, uint modelCharaId, bool isRestore, bool succeeded)
-    {
-        var explicitModelApply = explicitModelApplyPending.Remove(actor);
-        var wasPersistentReapply = localPlayerAppearancePersistence.IsReapplyActor(actor);
-        if (wasPersistentReapply)
-            localPlayerAppearancePersistence.CompleteReapply(actor, succeeded);
-        var isLocalPlayer = wasPersistentReapply
-            || actorRegistry.Entries.Any(entry => entry.IsLocalPlayer && entry.Key == actor);
-        if (succeeded && isLocalPlayer)
-        {
-            if (isRestore)
-            {
-                localPlayerAppearancePersistence.RecordRestored();
-                drawObjectInjector.ClearPersistentLocalAppearance();
-            }
-            else if (appearanceApplyService.Store.TryGet(actor, out var localState))
-            {
-                localPlayerAppearancePersistence.RecordApplied(localState.DesiredData);
-                drawObjectInjector.SetPersistentLocalAppearance(actor, localState.DesiredData);
-            }
-        }
-
-        if (!succeeded)
-        {
-            combinedRestorePending.Remove(actor);
-            return;
-        }
-        if (explicitModelApply)
-        {
-            bulkOutfitService.ForgetOverride(actor);
-            if (isLocalPlayer)
-                localPlayerOutfitPersistence.RecordRestored();
-            return;
-        }
-        if (isRestore && combinedRestorePending.Remove(actor))
-        {
-            // The appearance base snapshot already contains the true pre-morph equipment.
-            // Applying a Bulk snapshot captured while morphed would mix NPC gear onto that body.
-            bulkOutfitService.ForgetOverride(actor);
-            if (isLocalPlayer)
-                localPlayerOutfitPersistence.RecordRestored();
-            return;
-        }
-        if (humanModelClassifier.IsHuman(modelCharaId))
-            bulkOutfitService.Reapply(actor);
-    }
+    internal static bool CanPublishAppearanceCompletion(
+        bool succeeded,
+        ActorRepresentationKey targetRepresentation,
+        ActorSnapshot current)
+        => succeeded && current.RepresentationKey == targetRepresentation;
 
     private void OnBulkOutfitActorOperationCompleted(
         LogicalActorKey actor,
@@ -778,9 +836,48 @@ public sealed class Plugin : IDalamudPlugin
     {
         if (pinnedOutfitOperationActor == actor)
         {
+            if (succeeded)
+                failedPinnedOutfitReapplyStates.Remove(actor);
+            else if (desired is not null && pinnedOutfitOperationObservedState is { } failedState)
+                failedPinnedOutfitReapplyStates[actor] = failedState;
             pinnedOutfitOperationActor = null;
-            nextPinnedOutfitScanTick = Environment.TickCount64 + (succeeded ? 500 : 2000);
+            pinnedOutfitOperationObservedState = null;
+            nextPinnedOutfitScanTick = Environment.TickCount64 + 500;
         }
+        var isExplicitActorRestore = type == BulkOperationType.Restore
+            && pendingActorRestoreRedraws.Remove(actor);
+        if (isExplicitActorRestore)
+        {
+            if (!succeeded)
+            {
+                restoreStatus = "Original outfit restore failed.";
+                return;
+            }
+
+            var explicitRestoreIsLocalPlayer = localPlayerAppearancePersistence.Actor == actor
+                || actorRegistry.Entries.Any(entry => entry.IsLocalPlayer && entry.Key == actor);
+            if (explicitRestoreIsLocalPlayer)
+            {
+                localPlayerAppearancePersistence.RecordRestored();
+                drawObjectInjector.ClearPersistentLocalAppearance();
+                localPlayerOutfitPersistence.RecordRestored();
+            }
+            actorRegistry.ClearManagedAppearance(actor);
+            UnpinActor(actor);
+            if (!actorResolver.TryResolve(actor, out var restored))
+            {
+                ReportRestoreRedrawFailure(actor, "Original outfit was restored, but the actor is no longer available for redraw.");
+                return;
+            }
+            if (!TryRequestGameAppearanceRedraw(restored, out var redrawMessage))
+            {
+                ReportRestoreRedrawFailure(actor, redrawMessage);
+                return;
+            }
+            restoreStatus = redrawMessage;
+            return;
+        }
+
         if (succeeded && type == BulkOperationType.Restore
             && actorRegistry.TryGet(actor, out var restoredActor))
             pinnedOutfitStore.Unpin(restoredActor);
@@ -790,14 +887,52 @@ public sealed class Plugin : IDalamudPlugin
             localPlayerOutfitPersistence.CompleteReapply(actor, succeeded);
         var isLocalPlayer = wasPersistentReapply
             || actorRegistry.Entries.Any(entry => entry.IsLocalPlayer && entry.Key == actor);
-        if (!succeeded || !isLocalPlayer)
-            return;
-        if (desired is not null)
-            drawObjectInjector.UpdatePersistentLocalOutfit(desired);
-        if (type == BulkOperationType.Restore)
-            localPlayerOutfitPersistence.RecordRestored();
-        else if (desired is not null)
-            localPlayerOutfitPersistence.RecordApplied(desired);
+        if (succeeded && isLocalPlayer)
+        {
+            if (desired is not null && localPlayerAppearancePersistence.IsActive)
+            {
+                localPlayerOutfitPersistence.RecordRestored();
+            }
+            else if (type == BulkOperationType.Restore)
+                localPlayerOutfitPersistence.RecordRestored();
+            else if (desired is not null)
+                localPlayerOutfitPersistence.RecordApplied(desired);
+        }
+
+        if (succeeded && desired is not null
+            && actorResolver.TryResolve(actor, out var current)
+            && current is { IsAppearanceManaged: true, CurrentAppearance: { } appearance })
+        {
+            var updated = appearance.WithOutfit(
+                desired.Equipment.Select(ActorRegistry.ToEquipmentModelValue),
+                desired.VisorToggled,
+                desired.Facewear.IsAvailable ? desired.Facewear.ModelId : appearance.FacewearModelId,
+                desired.HatVisible);
+            if (actorRegistry.RecordAppliedAppearance(actor, current.RepresentationKey, updated)
+                && current.IsLocalPlayer)
+            {
+                var published = actorRegistry.GetPublishedAppearanceState(current.RepresentationKey);
+                localPlayerAppearancePersistence.UpdateRetainedAppearance(
+                    current.RepresentationKey,
+                    updated,
+                    published.PublicationVersion);
+            }
+        }
+
+    }
+
+    private void ReportRestoreRedrawFailure(LogicalActorKey actor, string message)
+    {
+        restoreStatus = message;
+        diagnosticRouter.Write(new DiagnosticLogEntry
+        {
+            Level = DiagnosticLogLevel.Error,
+            EventId = DiagnosticEventIds.RedrawFailed,
+            Category = DiagnosticCategory.Redraw,
+            Message = message,
+            ActorKey = DiagnosticActorKeys.Format(diagnosticRouter, actor),
+            Outcome = "Failed",
+        });
     }
 
     private void OnPluginFrameworkUpdate(IFramework framework)
@@ -806,7 +941,9 @@ public sealed class Plugin : IDalamudPlugin
         var now = Environment.TickCount64;
         if (localPlayerAppearancePersistence.UpdateContext(ClientState.TerritoryType, ClientState.IsLoggedIn))
         {
-            nextLocalAppearanceReapplyTick = now + 500;
+            pinnedOutfitOperationActor = null;
+            pinnedOutfitOperationObservedState = null;
+            failedPinnedOutfitReapplyStates.Clear();
             if (!ClientState.IsLoggedIn)
                 drawObjectInjector.ClearPersistentLocalAppearance();
         }
@@ -815,48 +952,21 @@ public sealed class Plugin : IDalamudPlugin
         if (!ClientState.IsLoggedIn)
             return;
 
+        UpdateLocalPlayerAppearanceArm();
         var local = actorRegistry.Entries.FirstOrDefault(static actor => actor.IsLocalPlayer);
         if (local is null)
             return;
-        if (localPlayerAppearancePersistence.TryGetPending(out var desired)
-            && now >= nextLocalAppearanceReapplyTick)
-        {
-            if (appearanceApplyService.IsPending(local.Key))
-                return;
-            if (appearanceApplyService.TryApply(local.Key, desired, out _))
-            {
-                localPlayerAppearancePersistence.MarkReapplyStarted(local.Key);
-                diagnosticRouter.Write(new DiagnosticLogEntry
-                {
-                    EventId = DiagnosticEventIds.MorphOperationStarted,
-                    Category = DiagnosticCategory.Appearance,
-                    Message = "Local player appearance reapply queued after territory change.",
-                    ActorKey = DiagnosticActorKeys.Format(diagnosticRouter, local.Key),
-                    Properties = new Dictionary<string, object?>
-                    {
-                        ["modelCharaId"] = desired.ModelCharaId,
-                        ["territoryId"] = ClientState.TerritoryType,
-                    },
-                });
-            }
-            else
-            {
-                nextLocalAppearanceReapplyTick = now + 500;
-            }
-            return;
-        }
-
         if (TryReapplyPinnedOutfit(now))
             return;
 
-        if (appearanceApplyService.IsPending(local.Key)
-            || bulkOutfitService.CurrentOperation is not null
+        if (bulkOutfitService.CurrentOperation is not null
             || !localPlayerOutfitPersistence.TryGetPending(out var outfit)
             || now < nextLocalOutfitReapplyTick)
             return;
+        if (!localPlayerOutfitPersistence.MarkReapplyStarted(local.Key))
+            return;
         if (bulkOutfitService.StartPersistentApply(local.Key, outfit, out _))
         {
-            localPlayerOutfitPersistence.MarkReapplyStarted(local.Key);
             diagnosticRouter.Write(new DiagnosticLogEntry
             {
                 EventId = DiagnosticEventIds.BulkBatchStarted,
@@ -871,8 +981,20 @@ public sealed class Plugin : IDalamudPlugin
         }
         else
         {
-            nextLocalOutfitReapplyTick = now + 500;
+            localPlayerOutfitPersistence.CompleteReapply(local.Key, false);
         }
+    }
+
+    private void UpdateLocalPlayerAppearanceArm()
+    {
+        if (localPlayerAppearancePersistence.CurrentRepresentation is not { } source)
+            return;
+
+        var published = actorRegistry.GetPublishedAppearanceState(source);
+        localPlayerAppearancePersistence.UpdatePublishedAppearance(
+            source,
+            published.Appearance,
+            published.PublicationVersion);
     }
 
     private CommandRegistrationLease CreateCommandRegistration(string command)
@@ -903,16 +1025,24 @@ public sealed class Plugin : IDalamudPlugin
         nextPinnedOutfitScanTick = now + 500;
         foreach (var actor in actorRegistry.Entries)
         {
-            if (appearanceApplyService.IsPending(actor.Key)
-                || actor.Current.Race is null
+            if (actor.Current.Race is null
                 || !pinnedOutfitStore.TryGet(actor, out var desired)
-                || !bulkOutfitService.TryCaptureOutfit(actor.Key, out var current)
-                || OutfitDataValueComparer.AreEqual(current, desired))
+                || !bulkOutfitService.TryCaptureOutfit(actor.Key, out var current))
+                continue;
+
+            if (failedPinnedOutfitReapplyStates.TryGetValue(actor.Key, out var failedState))
+            {
+                if (OutfitDataValueComparer.AreEqual(current, failedState))
+                    continue;
+                failedPinnedOutfitReapplyStates.Remove(actor.Key);
+            }
+            if (OutfitDataValueComparer.AreEqual(current, desired))
                 continue;
 
             if (!bulkOutfitService.StartPersistentApply(actor.Key, desired, out _))
                 continue;
             pinnedOutfitOperationActor = actor.Key;
+            pinnedOutfitOperationObservedState = current;
             diagnosticRouter.Write(new DiagnosticLogEntry
             {
                 EventId = DiagnosticEventIds.BulkBatchStarted,
@@ -932,40 +1062,28 @@ public sealed class Plugin : IDalamudPlugin
 
     private void UnpinActor(LogicalActorKey actor)
     {
+        failedPinnedOutfitReapplyStates.Remove(actor);
         if (actorRegistry.TryGet(actor, out var entry))
             pinnedOutfitStore.Unpin(entry);
     }
 
-    private void OnRepresentationContextChanged()
+    public static bool ShouldRegisterModelSearchAppearance(AppearanceData? appearance)
     {
-        combinedRestorePending.Clear();
-        var appearanceKeys = appearanceApplyService.Store.States.Keys.ToArray();
-        appearanceApplyService.ReapplyAll();
-        bulkOutfitService.ReapplyWithoutAppearanceOverrides(appearanceKeys);
+        if (appearance is null)
+            return false;
+        if (appearance.Category != ModelCategory.Human)
+            return true;
+
+        var customize = appearance.Customize;
+        return customize.Length == 26
+            && customize[0] is >= 1 and <= 8
+            && customize[1] <= 1
+            && customize[4] != 0
+            && HumanTribeCatalog.IsValidForRace(customize[0], customize[4]);
     }
 
-    public static string GetApplyUnavailableReason(ModelSearchEntry model)
-        => model.Completeness switch
-        {
-            AppearanceCompleteness.Unsupported
-                => "This model does not have a supported standalone appearance representation.",
-            AppearanceCompleteness.ModelOnly when model.Category == ModelCategory.Monster
-                => "Only the Monster model ID is available; the required redraw behavior has not been verified.",
-            AppearanceCompleteness.ModelOnly when model.Category == ModelCategory.Demihuman
-                => "This Demihuman is missing complete customize or equipment part data.",
-            _ when model.Category == ModelCategory.Human && model.HumanAppearance is null
-                => "This Human NPC does not have complete appearance data.",
-            _ => "Standalone appearance apply is not available in this build.",
-        };
-
-    public static bool CanApplyModel(ModelSearchEntry model)
-        => model.ModelAppearance is { } appearance
-        && appearance.Category switch
-        {
-            ModelCategory.Human or ModelCategory.Demihuman => appearance.Completeness == AppearanceCompleteness.Complete,
-            ModelCategory.Monster => appearance.Completeness is AppearanceCompleteness.Complete or AppearanceCompleteness.ModelOnly,
-            _ => false,
-        };
+    public static bool ShouldRegisterUnreferencedModelChara(byte modelType)
+        => modelType == 3;
 
     private IReadOnlyList<ModelSearchEntry> BuildModelSearchEntries(ClientLanguage language)
     {
@@ -986,7 +1104,7 @@ public sealed class Plugin : IDalamudPlugin
                 ? resident.Singular.ToString()
                 : string.Empty;
             if (string.IsNullOrWhiteSpace(name))
-                continue;
+                name = $"Event NPC {row.RowId}";
 
             var appearance = model.Type == 1 ? CreateHumanAppearance(row) : null;
             if (model.Type == 1 && appearance is null)
@@ -998,6 +1116,8 @@ public sealed class Plugin : IDalamudPlugin
                 3 => CreateMonsterAppearance(modelId, row.RowId, row.Scale),
                 _ => null,
             };
+            if (!ShouldRegisterModelSearchAppearance(modelAppearance))
+                continue;
 
             entries.Add(CreateSearchEntry(
                 model,
@@ -1008,7 +1128,7 @@ public sealed class Plugin : IDalamudPlugin
                 (byte)row.Gender,
                 row.BodyType,
                 appearance,
-                modelAppearance));
+                modelAppearance!));
         }
 
         foreach (var row in DataManager.GetExcelSheet<BNpcBase>(language))
@@ -1028,18 +1148,17 @@ public sealed class Plugin : IDalamudPlugin
                 : Array.Empty<string>();
 
             var npcEquip = row.NpcEquip.ValueNullable;
-            var appearance = model.Type == 1 && customize is { } humanCustomize && npcEquip is { } humanEquip
-                ? CreateHumanAppearance(humanCustomize, humanEquip)
+            var appearance = model.Type == 1 && customize is { } humanCustomize
+                ? CreateHumanAppearance(humanCustomize, npcEquip)
                 : null;
             var modelAppearance = model.Type switch
             {
                 1 when appearance is not null => CreateHumanModelAppearance(modelId, row.RowId, appearance, row.Scale),
-                2 when customize is { } demihumanCustomize && npcEquip is { } demihumanEquip
-                    => CreateDemihumanAppearance(row.RowId, modelId, demihumanCustomize, demihumanEquip, row.Scale),
+                2 => CreateDemihumanAppearance(row.RowId, modelId, customize, npcEquip, row.Scale),
                 3 => CreateMonsterAppearance(modelId, row.RowId, row.Scale),
                 _ => null,
             };
-            if (model.Type == 1 && (appearance is null || names.Length == 0))
+            if (!ShouldRegisterModelSearchAppearance(modelAppearance))
                 continue;
 
             if (names.Length == 0)
@@ -1056,14 +1175,14 @@ public sealed class Plugin : IDalamudPlugin
                     gender,
                     bodyType,
                     appearance,
-                    modelAppearance));
+                    modelAppearance!));
             }
         }
 
         var referencedModelIds = entries.Select(static entry => entry.ModelId).ToHashSet();
         foreach (var model in modelChara.Values)
         {
-            if (model.Type == 1 || model.RowId == 0)
+            if (!ShouldRegisterUnreferencedModelChara(model.Type) || model.RowId == 0)
                 continue;
 
             if (!referencedModelIds.Add(model.RowId))
@@ -1077,16 +1196,12 @@ public sealed class Plugin : IDalamudPlugin
                 0,
                 0,
                 0,
-                modelAppearance: model.Type == 3 ? CreateMonsterAppearance(model.RowId, model.RowId, 1.0f) : null));
+                humanAppearance: null,
+                modelAppearance: CreateMonsterAppearance(model.RowId, model.RowId, null)));
         }
 
         return entries
-            .DistinctBy(static entry => entry switch
-            {
-                { HumanAppearance: { } human } => $"{entry.Name}\u001f{human.Signature}",
-                { ModelAppearance: { } model } => $"{entry.Name}\u001f{CreateAppearanceSignature(model)}",
-                _ => $"{entry.Name}\u001f{entry.ModelId}\u001f{entry.Source}\u001f{entry.SourceId}",
-            })
+            .DistinctBy(static entry => $"{entry.Name}\u001f{entry.Source}\u001f{entry.SourceId}\u001f{CreateAppearanceSignature(entry.ModelAppearance)}")
             .OrderBy(static row => row.Category)
             .ThenBy(static row => row.Name, GameTextComparison.GetComparer(language))
             .ThenBy(static row => row.ModelId)
@@ -1100,7 +1215,12 @@ public sealed class Plugin : IDalamudPlugin
             appearance.Category,
             appearance.ModelScale?.ToString("R", System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
             Convert.ToHexString(appearance.Customize.AsSpan()),
-            string.Join(',', appearance.Equipment.Select(static value => value.ToString("X16"))));
+            string.Join(',', appearance.Equipment.Select(static value => value.ToString("X16"))),
+            appearance.Mainhand?.ToString("X16") ?? string.Empty,
+            appearance.Offhand?.ToString("X16") ?? string.Empty,
+            appearance.VisorToggled?.ToString() ?? string.Empty,
+            appearance.FacewearModelId?.ToString() ?? string.Empty,
+            appearance.HatVisible?.ToString() ?? string.Empty);
 
     private static ModelSearchEntry CreateSearchEntry(
         ModelChara model,
@@ -1110,8 +1230,8 @@ public sealed class Plugin : IDalamudPlugin
         uint race,
         byte gender,
         byte bodyType,
-        HumanAppearance? humanAppearance = null,
-        AppearanceData? modelAppearance = null)
+        HumanAppearance? humanAppearance,
+        AppearanceData modelAppearance)
     {
         return new ModelSearchEntry(
             model.RowId,
@@ -1133,15 +1253,11 @@ public sealed class Plugin : IDalamudPlugin
             gender,
             bodyType,
             humanAppearance,
-            model.Type switch
-            {
-                _ when modelAppearance is not null => modelAppearance.Completeness,
-                _ => AppearanceCompleteness.Unsupported,
-            },
+            modelAppearance.Completeness,
             modelAppearance);
     }
 
-    private static AppearanceData CreateHumanModelAppearance(
+    internal static AppearanceData CreateHumanModelAppearance(
         uint modelCharaId,
         uint sourceRowId,
         HumanAppearance appearance,
@@ -1153,7 +1269,15 @@ public sealed class Plugin : IDalamudPlugin
             AppearanceCompleteness.Complete,
             appearance.Customize,
             appearance.Equipment,
-            modelScale);
+            modelScale,
+            appearance.Mainhand,
+            appearance.Offhand,
+            appearance.VisorToggled,
+            appearance.FacewearModelId,
+            appearance.HatVisible);
+
+    internal static AppearanceData CreatePublishedAppearance(AppearanceData applied)
+        => ActorRegistry.ApplyCategoryContract(applied);
 
     private static AppearanceData CreateMonsterAppearance(uint modelCharaId, uint sourceRowId, float? modelScale)
         => AppearanceData.Create(
@@ -1176,26 +1300,30 @@ public sealed class Plugin : IDalamudPlugin
             row.LipColor, row.BustOrTone1, row.ExtraFeature1, row.ExtraFeature2OrBust,
             row.FacePaint, row.FacePaintColor,
         };
-        if (!IsValidHumanCustomize(customize))
-            return null;
+        var npcEquip = row.NpcEquip.RowId is not 0
+            ? row.NpcEquip.ValueNullable
+            : null;
+        var useNpcEquip = npcEquip is not null && row is { ModelBody: 0, ModelLegs: 0 };
+        var equipment = useNpcEquip ? CreateEquipment(npcEquip!.Value) : CreateEquipment(row);
+        var mainhand = useNpcEquip
+            ? PackWeapon(npcEquip!.Value.ModelMainHand, npcEquip.Value.DyeMainHand.RowId, npcEquip.Value.Dye2MainHand.RowId)
+            : PackWeapon(row.ModelMainHand, row.DyeMainHand.RowId, row.Dye2MainHand.RowId);
+        var offhand = useNpcEquip
+            ? PackWeapon(npcEquip!.Value.ModelOffHand, npcEquip.Value.DyeOffHand.RowId, npcEquip.Value.Dye2OffHand.RowId)
+            : PackWeapon(row.ModelOffHand, row.DyeOffHand.RowId, row.Dye2OffHand.RowId);
+        var facewearModelId = npcEquip is { } selectedNpcEquip
+            ? GetNpcFacewearModelId(selectedNpcEquip)
+            : (ushort)0;
+        var hatVisible = (useNpcEquip ? npcEquip!.Value.ModelHead : row.ModelHead) != 0;
 
-        var equipment = row.NpcEquip.RowId is not 0
-            && row.NpcEquip.ValueNullable is { } npcEquip
-            && row is { ModelBody: 0, ModelLegs: 0 }
-                ? CreateEquipment(npcEquip)
-                : CreateEquipment(row);
-        var mainhand = row.NpcEquip.RowId is not 0
-            && row.NpcEquip.ValueNullable is { } weaponEquip
-            && row is { ModelBody: 0, ModelLegs: 0 }
-                ? PackWeapon(weaponEquip.ModelMainHand, weaponEquip.DyeMainHand.RowId, weaponEquip.Dye2MainHand.RowId)
-                : PackWeapon(row.ModelMainHand, row.DyeMainHand.RowId, row.Dye2MainHand.RowId);
-        var offhand = row.NpcEquip.RowId is not 0
-            && row.NpcEquip.ValueNullable is { } offhandEquip
-            && row is { ModelBody: 0, ModelLegs: 0 }
-                ? PackWeapon(offhandEquip.ModelOffHand, offhandEquip.DyeOffHand.RowId, offhandEquip.Dye2OffHand.RowId)
-                : PackWeapon(row.ModelOffHand, row.DyeOffHand.RowId, row.Dye2OffHand.RowId);
-
-        return new HumanAppearance(customize, equipment, mainhand, offhand, row.Visor);
+        return new HumanAppearance(
+            customize,
+            equipment,
+            mainhand,
+            offhand,
+            row.Visor,
+            facewearModelId,
+            hatVisible);
     }
 
     private static AppearanceData CreateDemihumanAppearance(ENpcBase row)
@@ -1228,32 +1356,49 @@ public sealed class Plugin : IDalamudPlugin
     private static AppearanceData CreateDemihumanAppearance(
         uint sourceRowId,
         uint modelCharaId,
-        BNpcCustomize customizeRow,
-        NpcEquip equip,
+        BNpcCustomize? customizeRow,
+        NpcEquip? equip,
         float? modelScale)
     {
-        var customize = new byte[]
-        {
-            (byte)customizeRow.Race.RowId, (byte)customizeRow.Gender, customizeRow.BodyType, customizeRow.Height,
-            (byte)customizeRow.Tribe.RowId, customizeRow.Face, customizeRow.HairStyle, customizeRow.HairHighlight,
-            customizeRow.SkinColor, customizeRow.EyeHeterochromia, customizeRow.HairColor, customizeRow.HairHighlightColor,
-            customizeRow.FacialFeature, customizeRow.FacialFeatureColor, customizeRow.Eyebrows, customizeRow.EyeColor,
-            customizeRow.EyeShape, customizeRow.Nose, customizeRow.Jaw, customizeRow.Mouth, customizeRow.LipColor,
-            customizeRow.BustOrTone1, customizeRow.ExtraFeature1, customizeRow.ExtraFeature2OrBust,
-            customizeRow.FacePaint, customizeRow.FacePaintColor,
-        };
+        var customize = customizeRow is { } value
+            ? new byte[]
+            {
+                (byte)value.Race.RowId, (byte)value.Gender, value.BodyType, value.Height,
+                (byte)value.Tribe.RowId, value.Face, value.HairStyle, value.HairHighlight,
+                value.SkinColor, value.EyeHeterochromia, value.HairColor, value.HairHighlightColor,
+                value.FacialFeature, value.FacialFeatureColor, value.Eyebrows, value.EyeColor,
+                value.EyeShape, value.Nose, value.Jaw, value.Mouth, value.LipColor,
+                value.BustOrTone1, value.ExtraFeature1, value.ExtraFeature2OrBust,
+                value.FacePaint, value.FacePaintColor,
+            }
+            : Array.Empty<byte>();
+        var equipment = equip is { } equipmentRow
+            ? CreateEquipment(equipmentRow)
+            : Array.Empty<ulong>();
+        return CreateDemihumanAppearance(
+            sourceRowId,
+            modelCharaId,
+            customize,
+            equipment,
+            modelScale);
+    }
 
-        return AppearanceData.Create(
+    internal static AppearanceData CreateDemihumanAppearance(
+        uint sourceRowId,
+        uint modelCharaId,
+        IEnumerable<byte>? customize,
+        IEnumerable<ulong>? equipment,
+        float? modelScale)
+        => AppearanceData.Create(
             modelCharaId,
             ModelCategory.Demihuman,
             sourceRowId,
             AppearanceCompleteness.Complete,
-            customize,
-            CreateEquipment(equip),
+            customize ?? Array.Empty<byte>(),
+            equipment ?? Array.Empty<ulong>(),
             modelScale);
-    }
 
-    private static HumanAppearance? CreateHumanAppearance(BNpcCustomize row, NpcEquip equip)
+    private static HumanAppearance CreateHumanAppearance(BNpcCustomize row, NpcEquip? equip)
     {
         var customize = new byte[]
         {
@@ -1264,27 +1409,22 @@ public sealed class Plugin : IDalamudPlugin
             row.LipColor, row.BustOrTone1, row.ExtraFeature1, row.ExtraFeature2OrBust,
             row.FacePaint, row.FacePaintColor,
         };
-        if (!IsValidHumanCustomize(customize))
-            return null;
-
         return new HumanAppearance(
             customize,
-            CreateEquipment(equip),
-            PackWeapon(equip.ModelMainHand, equip.DyeMainHand.RowId, equip.Dye2MainHand.RowId),
-            PackWeapon(equip.ModelOffHand, equip.DyeOffHand.RowId, equip.Dye2OffHand.RowId),
-            equip.Visor);
+            equip is null ? new ulong[10] : CreateEquipment(equip.Value),
+            equip is null ? 0 : PackWeapon(equip.Value.ModelMainHand, equip.Value.DyeMainHand.RowId, equip.Value.Dye2MainHand.RowId),
+            equip is null ? 0 : PackWeapon(equip.Value.ModelOffHand, equip.Value.DyeOffHand.RowId, equip.Value.Dye2OffHand.RowId),
+            equip?.Visor ?? false,
+            equip is { } npcEquip ? GetNpcFacewearModelId(npcEquip) : (ushort)0,
+            equip is { ModelHead: not 0 });
     }
 
-    private static bool IsValidHumanCustomize(IReadOnlyList<byte> customize)
-    {
-        var race = customize[0];
-        var gender = customize[1];
-        var tribe = customize[4];
-        return race is >= 1 and <= 8
-            && gender is 0 or 1
-            && tribe is >= 1 and <= 16
-            && HumanTribeCatalog.IsValidForRace(race, tribe);
-    }
+    private static ushort GetNpcFacewearModelId(NpcEquip equip)
+        => SelectNpcFacewearModelId(
+            equip.Glasses.Count == 0 ? null : equip.Glasses[0].RowId);
+
+    internal static ushort SelectNpcFacewearModelId(uint? firstGlassesRowId)
+        => firstGlassesRowId is { } rowId ? checked((ushort)rowId) : (ushort)0;
 
     private static ulong[] CreateEquipment(ENpcBase row)
         =>
@@ -1383,7 +1523,9 @@ public sealed record HumanAppearance(
     ulong[] Equipment,
     ulong Mainhand,
     ulong Offhand,
-    bool VisorToggled)
+    bool VisorToggled,
+    ushort FacewearModelId = 0,
+    bool HatVisible = false)
 {
     public string Signature { get; } = string.Join(
         ':',
@@ -1391,7 +1533,9 @@ public sealed record HumanAppearance(
         string.Join(',', Equipment.Select(static value => value.ToString("X16"))),
         Mainhand.ToString("X16"),
         Offhand.ToString("X16"),
-        VisorToggled ? "1" : "0");
+        VisorToggled ? "1" : "0",
+        FacewearModelId,
+        HatVisible ? "1" : "0");
 }
 
 public sealed record ModelSearchEntry(
@@ -1409,7 +1553,7 @@ public sealed record ModelSearchEntry(
     byte BodyType,
     HumanAppearance? HumanAppearance,
     AppearanceCompleteness Completeness,
-    AppearanceData? ModelAppearance)
+    AppearanceData ModelAppearance)
 {
     public uint ModelId => RowId;
 

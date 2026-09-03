@@ -15,198 +15,225 @@ namespace ActorMorpher.Tests;
 public sealed class ApplyServicesTests
 {
     [Fact]
-    public void AppearanceApplyAndRestorePreserveTheFirstSnapshot()
+    public void AppearanceApplyRedrawsSelectedNpcWithoutCapturingOrWritingOriginal()
     {
         var actor = Snapshot(1);
-        var original = Appearance(0, 1);
-        var desired = Appearance(200, 2);
+        var original = HumanAppearance(1, (byte)NpcAge.Normal, 1.16f);
+        var desired = HumanAppearance(2, (byte)NpcAge.Young, 0.84f);
         var memory = new FakeAppearanceMemory(original);
         var resolver = new FakeResolver(actor);
         var context = new FakeContext();
-        using var redraw = new RedrawCoordinator(resolver, memory, new FakeRedrawBackend(), context);
-        var store = new AppearanceOverrideStore();
-        using var service = new AppearanceApplyService(resolver, memory, context, redraw, store, NullDiagnosticLog.Instance);
+        using var redraw = new RedrawCoordinator(resolver, new FakeRedrawBackend(memory), context);
+        using var service = new AppearanceApplyService(resolver, context, redraw, NullDiagnosticLog.Instance);
 
-        Assert.True(service.TryApply(actor.LogicalKey, desired, out _));
-        Process(redraw, 7);
+        Assert.True(service.TryApply(actor.LogicalKey, desired, out var operationId, out _));
+        Assert.NotEqual(Guid.Empty, operationId);
+        Assert.Equal(operationId, service.LastOperationId);
+        Assert.Null(service.LastSucceeded);
+        Process(redraw, 3);
 
         Assert.Same(desired, memory.Current);
-        Assert.True(store.TryGet(actor.LogicalKey, out var state));
-        Assert.Same(original, state.BaseData);
-
-        Assert.True(service.TryRestore(actor.LogicalKey, out _));
-        Process(redraw, 7);
-
-        Assert.Same(original, memory.Current);
-        Assert.False(store.TryGet(actor.LogicalKey, out _));
+        Assert.Equal(0, memory.CaptureCount);
+        Assert.True(service.LastSucceeded);
     }
 
     [Fact]
-    public void FailedAppearanceApplyRollsBackTheOverrideStore()
+    public void AppearanceApplyDoesNotReadmitTheSelectedPayload()
     {
         var actor = Snapshot(1);
-        var original = Appearance(0, 1, 1.16f);
-        var desired = Appearance(300, 3, 0.84f);
-        var memory = new FakeAppearanceMemory(original) { FailedAppearance = desired };
+        var desired = AppearanceData.Create(
+            0,
+            ModelCategory.Human,
+            0,
+            AppearanceCompleteness.ModelOnly,
+            Array.Empty<byte>(),
+            Array.Empty<ulong>(),
+            0f);
+        var memory = new FakeAppearanceMemory(HumanAppearance(1, (byte)NpcAge.Normal));
         var resolver = new FakeResolver(actor);
         var context = new FakeContext();
-        using var redraw = new RedrawCoordinator(resolver, memory, new FakeRedrawBackend(), context);
-        var store = new AppearanceOverrideStore();
-        using var service = new AppearanceApplyService(resolver, memory, context, redraw, store, NullDiagnosticLog.Instance);
+        using var redraw = new RedrawCoordinator(resolver, new FakeRedrawBackend(memory), context);
+        using var service = new AppearanceApplyService(resolver, context, redraw, NullDiagnosticLog.Instance);
 
         Assert.True(service.TryApply(actor.LogicalKey, desired, out _));
-        Process(redraw, 8);
+        Process(redraw, 3);
 
-        Assert.Same(original, memory.Current);
-        Assert.Equal(1.16f, memory.Current.ModelScale);
-        Assert.False(store.TryGet(actor.LogicalKey, out _));
+        Assert.Same(desired, memory.Current);
+        Assert.True(service.LastSucceeded);
     }
 
     [Fact]
-    public void HumanToHumanApplyPerformsCleanBaseTransitionBeforeFinalAppearance()
+    public void SecondAppearanceApplyUsesOnlyTheSecondSelectedNpc()
     {
         var actor = Snapshot(1);
         var original = HumanAppearance(1, (byte)NpcAge.Normal, 1.16f);
-        var first = HumanAppearance(2, (byte)NpcAge.Young, 0.9f);
-        var second = HumanAppearance(3, (byte)NpcAge.Young, 0.84f);
+        var first = HumanAppearance(2, (byte)NpcAge.Normal, 0.9f);
+        var second = HumanAppearance(3, (byte)NpcAge.Normal, 0.84f);
         var memory = new FakeAppearanceMemory(original);
         var resolver = new FakeResolver(actor);
-        using var redraw = new RedrawCoordinator(resolver, memory, new FakeRedrawBackend(), new FakeContext());
-        using var service = new AppearanceApplyService(
-            resolver,
-            memory,
-            new FakeContext(),
-            redraw,
-            new AppearanceOverrideStore(),
-            NullDiagnosticLog.Instance);
+        var context = new FakeContext();
+        using var redraw = new RedrawCoordinator(resolver, new FakeRedrawBackend(memory), context);
+        using var service = new AppearanceApplyService(resolver, context, redraw, NullDiagnosticLog.Instance);
 
         Assert.True(service.TryApply(actor.LogicalKey, first, out _));
-        Process(redraw, 7);
-        memory.Writes.Clear();
-
+        Process(redraw, 3);
         Assert.True(service.TryApply(actor.LogicalKey, second, out _));
-        Process(redraw, 14);
+        Process(redraw, 3);
 
         Assert.Same(second, memory.Current);
-        Assert.Contains(original, memory.Writes);
-        Assert.Same(second, memory.Writes[^1]);
-        Assert.Equal(0.84f, memory.Writes[^1].ModelScale);
     }
 
     [Fact]
-    public void HumanRestoreRecreatesTheOriginalAppearanceTwice()
+    public void ExplicitSecondApplyIsRejectedWithoutCancellingPendingFirstApply()
     {
         var actor = Snapshot(1);
-        var original = HumanAppearance(1, (byte)NpcAge.Normal, 1.16f);
-        var youngNpc = HumanAppearance(2, (byte)NpcAge.Young, 0.84f);
-        var memory = new FakeAppearanceMemory(original);
+        var memory = new FakeAppearanceMemory(HumanAppearance(1, (byte)NpcAge.Normal));
         var resolver = new FakeResolver(actor);
-        var store = new AppearanceOverrideStore();
-        using var redraw = new RedrawCoordinator(resolver, memory, new FakeRedrawBackend(), new FakeContext());
+        var context = new FakeContext();
+        using var redraw = new RedrawCoordinator(resolver, new FakeRedrawBackend(memory), context);
+        using var service = new AppearanceApplyService(resolver, context, redraw, NullDiagnosticLog.Instance);
+        var first = HumanAppearance(2, (byte)NpcAge.Normal);
+        var second = HumanAppearance(3, (byte)NpcAge.Young);
+
+        Assert.True(service.TryApply(actor.LogicalKey, first, out _));
+        Assert.False(service.TryApply(actor.LogicalKey, second, out var message));
+        Assert.Contains("already pending", message);
+        Process(redraw, 3);
+
+        Assert.Same(first, memory.Current);
+    }
+
+    [Fact]
+    public void ApplyRejectsLoggedOutOrPreviousTerritoryActorBeforeQueueing()
+    {
+        var loggedOutContext = new FakeContext { IsLoggedIn = false };
+        var actor = Snapshot(1);
+        var memory = new FakeAppearanceMemory(HumanAppearance(1, (byte)NpcAge.Normal));
+        var resolver = new FakeResolver(actor);
+        using var loggedOutRedraw = new RedrawCoordinator(resolver, new FakeRedrawBackend(memory), loggedOutContext);
+        using var loggedOutService = new AppearanceApplyService(resolver, loggedOutContext, loggedOutRedraw, NullDiagnosticLog.Instance);
+
+        Assert.False(loggedOutService.TryApply(actor.LogicalKey, HumanAppearance(2, (byte)NpcAge.Young), out _));
+        Assert.False(loggedOutService.IsPending(actor.LogicalKey));
+
+        var previousTerritory = actor with
+        {
+            RepresentationKey = actor.RepresentationKey with { TerritoryId = 29 },
+        };
+        var context = new FakeContext();
+        using var staleRedraw = new RedrawCoordinator(new FakeResolver(previousTerritory), new FakeRedrawBackend(memory), context);
+        using var staleService = new AppearanceApplyService(new FakeResolver(previousTerritory), context, staleRedraw, NullDiagnosticLog.Instance);
+
+        Assert.False(staleService.TryApply(previousTerritory.LogicalKey, HumanAppearance(2, (byte)NpcAge.Young), out _));
+        Assert.False(staleService.IsPending(previousTerritory.LogicalKey));
+    }
+
+    [Fact]
+    public void DisposeReportsOneTerminalCancellationForAcceptedApply()
+    {
+        var actor = Snapshot(1);
+        var memory = new FakeAppearanceMemory(HumanAppearance(1, (byte)NpcAge.Normal));
+        var resolver = new FakeResolver(actor);
+        var context = new FakeContext();
+        using var redraw = new RedrawCoordinator(resolver, new FakeRedrawBackend(memory), context);
+        using var service = new AppearanceApplyService(resolver, context, redraw, NullDiagnosticLog.Instance);
+        var completions = new List<bool>();
+        service.OperationCompleted += (_, _, _, _, succeeded) => completions.Add(succeeded);
+
+        Assert.True(service.TryApply(actor.LogicalKey, HumanAppearance(2, (byte)NpcAge.Young), out _));
+        Assert.Null(service.LastSucceeded);
+        service.Dispose();
+
+        Assert.Equal([false], completions);
+        Assert.False(service.IsPending(actor.LogicalKey));
+        Assert.False(service.LastSucceeded);
+    }
+
+    [Fact]
+    public void CompletionCarriesTheExactRepresentationResolvedWhenApplyWasAccepted()
+    {
+        var actor = Snapshot(1);
+        var memory = new FakeAppearanceMemory(HumanAppearance(1, (byte)NpcAge.Normal));
+        var resolver = new FakeResolver(actor);
+        using var redraw = new RedrawCoordinator(resolver, new FakeRedrawBackend(memory), new FakeContext());
         using var service = new AppearanceApplyService(
             resolver,
-            memory,
             new FakeContext(),
             redraw,
-            store,
             NullDiagnosticLog.Instance);
+        ActorRepresentationKey? completedRepresentation = null;
+        service.OperationCompleted += (_, _, representation, _, succeeded) =>
+        {
+            Assert.True(succeeded);
+            completedRepresentation = representation;
+        };
 
-        Assert.True(service.TryApply(actor.LogicalKey, youngNpc, out _));
-        Process(redraw, 7);
-        memory.Writes.Clear();
+        Assert.True(service.TryApply(actor.LogicalKey, HumanAppearance(2, (byte)NpcAge.Young), out _));
+        Process(redraw, 3);
 
-        Assert.True(service.TryRestore(actor.LogicalKey, out _));
-        Process(redraw, 14);
-
-        Assert.Same(original, memory.Current);
-        Assert.Equal(1.16f, memory.Current.ModelScale);
-        Assert.Equal(4, memory.Writes.Count);
-        Assert.All(memory.Writes, write => Assert.Same(original, write));
-        Assert.False(store.TryGet(actor.LogicalKey, out _));
+        Assert.Equal(actor.RepresentationKey, completedRepresentation);
     }
 
     [Fact]
-    public void AppearanceApplyAndRestorePreserveModelScale()
+    public void CompletionPublishesOnlyWhileTheAcceptedRepresentationIsStillCurrent()
+    {
+        var accepted = Snapshot(1);
+        var changed = accepted with
+        {
+            RepresentationKey = accepted.RepresentationKey with { GameObjectId = 999 },
+        };
+
+        Assert.True(Plugin.CanPublishAppearanceCompletion(true, accepted.RepresentationKey, accepted));
+        Assert.False(Plugin.CanPublishAppearanceCompletion(true, accepted.RepresentationKey, changed));
+        Assert.False(Plugin.CanPublishAppearanceCompletion(false, accepted.RepresentationKey, accepted));
+    }
+
+    [Fact]
+    public void LaterActorChangeIsNotOverwrittenByTheSelectedNpc()
     {
         var actor = Snapshot(1);
         var original = HumanAppearance(1, (byte)NpcAge.Normal, 1.16f);
+        var selectedNpc = HumanAppearance(2, (byte)NpcAge.Young, 0.84f);
+        var laterActorState = HumanAppearance(3, (byte)NpcAge.Normal, 1.01f);
+        var memory = new FakeAppearanceMemory(original);
+        var resolver = new FakeResolver(actor);
+        var context = new FakeContext();
+        using var redraw = new RedrawCoordinator(resolver, new FakeRedrawBackend(memory), context);
+        using var service = new AppearanceApplyService(
+            resolver,
+            context,
+            redraw,
+            NullDiagnosticLog.Instance);
+
+        Assert.True(service.TryApply(actor.LogicalKey, selectedNpc, out _));
+        Process(redraw, 3);
+        memory.SetRendered(laterActorState);
+
+        service.ProcessContext();
+        Process(redraw, 8);
+
+        Assert.Same(laterActorState, memory.Current);
+    }
+
+    [Fact]
+    public void AppearanceApplyDoesNotRequireOriginalScale()
+    {
+        var actor = Snapshot(1);
+        var original = HumanAppearance(1, (byte)NpcAge.Normal);
         var desired = HumanAppearance(2, (byte)NpcAge.Normal, 0.84f);
         var memory = new FakeAppearanceMemory(original);
         var resolver = new FakeResolver(actor);
-        var store = new AppearanceOverrideStore();
-        using var redraw = new RedrawCoordinator(resolver, memory, new FakeRedrawBackend(), new FakeContext());
+        using var redraw = new RedrawCoordinator(resolver, new FakeRedrawBackend(memory), new FakeContext());
         using var service = new AppearanceApplyService(
             resolver,
-            memory,
             new FakeContext(),
             redraw,
-            store,
             NullDiagnosticLog.Instance);
 
         Assert.True(service.TryApply(actor.LogicalKey, desired, out _));
-        Process(redraw, 7);
+        Process(redraw, 3);
 
         Assert.Equal(0.84f, memory.Current.ModelScale);
-        Assert.True(store.TryGet(actor.LogicalKey, out var state));
-        Assert.Equal(1.16f, state.BaseData.ModelScale);
-
-        Assert.True(service.TryRestore(actor.LogicalKey, out _));
-        Process(redraw, 14);
-
-        Assert.Equal(1.16f, memory.Current.ModelScale);
-        Assert.False(store.TryGet(actor.LogicalKey, out _));
-    }
-
-    [Fact]
-    public void AppearanceApplyRejectsScaleWhenOriginalScaleIsUnavailable()
-    {
-        var actor = Snapshot(1);
-        var original = HumanAppearance(1, (byte)NpcAge.Normal);
-        var desired = HumanAppearance(2, (byte)NpcAge.Normal, 0.84f);
-        var memory = new FakeAppearanceMemory(original);
-        var resolver = new FakeResolver(actor);
-        var store = new AppearanceOverrideStore();
-        using var redraw = new RedrawCoordinator(resolver, memory, new FakeRedrawBackend(), new FakeContext());
-        using var service = new AppearanceApplyService(
-            resolver,
-            memory,
-            new FakeContext(),
-            redraw,
-            store,
-            NullDiagnosticLog.Instance);
-
-        Assert.False(service.TryApply(actor.LogicalKey, desired, out var message));
-
-        Assert.Contains("original model scale", message);
-        Assert.Same(original, memory.Current);
-        Assert.Equal(0, store.Count);
-    }
-
-    [Fact]
-    public void SpecialHumanBodyNormalizesBackingToOriginalAfterVisibleApply()
-    {
-        var actor = Snapshot(1);
-        var original = HumanAppearance(1, (byte)NpcAge.Normal);
-        var youngNpc = HumanAppearance(2, (byte)NpcAge.Young);
-        var memory = new FakeAppearanceMemory(original) { NormalizeBacking = true };
-        var resolver = new FakeResolver(actor);
-        var store = new AppearanceOverrideStore();
-        using var redraw = new RedrawCoordinator(resolver, memory, new FakeRedrawBackend(), new FakeContext());
-        using var service = new AppearanceApplyService(
-            resolver,
-            memory,
-            new FakeContext(),
-            redraw,
-            store,
-            NullDiagnosticLog.Instance);
-
-        Assert.True(service.TryApply(actor.LogicalKey, youngNpc, out _));
-        Process(redraw, 7);
-
-        Assert.Same(original, memory.Current);
-        Assert.Same(original, memory.NormalizedAppearance);
-        Assert.True(store.TryGet(actor.LogicalKey, out var state));
-        Assert.Same(youngNpc, state.DesiredData);
     }
 
     [Fact]
@@ -285,7 +312,7 @@ public sealed class ApplyServicesTests
     }
 
     [Fact]
-    public void BulkApplyRollsBackFailedActorAndContinuesBatch()
+    public void BulkApplyDoesNotWriteAutomaticRollbackAndContinuesBatch()
     {
         var sourceActor = Snapshot(1);
         var failedActor = Snapshot(2);
@@ -315,11 +342,42 @@ public sealed class ApplyServicesTests
         service.ProcessNextFrame();
 
         Assert.Same(failedOriginal, memory.Current[failedActor.LogicalKey]);
+        Assert.Single(memory.ApplyCalls, call => call.Actor == failedActor.LogicalKey);
         Assert.Same(source, memory.Current[successfulActor.LogicalKey]);
         Assert.False(store.TryGet(failedActor.LogicalKey, out _));
         Assert.True(store.TryGet(successfulActor.LogicalKey, out _));
         Assert.Contains("1 succeeded", service.LastStatus);
         Assert.Contains("1 failed", service.LastStatus);
+    }
+
+    [Fact]
+    public void ExplicitBulkCancelPublishesOneTerminalFailureForTheUnprocessedActor()
+    {
+        var actor = Snapshot(2);
+        var current = Outfit(20);
+        var desired = Outfit(30);
+        var memory = new FakeOutfitMemory(new Dictionary<LogicalActorKey, OutfitData>
+        {
+            [actor.LogicalKey] = current,
+        });
+        using var service = new BulkOutfitService(
+            new FakeResolver(actor),
+            memory,
+            new FakeContext(),
+            new OutfitOverrideStore(),
+            NullDiagnosticLog.Instance);
+        var completions = new List<(LogicalActorKey Actor, OutfitData? Desired, bool Succeeded)>();
+        service.ActorOperationCompleted += (key, _, completedDesired, succeeded)
+            => completions.Add((key, completedDesired, succeeded));
+
+        Assert.True(service.StartPersistentApply(actor.LogicalKey, desired, out _));
+        service.Cancel();
+        service.ProcessNextFrame();
+        service.ProcessNextFrame();
+
+        Assert.Equal([(actor.LogicalKey, desired, false)], completions);
+        Assert.Empty(memory.ApplyCalls);
+        Assert.Null(service.CurrentOperation);
     }
 
     [Fact]
@@ -412,6 +470,163 @@ public sealed class ApplyServicesTests
         Assert.Equal(source.VisorToggled, edited.VisorToggled);
     }
 
+    [Fact]
+    public void RefreshSourceUsesRenderedOutfit()
+    {
+        var actor = Snapshot(1);
+        var backing = Outfit(10);
+        var rendered = Outfit(20);
+        var memory = new FakeOutfitMemory(new Dictionary<LogicalActorKey, OutfitData>
+        {
+            [actor.LogicalKey] = backing,
+        });
+        memory.SetRendered(actor.LogicalKey, rendered);
+        using var service = new BulkOutfitService(
+            new FakeResolver(actor),
+            memory,
+            new FakeContext(),
+            new OutfitOverrideStore(),
+            NullDiagnosticLog.Instance);
+
+        Assert.True(service.RefreshSource(actor.LogicalKey, out _));
+
+        Assert.Same(rendered, service.SourceOutfit);
+        Assert.Same(backing, memory.Current[actor.LogicalKey]);
+    }
+
+    [Fact]
+    public void OutfitModifiedComparesRenderedOutfitWithOriginal()
+    {
+        var actor = Snapshot(1);
+        var original = Outfit(10);
+        var changed = Outfit(20);
+        var memory = new FakeOutfitMemory(new Dictionary<LogicalActorKey, OutfitData>
+        {
+            [actor.LogicalKey] = original,
+        });
+        using var service = new BulkOutfitService(
+            new FakeResolver(actor),
+            memory,
+            new FakeContext(),
+            new OutfitOverrideStore(),
+            NullDiagnosticLog.Instance);
+
+        memory.SetRendered(actor.LogicalKey, changed);
+        Assert.False(service.IsOutfitModified(actor.LogicalKey));
+
+        memory.SetRendered(actor.LogicalKey, original);
+        Assert.False(service.IsOutfitModified(actor.LogicalKey));
+
+        service.Store.SetDesired(actor.LogicalKey, original, changed);
+        memory.TryApply(actor, changed);
+        Assert.True(service.IsOutfitModified(actor.LogicalKey));
+
+        memory.TryApply(actor, original);
+        Assert.False(service.IsOutfitModified(actor.LogicalKey));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void BulkOriginalSurvivesModelAndOutfitSwitches(bool appearanceManaged)
+    {
+        var actor = Snapshot(1) with { IsAppearanceManaged = appearanceManaged };
+        var sourceActor = Snapshot(2);
+        var backing = Outfit(10);
+        var rendered = Outfit(20);
+        var desired = Outfit(30);
+        var memory = new FakeOutfitMemory(new Dictionary<LogicalActorKey, OutfitData>
+        {
+            [actor.LogicalKey] = backing,
+            [sourceActor.LogicalKey] = desired,
+        });
+        memory.SetRendered(actor.LogicalKey, rendered);
+        var store = new OutfitOverrideStore();
+        using var service = new BulkOutfitService(
+            new FakeResolver(actor, sourceActor),
+            memory,
+            new FakeContext(),
+            store,
+            NullDiagnosticLog.Instance);
+
+        Assert.True(service.RefreshSource(sourceActor.LogicalKey, out _));
+        Assert.True(service.StartApply([actor.LogicalKey], out _));
+        service.ProcessNextFrame();
+        service.ProcessNextFrame();
+
+        Assert.True(store.TryGet(actor.LogicalKey, out var state));
+        var expectedOriginal = appearanceManaged ? backing : rendered;
+        Assert.Same(expectedOriginal, state.Original);
+        Assert.Same(desired, state.Desired);
+        service.ProcessNextFrame();
+
+        // A second model changes rendered C, while the first Bulk write remains in backing.
+        var nextModel = Outfit(40);
+        var nextBulk = Outfit(50);
+        memory.SetRendered(actor.LogicalKey, nextModel);
+        memory.SetRendered(sourceActor.LogicalKey, nextBulk);
+        memory.CaptureUnavailable = true; // An existing Original must not be recaptured.
+        Assert.True(service.RefreshSource(sourceActor.LogicalKey, out _));
+        Assert.True(service.StartApply([actor.LogicalKey], out _));
+        service.ProcessNextFrame();
+        service.ProcessNextFrame();
+        Assert.True(store.TryGet(actor.LogicalKey, out state));
+        Assert.Same(expectedOriginal, state.Original);
+        Assert.Same(nextBulk, state.Desired);
+
+        Assert.True(service.StartRestore(actor.LogicalKey, out _));
+        service.ProcessNextFrame();
+        service.ProcessNextFrame();
+        Assert.Same(expectedOriginal, memory.Current[actor.LogicalKey]);
+        Assert.Same(expectedOriginal, memory.Rendered[actor.LogicalKey]);
+        Assert.False(store.TryGet(actor.LogicalKey, out _));
+        Assert.Equal([desired, nextBulk, expectedOriginal], memory.ApplyCalls.Select(call => call.Outfit).ToArray());
+        Assert.Equal(appearanceManaged ? 1 : 0, memory.CaptureCount);
+    }
+
+    [Fact]
+    public void MissingFirstManagedOriginalDoesNotWriteNpcOutfitAsOriginal()
+    {
+        var actor = Snapshot(1) with { IsAppearanceManaged = true };
+        var backing = Outfit(10);
+        var rendered = Outfit(20);
+        var memory = new FakeOutfitMemory(new() { [actor.LogicalKey] = backing })
+        {
+            CaptureUnavailable = true,
+        };
+        memory.SetRendered(actor.LogicalKey, rendered);
+        using var service = new BulkOutfitService(new FakeResolver(actor), memory, new FakeContext(),
+            new OutfitOverrideStore(), NullDiagnosticLog.Instance);
+        Assert.True(service.RefreshSource(actor.LogicalKey, out _));
+        Assert.Same(rendered, service.SourceOutfit);
+        Assert.True(service.StartApply([actor.LogicalKey], out _));
+        service.ProcessNextFrame();
+        service.ProcessNextFrame();
+        Assert.Empty(memory.ApplyCalls);
+        Assert.False(service.Store.TryGet(actor.LogicalKey, out _));
+        Assert.Same(backing, memory.Current[actor.LogicalKey]);
+        Assert.Same(rendered, memory.Rendered[actor.LogicalKey]);
+    }
+
+    [Fact]
+    public void ManagedUnequipUsesRenderedMetadataButKeepsBackingOriginal()
+    {
+        var actor = Snapshot(1) with { IsAppearanceManaged = true };
+        var backing = Outfit(10);
+        var rendered = Outfit(20) with { HatVisible = false, VisorToggled = true };
+        var memory = new FakeOutfitMemory(new() { [actor.LogicalKey] = backing });
+        memory.SetRendered(actor.LogicalKey, rendered);
+        using var service = new BulkOutfitService(new FakeResolver(actor), memory, new FakeContext(),
+            new OutfitOverrideStore(), NullDiagnosticLog.Instance);
+        Assert.True(service.StartUnequip([actor.LogicalKey], out _));
+        service.ProcessNextFrame();
+        service.ProcessNextFrame();
+        Assert.True(service.Store.TryGet(actor.LogicalKey, out var state));
+        Assert.Same(backing, state.Original);
+        Assert.Equal(rendered.HatVisible, state.Desired.HatVisible);
+        Assert.Equal(rendered.VisorToggled, state.Desired.VisorToggled);
+    }
+
     private static void Process(RedrawCoordinator coordinator, int frames)
     {
         for (var frame = 0; frame < frames; ++frame)
@@ -423,7 +638,7 @@ public sealed class ApplyServicesTests
         var key = new LogicalActorKey(index, index, index, index, ObjectKind.Pc, 30);
         return new ActorSnapshot(
             key,
-            new ActorRepresentationKey(index, index, index, false),
+            new ActorRepresentationKey(index, index, index, false, 30),
             $"Actor {index}",
             ObjectKind.Pc,
             index,
@@ -482,73 +697,76 @@ public sealed class ApplyServicesTests
             => actors.TryGetValue(key, out actor!);
     }
 
-    private sealed class FakeAppearanceMemory(AppearanceData current) : IAppearanceMemory, IAppearanceBackingStore
+    private sealed class FakeAppearanceMemory(AppearanceData current) : IAppearanceMemory
     {
         public AppearanceData Current { get; private set; } = current;
-        public AppearanceData? FailedAppearance { get; init; }
-        public List<AppearanceData> Writes { get; } = [];
-        public bool NormalizeBacking { get; init; }
-        public AppearanceData? NormalizedAppearance { get; private set; }
+        public int CaptureCount { get; private set; }
 
         public bool TryCapture(ActorSnapshot actor, out AppearanceData appearance)
         {
+            CaptureCount++;
             appearance = Current;
             return true;
         }
 
-        public bool TryWrite(ActorSnapshot actor, AppearanceData appearance)
-        {
-            if (ReferenceEquals(appearance, FailedAppearance))
-                return false;
-            Current = appearance;
-            Writes.Add(appearance);
-            return true;
-        }
-
-        public bool IsApplied(ActorSnapshot actor, AppearanceData appearance)
-            => ReferenceEquals(Current, appearance);
-
-        public bool TryNormalizeBacking(ActorSnapshot actor, AppearanceData appearance)
-        {
-            if (!NormalizeBacking)
-                return false;
-            Current = appearance;
-            NormalizedAppearance = appearance;
-            return true;
-        }
+        public void SetRendered(AppearanceData appearance)
+            => Current = appearance;
     }
 
     private sealed class FakeOutfitMemory(Dictionary<LogicalActorKey, OutfitData> current) : IOutfitMemory
     {
         public Dictionary<LogicalActorKey, OutfitData> Current { get; } = current;
+        public Dictionary<LogicalActorKey, OutfitData> Rendered { get; } = new(current);
+        public List<(LogicalActorKey Actor, OutfitData Outfit)> ApplyCalls { get; } = [];
         public LogicalActorKey? ThrowActor { get; init; }
         public OutfitData? ThrowOutfit { get; init; }
+        public bool CaptureUnavailable { get; set; }
+        public int CaptureCount { get; private set; }
 
         public bool TryCapture(ActorSnapshot actor, out OutfitData outfit)
-            => Current.TryGetValue(actor.LogicalKey, out outfit!);
+        {
+            ++CaptureCount;
+            if (CaptureUnavailable)
+            {
+                outfit = null!;
+                return false;
+            }
+            return Current.TryGetValue(actor.LogicalKey, out outfit!);
+        }
+
+        public bool TryCaptureRendered(ActorSnapshot actor, out OutfitData outfit)
+            => Rendered.TryGetValue(actor.LogicalKey, out outfit!);
+
+        public void SetRendered(LogicalActorKey actor, OutfitData outfit)
+            => Rendered[actor] = outfit;
 
         public bool TryApply(ActorSnapshot actor, OutfitData outfit)
         {
+            ApplyCalls.Add((actor.LogicalKey, outfit));
             if (actor.LogicalKey == ThrowActor && ReferenceEquals(outfit, ThrowOutfit))
                 throw new InvalidOperationException("Simulated actor-local outfit failure.");
             Current[actor.LogicalKey] = outfit;
+            Rendered[actor.LogicalKey] = outfit;
             return true;
         }
 
-        public bool IsApplied(ActorSnapshot actor, OutfitData outfit)
-            => Current.TryGetValue(actor.LogicalKey, out var currentOutfit) && ReferenceEquals(currentOutfit, outfit);
     }
 
-    private sealed class FakeRedrawBackend : IRedrawBackend
+    private sealed class FakeRedrawBackend(FakeAppearanceMemory memory) : IRedrawBackend
     {
         public bool TryDisable(ActorSnapshot actor) => true;
-        public bool TryEnable(ActorSnapshot actor, AppearanceData? appearance) => true;
+        public bool TryEnable(ActorSnapshot actor, AppearanceData? appearance, Guid operationId)
+        {
+            if (appearance is not null)
+                memory.SetRendered(appearance);
+            return true;
+        }
     }
 
     private sealed class FakeContext : IClientContext
     {
-        public uint TerritoryId => 30;
-        public bool IsLoggedIn => true;
+        public uint TerritoryId { get; set; } = 30;
+        public bool IsLoggedIn { get; set; } = true;
         public bool IsGPosing => false;
     }
 }

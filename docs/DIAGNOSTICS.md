@@ -2,6 +2,14 @@
 
 ## Purpose
 
+### Apply input versus loaded equipment
+
+`AM4005` additionally observes `BeforeOriginalCreate`, `OriginalCreateReturnedArguments`, and `OriginalCreateReturnedBeforeBufferRestore` inside the existing Create delegate. The older `CreateReturnedBeforeBackingRestore` phase runs after Create argument-buffer restoration, but before Actor backing restoration. `Original` can include another plugin's hook chain; its entry does not by itself prove the final game consumer input.
+
+`argumentEquipment` contains all ten hook argument values. `inputHead` through `inputLeftRing` and `equipmentInputSignature` come from the game's passive `CharacterBase.GetEquipmentSlotModel` accessor; `observedHead` through `observedLeftRing` retain the separately observed loaded `Human.EquipmentModels`. The game may hold pending equipment while loaded slots still contain zeros or older values. `slotNeedsUpdateBitfield` provides passive loading context. Neither value set nor any comparison controls Apply, C, cleanup, or another call. A loaded mismatch at Create return is not sufficient evidence that the game rejected the selected input.
+
+`AM4008` includes the equipment substitution mask, separate weapon/Facewear/hat/Visor flags, armor call counts inside/outside Create while the existing transaction is active, and other-owner armor calls. `Incomplete` alone does not identify a missing armor consumer. The transaction ends with the existing EnableDraw call; these observations do not prove or monitor later consumer arrival.
+
 Actor Morpher diagnostics record local troubleshooting events as UTF-8 JSON Lines. Each line is an independent JSON object, so a partial log remains readable and related events can be found by Operation ID.
 
 File diagnostics never call Penumbra or Glamourer IPC. A file error is reported once to the standard Dalamud log and does not fail Actor Morpher operations.
@@ -11,7 +19,7 @@ File diagnostics never call Penumbra or Glamourer IPC. A file error is reported 
 | Mode | Behavior |
 | --- | --- |
 | Off | Creates no diagnostic directory, file, Channel, writer, ring buffer, rotation, retention, or snapshot automation. |
-| Errors Only | Stores session start, errors, fatal events, failed operations, rollback failures, unexpected exceptions, and file logging failures. |
+| Errors Only | Stores session start, errors, fatal events, failed operations, unexpected exceptions, and file logging failures. |
 | Full Troubleshooting | Stores lifecycle, user actions, operation phases, Actor identity, redraw, GPose, target summaries, failures, performance markers, and snapshots. |
 
 The initial mode is `Full` for a Dalamud Dev Plugin and `Off` for a repository release. A saved user setting is preserved across updates.
@@ -86,6 +94,26 @@ diagnostics-<utc timestamp>/
 
 If a snapshot exists, Codex should read `summary.txt`, `latest.jsonl`, and `recent-context.jsonl` in that order.
 
+## Model Search Apply observations
+
+Full Troubleshooting records the existing normal Apply path at three phases without adding a diagnostic-only Apply route:
+
+| Phase | Existing event | Meaning |
+| --- | --- | --- |
+| `CreateReturnedBeforeBackingRestore` | `AM4005` | A: the requested Create call has returned; `callResult` is recorded separately from the returned Human values. |
+| `BackingRestored` | `AM4005` | B: temporary backing has been restored and the current `CharacterBase` has been reacquired. The prior address is equality-only and is never dereferenced. |
+| `FirstRegistrySnapshotAfterApply` | `AM3002` | C: the first same-Representation raw registry snapshot selected by the existing nonzero applied `SourceRowId`, before managed merge. |
+
+Human observations include `ModelCharaId` with its value source, ModelType, Customize signature and Race/Gender/BodyType, Equipment signature and all ten named slots, ModelScale, mainhand, offhand, Facewear, Visor, and separately sourced hat values. `characterBaseContinuity` is `Same`, `Changed`, or `Unavailable`. A changed current pointer is still read when the newly reacquired current object is Human; the saved old address is not dereferenced.
+
+Hat visibility fields are intentionally distinct:
+
+* `hatVisibleBacking` is derived from `Character.DrawData.IsHatHidden` and is not a generated-Human display observation.
+* `hatVisibleEffective` is the value selected by the existing managed publication, where applicable.
+* `hatVisibleObserved` is reserved for a confirmed direct generated-Human display read. No such read is currently established, so it is `null` and listed as unavailable.
+
+`callResult=NonNull` means only that the requested native Create returned a pointer. `payloadComparison=Match` requires every required observed Human field to be available and equal to the request. A known mismatch produces `Mismatch` even if another field is unavailable; otherwise any unavailable required field produces `Unavailable`. Diagnostic comparison never changes Apply, redraw, restore, publication, transition, or retry behavior.
+
 ## Retention
 
 Defaults:
@@ -117,4 +145,4 @@ Get-Content .\ActorMorpherDiagnostics\latest.jsonl |
 
 ## Known Limitations
 
-Morph, Restore, Bulk Outfit, Unequip, actor snapshots, successful applies, skips, failures, and rollbacks produce structured events. Game-side timing, native crash behavior, file permission failures, Dev Mirror behavior, and plugin unload flushing still require FF14 validation.
+Morph, Restore, Bulk Outfit, Unequip, actor snapshots, successful applies, skips, and failures produce structured events. Model Search transition events describe latest-state C and Representation keys, never a retained source-row override. Game-side timing, native crash behavior, file permission failures, Dev Mirror behavior, and plugin unload flushing still require FF14 validation.

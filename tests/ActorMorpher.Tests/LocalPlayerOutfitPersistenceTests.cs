@@ -29,7 +29,7 @@ public sealed class LocalPlayerOutfitPersistenceTests
     }
 
     [Fact]
-    public void FailedReapplyCanRetryAndRestoreClearsPersistence()
+    public void FailedReapplyDoesNotRetryAndRestoreClearsPersistence()
     {
         var persistence = new LocalPlayerOutfitPersistence();
         var actor = Key(11);
@@ -39,7 +39,7 @@ public sealed class LocalPlayerOutfitPersistenceTests
         persistence.MarkReapplyStarted(actor);
 
         persistence.CompleteReapply(actor, false);
-        Assert.True(persistence.TryGetPending(out _));
+        Assert.False(persistence.TryGetPending(out _));
 
         persistence.RecordRestored();
         persistence.UpdateContext(12, true);

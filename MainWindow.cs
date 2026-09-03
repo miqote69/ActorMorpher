@@ -10,6 +10,11 @@ namespace ActorMorpher;
 public sealed class MainWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
+    private readonly SoftwareModelPreviewProjector previewProjector = new();
+    private IReadOnlyList<ModelSearchEntry>? filteredModelSource;
+    private ModelSearchEntry[] filteredModels = [];
+    private (Dalamud.Game.ClientLanguage Language, int Category, string Name, string Id,
+        int Race, uint Tribe, int Gender, bool Adult, bool Young)? modelFilterKey;
     private string actorFilter = string.Empty;
     private int selectedActorType;
     private int selectedActorRace;
@@ -26,7 +31,9 @@ public sealed class MainWindow : Window, IDisposable
     private LogicalActorKey? selectedActorKey;
     private ModelSearchEntry? selectedModel;
     private string applyStatus = string.Empty;
-    private bool applySucceeded;
+    private bool? applySucceeded;
+    private bool awaitingApplyTerminal;
+    private Guid? awaitingApplyOperationId;
     private string bulkNameFilter = string.Empty;
     private int bulkActorType;
     private int bulkRace;
@@ -57,6 +64,19 @@ public sealed class MainWindow : Window, IDisposable
         : base($"{Plugin.DisplayName} v{Plugin.DisplayVersion}###ActorMorpherMain")
     {
         this.plugin = plugin;
+        var configuration = plugin.Configuration;
+        bulkNameFilter = configuration.BulkNameFilter;
+        bulkActorType = configuration.BulkActorType;
+        bulkRace = configuration.BulkRace;
+        bulkGender = configuration.BulkGender;
+        bulkAge = configuration.BulkAge;
+        bulkExclusionEnabled = configuration.BulkExclusionEnabled;
+        bulkExcludeNameFilter = configuration.BulkExcludeNameFilter;
+        bulkExcludeActorType = configuration.BulkExcludeActorType;
+        bulkExcludeRace = configuration.BulkExcludeRace;
+        bulkExcludeGender = configuration.BulkExcludeGender;
+        bulkExcludeAge = configuration.BulkExcludeAge;
+        bulkIncludeYourself = configuration.BulkIncludeYourself;
         SizeConstraints = new WindowSizeConstraints
         {
             MinimumSize = new Vector2(680, 420),
@@ -66,6 +86,7 @@ public sealed class MainWindow : Window, IDisposable
 
     public void Dispose()
     {
+        previewProjector.Clear();
         plugin.SetModelPreviewActive(false);
     }
 
@@ -107,7 +128,10 @@ public sealed class MainWindow : Window, IDisposable
 
             ImGui.EndTabBar();
         }
-        plugin.SetModelPreviewActive(modelSearchVisible && plugin.Configuration.Enable3DPreview);
+        var previewActive = modelSearchVisible && plugin.Configuration.Enable3DPreview;
+        if (!previewActive)
+            previewProjector.Clear();
+        plugin.SetModelPreviewActive(previewActive);
     }
 
     private void DrawSettingsTab()
@@ -280,17 +304,19 @@ public sealed class MainWindow : Window, IDisposable
 
         ImGui.Separator();
         ImGui.TextUnformatted(T(TextKey.TargetFilters));
-        ImGui.Checkbox($"{T(TextKey.IncludeYourself)}###bulk-include-yourself", ref bulkIncludeYourself);
-        DrawBulkFilterControls("target", ref bulkActorType, ref bulkRace, ref bulkGender, ref bulkAge, ref bulkNameFilter);
+        var filtersChanged = ImGui.Checkbox($"{T(TextKey.IncludeYourself)}###bulk-include-yourself", ref bulkIncludeYourself);
+        filtersChanged |= DrawBulkFilterControls("target", ref bulkActorType, ref bulkRace, ref bulkGender, ref bulkAge, ref bulkNameFilter);
 
         ImGui.Spacing();
         ImGui.TextUnformatted(T(TextKey.ExclusionFilters));
-        ImGui.Checkbox($"{T(TextKey.EnableExclusionFilters)}###bulk-exclusion-enabled", ref bulkExclusionEnabled);
+        filtersChanged |= ImGui.Checkbox($"{T(TextKey.EnableExclusionFilters)}###bulk-exclusion-enabled", ref bulkExclusionEnabled);
         if (!bulkExclusionEnabled)
             ImGui.BeginDisabled();
-        DrawBulkFilterControls("exclude", ref bulkExcludeActorType, ref bulkExcludeRace, ref bulkExcludeGender, ref bulkExcludeAge, ref bulkExcludeNameFilter);
+        filtersChanged |= DrawBulkFilterControls("exclude", ref bulkExcludeActorType, ref bulkExcludeRace, ref bulkExcludeGender, ref bulkExcludeAge, ref bulkExcludeNameFilter);
         if (!bulkExclusionEnabled)
             ImGui.EndDisabled();
+        if (filtersChanged)
+            SaveBulkOutfitFilterSettings();
 
         var gender = HumanGenders[bulkGender];
         var excludeGender = HumanGenders[bulkExcludeGender];
@@ -367,7 +393,7 @@ public sealed class MainWindow : Window, IDisposable
             ImGui.TextWrapped(plugin.BulkOutfitStatus);
     }
 
-    private void DrawBulkFilterControls(
+    private bool DrawBulkFilterControls(
         string id,
         ref int actorType,
         ref int race,
@@ -377,14 +403,17 @@ public sealed class MainWindow : Window, IDisposable
     {
         ImGui.SetNextItemWidth(160.0f);
         var actorTypeNames = BulkActorTypeNames();
-        ImGui.Combo($"{T(TextKey.ActorType)}###bulk-{id}-actor-type", ref actorType, actorTypeNames, actorTypeNames.Length);
+        var changed = ImGui.Combo($"{T(TextKey.ActorType)}###bulk-{id}-actor-type", ref actorType, actorTypeNames, actorTypeNames.Length);
         ImGui.SetNextItemWidth(160.0f);
         if (ImGui.BeginCombo($"{T(TextKey.Race)}###bulk-{id}-race", GetRaceFilterName(race)))
         {
             for (var i = 0; i < HumanRaces.Length; ++i)
             {
-                if (ImGui.Selectable($"{GetRaceFilterName(i)}###bulk-{id}-race-{i}", race == i))
+                if (ImGui.Selectable($"{GetRaceFilterName(i)}###bulk-{id}-race-{i}", race == i) && race != i)
+                {
                     race = i;
+                    changed = true;
+                }
             }
             ImGui.EndCombo();
         }
@@ -393,16 +422,38 @@ public sealed class MainWindow : Window, IDisposable
         {
             for (var i = 0; i < HumanGenders.Length; ++i)
             {
-                if (ImGui.Selectable($"{GetGenderFilterName(i)}###bulk-{id}-gender-{i}", gender == i))
+                if (ImGui.Selectable($"{GetGenderFilterName(i)}###bulk-{id}-gender-{i}", gender == i) && gender != i)
+                {
                     gender = i;
+                    changed = true;
+                }
             }
             ImGui.EndCombo();
         }
         ImGui.SetNextItemWidth(160.0f);
         var ageNames = BulkAgeNames();
-        ImGui.Combo($"{T(TextKey.Age)}###bulk-{id}-age", ref age, ageNames, ageNames.Length);
+        changed |= ImGui.Combo($"{T(TextKey.Age)}###bulk-{id}-age", ref age, ageNames, ageNames.Length);
         ImGui.SetNextItemWidth(260.0f);
-        ImGui.InputTextWithHint($"{T(TextKey.Name)}###bulk-{id}-name", T(TextKey.FilterByName), ref name, 128);
+        changed |= ImGui.InputTextWithHint($"{T(TextKey.Name)}###bulk-{id}-name", T(TextKey.FilterByName), ref name, 128);
+        return changed;
+    }
+
+    private void SaveBulkOutfitFilterSettings()
+    {
+        var configuration = plugin.Configuration;
+        configuration.BulkIncludeYourself = bulkIncludeYourself;
+        configuration.BulkActorType = bulkActorType;
+        configuration.BulkRace = bulkRace;
+        configuration.BulkGender = bulkGender;
+        configuration.BulkAge = bulkAge;
+        configuration.BulkNameFilter = bulkNameFilter;
+        configuration.BulkExclusionEnabled = bulkExclusionEnabled;
+        configuration.BulkExcludeActorType = bulkExcludeActorType;
+        configuration.BulkExcludeRace = bulkExcludeRace;
+        configuration.BulkExcludeGender = bulkExcludeGender;
+        configuration.BulkExcludeAge = bulkExcludeAge;
+        configuration.BulkExcludeNameFilter = bulkExcludeNameFilter;
+        plugin.Save();
     }
 
     private void DrawOutfitDisplay(string id, OutfitData? outfit, bool allowSourceEditing = false)
@@ -507,9 +558,17 @@ public sealed class MainWindow : Window, IDisposable
 
     private void DrawModelSearchTab()
     {
-        var models = plugin.GetModelSearchEntries().Where(MatchesModelFilter).ToArray();
         DrawModelSearchControls();
-        DrawModels(models);
+        var source = plugin.GetModelSearchEntries();
+        var key = (plugin.GameLanguage, selectedCategory, modelNameFilter, modelIdFilter,
+            selectedRace, selectedTribe, selectedGender, includeAdultHumans, includeYoungNpc);
+        if (!ReferenceEquals(filteredModelSource, source) || modelFilterKey != key)
+        {
+            filteredModels = source.Where(MatchesModelFilter).ToArray();
+            filteredModelSource = source;
+            modelFilterKey = key;
+        }
+        DrawModels(filteredModels);
     }
 
     private void DrawActors(IReadOnlyList<ActorEntry> actors)
@@ -541,7 +600,7 @@ public sealed class MainWindow : Window, IDisposable
                 foreach (var actor in actors)
                 {
                     var selected = selectedActorKey == actor.Key;
-                    var modified = plugin.HasOutfitOverride(actor.Key);
+                    var modified = plugin.IsActorModified(actor.Key);
                     var pinned = plugin.IsOutfitPinned(actor.Key);
                     var localPlayerLabel = actor.IsLocalPlayer ? $" ({T(TextKey.IncludeYourself)})" : string.Empty;
                     var label = $"{actor.Name}{localPlayerLabel}##actor-{actor.Key.GetHashCode()}";
@@ -581,14 +640,15 @@ public sealed class MainWindow : Window, IDisposable
     {
         if (ImGui.BeginChild("##actor-details", Vector2.Zero, true))
         {
-            if (selectedActorKey is not { } key || !plugin.TryResolveActor(key, out var actor))
+            if (selectedActorKey is not { } key
+                || !plugin.TryResolveActorRepresentation(key, out var actor, out var current))
             {
                 ImGui.TextDisabled(T(TextKey.SelectActor));
                 ImGui.EndChild();
                 return;
             }
 
-            var current = actor.Current;
+            var appearance = current.CurrentAppearance;
             ImGui.TextUnformatted(actor.Name);
             ImGui.Separator();
             if (ImGui.BeginTable("##actor-detail-fields", 2, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
@@ -604,23 +664,40 @@ public sealed class MainWindow : Window, IDisposable
                 DrawDetailRow(T(TextKey.EntityId), $"0x{current.RepresentationKey.EntityId:X}");
                 DrawDetailRow(T(TextKey.BaseId), current.BaseId.ToString());
                 DrawDetailRow(T(TextKey.ModelCharaId), current.ModelCharaId.ToString());
+                DrawDetailRow(T(TextKey.Category), appearance?.Category.ToString() ?? T(TextKey.Unavailable));
+                DrawDetailRow(
+                    T(TextKey.Customize),
+                    appearance is { Customize.IsEmpty: false }
+                        ? Convert.ToHexString(appearance.Customize.AsSpan())
+                        : T(TextKey.Unavailable));
                 DrawDetailRow(T(TextKey.Race), current.Race is { } race ? plugin.GetRaceName(race) : T(TextKey.NonHumanUnknown));
                 DrawDetailRow(T(TextKey.Gender), current.Gender is { } gender ? GetGenderName(gender) : T(TextKey.NonHumanUnknown));
                 DrawDetailRow(T(TextKey.BodyType), current.BodyType?.ToString() ?? T(TextKey.NonHumanUnknown));
+                DrawDetailRow(T(TextKey.Mainhand), appearance?.Mainhand is { } mainhand ? $"0x{mainhand:X16}" : T(TextKey.Unavailable));
+                DrawDetailRow(T(TextKey.Offhand), appearance?.Offhand is { } offhand ? $"0x{offhand:X16}" : T(TextKey.Unavailable));
+                DrawDetailRow(
+                    T(TextKey.ModelScale),
+                    appearance?.ModelScale?.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
+                    ?? T(TextKey.Unavailable));
                 DrawDetailRow(T(TextKey.ClassJob), current.ClassJob.ToString());
                 DrawDetailRow(T(TextKey.Level), current.Level.ToString());
                 DrawDetailRow(T(TextKey.IsLocalPlayer), current.IsLocalPlayer ? T(TextKey.Yes) : T(TextKey.No));
-                var hasMorph = plugin.TryGetAppearanceOverride(actor.Key, out var morphState);
-                DrawDetailRow(T(TextKey.CurrentMorph), hasMorph ? $"Model ID {morphState.DesiredData.ModelCharaId}" : T(TextKey.None));
                 DrawDetailRow(
                     T(TextKey.BulkOutfitModified),
-                    plugin.HasOutfitOverride(actor.Key) || plugin.IsOutfitPinned(actor.Key)
+                    plugin.IsOutfitModified(actor.Key) || plugin.IsOutfitPinned(actor.Key)
                         ? T(TextKey.Yes)
                         : T(TextKey.No));
-                DrawDetailRow(T(TextKey.SnapshotAvailable), hasMorph ? T(TextKey.Yes) : T(TextKey.No));
                 DrawDetailRow(T(TextKey.GPoseRepresentation), current.RepresentationKey.IsGPoseRepresentation ? T(TextKey.Yes) : T(TextKey.No));
                 ImGui.EndTable();
             }
+
+            ImGui.Spacing();
+            ImGui.TextUnformatted(T(TextKey.Equipment));
+            var currentOutfit = EquipmentDisplayFormatting.CreateHumanOutfit(appearance);
+            if (currentOutfit is not null)
+                DrawOutfitDisplay($"actor-current-outfit-{actor.Key.GetHashCode()}", currentOutfit);
+            else
+                ImGui.TextDisabled(T(TextKey.Unavailable));
 
             ImGui.Spacing();
             var hasOutfitOverride = plugin.TryGetOutfitOverride(actor.Key, out var outfitState);
@@ -635,36 +712,17 @@ public sealed class MainWindow : Window, IDisposable
                 DrawOutfitPinButton(actor.Key, isPinned, true);
                 DrawOutfitDisplay($"actor-applied-outfit-{actor.Key.GetHashCode()}", outfitState.Desired);
             }
-            else
+            else if (plugin.TryGetPinnedOutfit(actor.Key, out var pinnedOutfit))
             {
-                ImGui.TextUnformatted(T(TextKey.Equipment));
-                if (current.Race is not null && plugin.TryGetActorOutfit(actor.Key, out var actorOutfit))
-                    DrawOutfitDisplay($"actor-outfit-{actor.Key.GetHashCode()}", actorOutfit);
-                else
-                    ImGui.TextDisabled(T(TextKey.Unavailable));
-
-                if (plugin.TryGetPinnedOutfit(actor.Key, out var pinnedOutfit))
-                {
-                    ImGui.Spacing();
-                    ImGui.TextUnformatted(T(TextKey.AppliedEquipment));
-                    ImGui.SameLine();
-                    DrawOutfitPinButton(actor.Key, true, true);
-                    DrawOutfitDisplay($"actor-pinned-outfit-{actor.Key.GetHashCode()}", pinnedOutfit);
-                }
+                ImGui.TextUnformatted(T(TextKey.AppliedEquipment));
+                ImGui.SameLine();
+                DrawOutfitPinButton(actor.Key, true, true);
+                DrawOutfitDisplay($"actor-pinned-outfit-{actor.Key.GetHashCode()}", pinnedOutfit);
             }
 
             ImGui.Spacing();
-            var canRestore = (plugin.HasAppearanceOverride(actor.Key) || plugin.HasOutfitOverride(actor.Key))
-                && !plugin.IsAppearancePending(actor.Key)
-                && plugin.CurrentBulkOperation is null;
-            if (!canRestore)
-                ImGui.BeginDisabled();
             if (ImGui.Button($"{T(TextKey.RestoreOriginalState)}###restore-actor"))
                 applySucceeded = plugin.TryRestoreActor(actor.Key, out applyStatus);
-            if (!canRestore)
-                ImGui.EndDisabled();
-            if (!string.IsNullOrWhiteSpace(plugin.AppearanceStatus))
-                ImGui.TextWrapped(plugin.AppearanceStatus);
         }
 
         ImGui.EndChild();
@@ -738,67 +796,77 @@ public sealed class MainWindow : Window, IDisposable
 
             if (ImGui.BeginChild("##model-name-list", Vector2.Zero, true))
             {
-                foreach (var model in models)
+                var clipper = ImGui.ImGuiListClipper();
+                try
                 {
-                    var selected = IsSelectedModel(model);
-                    if (ImGui.Selectable($"{model.Name}##model-{model.RowId}-{model.Source}-{model.SourceId}", selected))
+                    clipper.Begin(models.Count);
+                    while (clipper.Step())
+                    for (var index = clipper.DisplayStart; index < clipper.DisplayEnd; ++index)
                     {
-                        selectedModel = model;
-                        var previewAssets = plugin.GetModelPreviewAssets(model);
-                        var previewSupport = plugin.GetModelPreviewSupport(model);
-                        plugin.Diagnostics.Log.Write(new DiagnosticLogEntry
+                        var model = models[index];
+                        var selected = IsSelectedModel(model);
+                        if (ImGui.Selectable($"{model.Name}##model-{model.RowId}-{model.Source}-{model.SourceId}", selected))
                         {
-                            EventId = DiagnosticEventIds.UserActionRequested,
-                            Category = DiagnosticCategory.UserAction,
-                            Message = "Model selected.",
-                            Properties = new Dictionary<string, object?>
+                            selectedModel = model;
+                            var previewAssets = plugin.GetModelPreviewAssets(model);
+                            var previewSupport = plugin.GetModelPreviewSupport(model);
+                            plugin.Diagnostics.Log.Write(new DiagnosticLogEntry
                             {
-                                ["modelCharaId"] = model.ModelId,
-                                ["modelName"] = model.Name,
-                                ["category"] = model.Category,
-                                ["race"] = model.Race,
-                                ["tribe"] = model.Tribe,
-                                ["completeness"] = model.Completeness,
-                                ["source"] = model.Source,
-                                ["sourceRowId"] = model.SourceId,
-                                ["previewReadiness"] = previewAssets.Readiness,
-                                ["previewAssetsPresent"] = previewAssets.PresentCount,
-                                ["previewAssetsMissing"] = previewAssets.MissingCount,
-                                ["previewAssetsNotUsed"] = previewAssets.OptionalMissingCount,
-                                ["previewBackend"] = previewSupport.PreferredBackend,
-                                ["previewCompleteness"] = previewSupport.Completeness,
-                                ["previewSupported"] = previewSupport.CanPreview,
-                                ["previewSupportReason"] = previewSupport.Reason,
-                            },
-                        });
-                        plugin.Diagnostics.Log.Write(new DiagnosticLogEntry
-                        {
-                            EventId = DiagnosticEventIds.PreviewAssetsResolved,
-                            Category = DiagnosticCategory.ModelSearch,
-                            Message = "Model preview assets resolved.",
-                            Outcome = previewAssets.Readiness.ToString(),
-                            Properties = new Dictionary<string, object?>
+                                EventId = DiagnosticEventIds.UserActionRequested,
+                                Category = DiagnosticCategory.UserAction,
+                                Message = "Model selected.",
+                                Properties = new Dictionary<string, object?>
+                                {
+                                    ["modelCharaId"] = model.ModelId,
+                                    ["modelName"] = model.Name,
+                                    ["category"] = model.Category,
+                                    ["race"] = model.Race,
+                                    ["tribe"] = model.Tribe,
+                                    ["completeness"] = model.Completeness,
+                                    ["source"] = model.Source,
+                                    ["sourceRowId"] = model.SourceId,
+                                    ["previewReadiness"] = previewAssets.Readiness,
+                                    ["previewAssetsPresent"] = previewAssets.PresentCount,
+                                    ["previewAssetsMissing"] = previewAssets.MissingCount,
+                                    ["previewAssetsNotUsed"] = previewAssets.OptionalMissingCount,
+                                    ["previewBackend"] = previewSupport.PreferredBackend,
+                                    ["previewCompleteness"] = previewSupport.Completeness,
+                                    ["previewSupported"] = previewSupport.CanPreview,
+                                    ["previewSupportReason"] = previewSupport.Reason,
+                                },
+                            });
+                            plugin.Diagnostics.Log.Write(new DiagnosticLogEntry
                             {
-                                ["modelCharaId"] = model.ModelId,
-                                ["category"] = model.Category,
-                                ["type"] = model.Type,
-                                ["model"] = model.Model,
-                                ["base"] = model.Base,
-                                ["variant"] = model.Variant,
-                                ["presentAssets"] = previewAssets.PresentCount,
-                                ["missingAssets"] = previewAssets.MissingCount,
-                                ["notUsedAssets"] = previewAssets.OptionalMissingCount,
-                                ["preferredBackend"] = previewSupport.PreferredBackend,
-                                ["previewCompleteness"] = previewSupport.Completeness,
-                                ["previewSupported"] = previewSupport.CanPreview,
-                                ["supportReason"] = previewSupport.Reason,
-                                ["assetPaths"] = previewAssets.Assets.Select(static asset => $"{asset.Label}:{asset.IsRequired}:{asset.IsPresent}:{asset.Path}").ToArray(),
-                            },
-                        });
+                                EventId = DiagnosticEventIds.PreviewAssetsResolved,
+                                Category = DiagnosticCategory.ModelSearch,
+                                Message = "Model preview assets resolved.",
+                                Outcome = previewAssets.Readiness.ToString(),
+                                Properties = new Dictionary<string, object?>
+                                {
+                                    ["modelCharaId"] = model.ModelId,
+                                    ["category"] = model.Category,
+                                    ["type"] = model.Type,
+                                    ["model"] = model.Model,
+                                    ["base"] = model.Base,
+                                    ["variant"] = model.Variant,
+                                    ["presentAssets"] = previewAssets.PresentCount,
+                                    ["missingAssets"] = previewAssets.MissingCount,
+                                    ["notUsedAssets"] = previewAssets.OptionalMissingCount,
+                                    ["preferredBackend"] = previewSupport.PreferredBackend,
+                                    ["previewCompleteness"] = previewSupport.Completeness,
+                                    ["previewSupported"] = previewSupport.CanPreview,
+                                    ["supportReason"] = previewSupport.Reason,
+                                    ["assetPaths"] = previewAssets.Assets.Select(static asset => $"{asset.Label}:{asset.IsRequired}:{asset.IsPresent}:{asset.Path}").ToArray(),
+                                },
+                            });
+                        }
                     }
                 }
+                finally
+                {
+                    clipper.Destroy();
+                }
             }
-
             ImGui.EndChild();
             ImGui.TableNextColumn();
             DrawModelDetails();
@@ -812,6 +880,7 @@ public sealed class MainWindow : Window, IDisposable
         {
             if (selectedModel is not { } model)
             {
+                previewProjector.Clear();
                 plugin.SelectPreviewModel(null);
                 ImGui.TextDisabled(T(TextKey.SelectCharacter));
                 ImGui.EndChild();
@@ -871,39 +940,65 @@ public sealed class MainWindow : Window, IDisposable
             }
 
             ImGui.Spacing();
-            var unavailableReason = Plugin.GetApplyUnavailableReason(model);
-            var canApply = Plugin.CanApplyModel(model);
-            var canApplyYourself = canApply && !plugin.IsLocalPlayerAppearancePending();
-            if (!canApplyYourself)
-                ImGui.BeginDisabled();
             if (ImGui.Button($"{T(TextKey.ApplyToYourself)}###apply-yourself"))
-                applySucceeded = plugin.TryApplyModelToLocalPlayer(model, out applyStatus);
-            if (!canApplyYourself)
-                ImGui.EndDisabled();
-            if (!canApply && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                ImGui.SetTooltip(unavailableReason);
+            {
+                var accepted = plugin.TryApplyModelToLocalPlayer(model, out var operationId, out var localMessage);
+                SetApplyRequestResult(accepted, operationId, localMessage);
+            }
 
             ImGui.SameLine();
-            var canApplySelected = canApply
-                && selectedActorKey is { } selectedKey
-                && !plugin.IsAppearancePending(selectedKey);
-            if (!canApplySelected)
-                ImGui.BeginDisabled();
-            if (ImGui.Button($"{T(TextKey.ApplyToSelectedActor)}###apply-selected" ) && selectedActorKey is { } actorKey)
-                applySucceeded = plugin.TryApplyModel(actorKey, model, out applyStatus);
-            if (!canApplySelected)
-                ImGui.EndDisabled();
+            if (ImGui.Button($"{T(TextKey.ApplyToSelectedActor)}###apply-selected"))
+            {
+                if (selectedActorKey is { } actorKey)
+                {
+                    var accepted = plugin.TryApplyModel(actorKey, model, out var operationId, out var selectedMessage);
+                    SetApplyRequestResult(accepted, operationId, selectedMessage);
+                }
+                else
+                {
+                    applyStatus = "Select an actor first.";
+                    applySucceeded = false;
+                    awaitingApplyTerminal = false;
+                    awaitingApplyOperationId = null;
+                }
+            }
+
+            if (awaitingApplyTerminal
+                && awaitingApplyOperationId is { } awaitedOperationId
+                && plugin.AppearanceOperationId == awaitedOperationId
+                && plugin.AppearanceSucceeded is { } terminalSucceeded)
+            {
+                applyStatus = plugin.AppearanceStatus;
+                applySucceeded = terminalSucceeded;
+                awaitingApplyTerminal = false;
+                awaitingApplyOperationId = null;
+            }
 
             if (!string.IsNullOrWhiteSpace(applyStatus))
             {
-                var color = applySucceeded
-                    ? new Vector4(0.35f, 0.85f, 0.45f, 1.0f)
-                    : new Vector4(0.95f, 0.35f, 0.35f, 1.0f);
-                ImGui.TextColored(color, applyStatus);
+                if (applySucceeded is { } succeeded)
+                {
+                    var color = succeeded
+                        ? new Vector4(0.35f, 0.85f, 0.45f, 1.0f)
+                        : new Vector4(0.95f, 0.35f, 0.35f, 1.0f);
+                    ImGui.TextColored(color, applyStatus);
+                }
+                else
+                {
+                    ImGui.TextWrapped(applyStatus);
+                }
             }
         }
 
         ImGui.EndChild();
+    }
+
+    private void SetApplyRequestResult(bool accepted, Guid operationId, string message)
+    {
+        applyStatus = message;
+        applySucceeded = accepted ? null : false;
+        awaitingApplyTerminal = accepted;
+        awaitingApplyOperationId = accepted ? operationId : null;
     }
 
     private void DrawModelPreview()
@@ -918,7 +1013,10 @@ public sealed class MainWindow : Window, IDisposable
             if (preview.State == ModelPreviewState.Ready && plugin.SoftwareModelPreview is { } softwarePreview)
                 DrawSoftwareModelPreview(softwarePreview);
             else
+            {
+                previewProjector.Clear();
                 ImGui.TextWrapped(GetPreviewStatus(preview));
+            }
         }
         ImGui.EndChild();
         var canReset = plugin.ModelPreview.State == ModelPreviewState.Ready;
@@ -968,7 +1066,7 @@ public sealed class MainWindow : Window, IDisposable
         drawList.PushClipRect(position, maximum, true);
         drawList.AddRectFilled(position, maximum, ImGui.GetColorU32(new Vector4(0.055f, 0.065f, 0.075f, 1.0f)));
         ImTextureID activeTexture = default;
-        foreach (var triangle in SoftwareModelPreviewProjector.Project(view, position, canvasSize))
+        foreach (var triangle in previewProjector.GetProjection(view, position, canvasSize))
         {
             var texture = plugin.GetModelPreviewTextureHandle(triangle.MaterialPath);
             if (texture == default)
@@ -1229,7 +1327,7 @@ public sealed class MainWindow : Window, IDisposable
             return false;
 
         var pinned = plugin.IsOutfitPinned(actor.Key);
-        var modified = plugin.HasOutfitOverride(actor.Key);
+        var modified = plugin.IsActorModified(actor.Key);
         if (selectedActorOutfitState == 1 && (modified || pinned))
             return false;
         if (selectedActorOutfitState == 2 && (!modified || pinned))
@@ -1238,11 +1336,13 @@ public sealed class MainWindow : Window, IDisposable
             return false;
 
         var race = HumanRaces[selectedActorRace];
-        if (race != 0 && actor.Race != race)
+        if (!plugin.TryResolveActorRepresentation(actor.Key, out _, out var representation))
+            return false;
+        if (race != 0 && representation.Race != race)
             return false;
 
         var gender = HumanGenders[selectedActorGender];
-        return gender == byte.MaxValue || actor.Gender == gender;
+        return gender == byte.MaxValue || representation.Gender == gender;
     }
 
     private string[] ActorOutfitStateNames()

@@ -11,6 +11,73 @@ namespace ActorMorpher.Tests;
 public sealed class SoftwareModelPreviewTests
 {
     [Fact]
+    public void StaticProjectionReusesTrianglesWithoutEnumeratingTheSceneAgain()
+    {
+        var original = new SoftwareModelPreviewSceneBuilder().Build([Model([0, 1, 2])]);
+        var counted = new CountingTriangles(original.Triangles);
+        var scene = original with { Triangles = counted };
+        var view = new SoftwareModelPreviewView(scene, 0.55f, -0.12f, 1);
+        var projector = new SoftwareModelPreviewProjector();
+        var position = new Vector2(10, 20);
+        var size = new Vector2(300, 280);
+        var first = projector.GetProjection(view, position, size);
+
+        for (var frame = 0; frame < 120; ++frame)
+            Assert.Same(first, projector.GetProjection(view, position, size));
+        Assert.Equal(1, counted.Enumerations);
+        Assert.Equal(SoftwareModelPreviewProjector.Project(view, position, size).ToArray(), first.ToArray());
+
+        projector.Clear();
+        Assert.NotSame(first, projector.GetProjection(view, position, size));
+        Assert.Equal(3, counted.Enumerations); // Initial, uncached oracle, and after Clear.
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
+    public void ProjectionCacheInvalidatesEveryViewInput(int changedInput)
+    {
+        var scene = new SoftwareModelPreviewSceneBuilder().Build([Model([0, 1, 2])]);
+        var view = new SoftwareModelPreviewView(scene, 0.55f, -0.12f, 1);
+        var projector = new SoftwareModelPreviewProjector();
+        var position = Vector2.Zero;
+        var size = new Vector2(300, 300);
+        var first = projector.GetProjection(view, position, size);
+        switch (changedInput)
+        {
+            case 0: view = view with { Yaw = 0.8f }; break;
+            case 1: view = view with { Pitch = 0.4f }; break;
+            case 2: view = view with { Zoom = 2 }; break;
+            case 3: position = new Vector2(30, 40); break;
+            case 4: size = new Vector2(420, 360); break;
+            case 5: view = view with { Scene = scene with { } }; break;
+        }
+        var changed = projector.GetProjection(view, position, size);
+        Assert.NotSame(first, changed);
+        Assert.Equal(SoftwareModelPreviewProjector.Project(view, position, size).ToArray(), changed.ToArray());
+        Assert.Same(changed, projector.GetProjection(view, position, size));
+    }
+
+    private sealed class CountingTriangles(
+        System.Collections.Generic.IReadOnlyList<SoftwareModelPreviewTriangle> triangles)
+        : System.Collections.Generic.IReadOnlyList<SoftwareModelPreviewTriangle>
+    {
+        public int Enumerations { get; private set; }
+        public int Count => triangles.Count;
+        public SoftwareModelPreviewTriangle this[int index] => triangles[index];
+        public System.Collections.Generic.IEnumerator<SoftwareModelPreviewTriangle> GetEnumerator()
+        {
+            ++Enumerations;
+            return triangles.GetEnumerator();
+        }
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    [Fact]
     public void SceneBuilderPreservesEveryTriangle()
     {
         const int triangleCount = 10_001;

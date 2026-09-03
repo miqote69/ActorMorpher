@@ -10,10 +10,14 @@ public sealed unsafe class NativeRedrawBackend(
     public bool TryDisable(ActorSnapshot actor)
         => TryInvoke(actor, true);
 
-    public bool TryEnable(ActorSnapshot actor, AppearanceData? appearance)
-        => TryInvoke(actor, false, appearance);
+    public bool TryEnable(ActorSnapshot actor, AppearanceData? appearance, Guid operationId)
+        => TryInvoke(actor, false, appearance, operationId);
 
-    private bool TryInvoke(ActorSnapshot expected, bool disable, AppearanceData? appearance = null)
+    private bool TryInvoke(
+        ActorSnapshot expected,
+        bool disable,
+        AppearanceData? appearance = null,
+        Guid operationId = default)
     {
         var key = expected.RepresentationKey;
         var current = objectTable[key.ObjectIndex];
@@ -33,9 +37,12 @@ public sealed unsafe class NativeRedrawBackend(
         {
             gameObject->RenderFlags &= ~VisibilityFlags.Model;
             if (appearance is null)
+            {
                 gameObject->EnableDraw();
+                return true;
+            }
             else
-                drawObjectInjector.Invoke(expected, appearance, gameObject);
+                return drawObjectInjector.Invoke(operationId, expected, appearance, gameObject);
         }
         return true;
     }

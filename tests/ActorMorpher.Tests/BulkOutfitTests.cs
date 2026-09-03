@@ -96,6 +96,35 @@ public sealed class BulkOutfitTests
     }
 
     [Fact]
+    public void VisibleHumanCustomizeMakesMatchingLocalPlayerEligible()
+    {
+        var logical = new LogicalActorKey(1, 1, 1, 1, ObjectKind.Pc, 30);
+        var backingVieraFemale = new ActorSnapshot(
+            logical,
+            new ActorRepresentationKey(1, 1, 1, false),
+            "Player",
+            ObjectKind.Pc,
+            1,
+            0,
+            8,
+            1,
+            (byte)NpcAge.Normal,
+            0,
+            0,
+            true);
+        var visibleHyurFemale = backingVieraFemale.WithVisibleHumanCustomize(1, 1, (byte)NpcAge.Normal);
+        var player = new ActorEntry(logical, "Player", ObjectKind.Pc, true, [visibleHyurFemale]);
+        var settings = new BulkOutfitSettings(
+            new BulkOutfitFilter(ActorTargetType.All, 1, 1, BulkOutfitAge.All, string.Empty),
+            null,
+            true);
+
+        var preview = new BulkOutfitTargetResolver().Resolve([player], settings);
+
+        Assert.Equal(player.Key, Assert.Single(preview.EligibleTargets));
+    }
+
+    [Fact]
     public void ChildAgeIncludesOnlyYoungHumanActors()
     {
         var youngNpc = Entry(2, "Young NPC", ObjectKind.EventNpc, 0, false, bodyType: (byte)NpcAge.Young);

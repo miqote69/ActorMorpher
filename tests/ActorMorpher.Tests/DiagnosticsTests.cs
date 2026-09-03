@@ -33,7 +33,7 @@ public sealed class DiagnosticsTests
         };
         configuration.MigrateAndValidate(false);
 
-        Assert.Equal(5, configuration.Version);
+        Assert.Equal(6, configuration.Version);
         Assert.True(configuration.Enable3DPreview);
         Assert.Equal(UiLanguage.Automatic, configuration.UiLanguage);
         Assert.Equal(FileDiagnosticMode.ErrorsOnly, configuration.FileDiagnosticMode);
@@ -156,6 +156,24 @@ public sealed class DiagnosticsTests
 
         Assert.True(router.Switch(Settings(FileDiagnosticMode.Off), "switch01"));
         Assert.False(router.IsEnabled);
+    }
+
+    [Fact]
+    public async Task FullModeCanRestartWithTheSameSessionAndWriteAgain()
+    {
+        using var temp = new TemporaryDirectory();
+        using var router = new DiagnosticLogRouter(temp.Path, null, null);
+        Assert.True(router.Switch(Settings(FileDiagnosticMode.Full), "restart1"));
+        router.Write(Entry(DiagnosticLogLevel.Information, "before restart"));
+        Assert.True(await router.ActiveService!.FlushAsync(TimeSpan.FromSeconds(2)));
+
+        Assert.True(router.Switch(Settings(FileDiagnosticMode.Full), "restart1"));
+        router.Write(Entry(DiagnosticLogLevel.Information, "after restart"));
+        Assert.True(await router.ActiveService!.FlushAsync(TimeSpan.FromSeconds(2)));
+
+        var lines = ReadAllLinesShared(router.ActiveService.Paths.LatestFile);
+        Assert.Single(lines);
+        Assert.Contains("after restart", lines[0]);
     }
 
     [Fact]

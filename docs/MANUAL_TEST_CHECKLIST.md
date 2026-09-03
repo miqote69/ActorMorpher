@@ -1,5 +1,7 @@
 # Manual Test Checklist
 
+`APPEARANCE_APPLICATION_SPEC.md` is normative. Run only the cases selected by `TEST_PLAN.md`; unchecked items are not implied release requirements.
+
 Enable Full diagnostics before testing native appearance operations. Stop after any crash, permanent T-pose, missing skeleton, or incorrect restore and attach both the session log and crash pack.
 
 ## Available now
@@ -7,7 +9,8 @@ Enable Full diagnostics before testing native appearance operations. Stop after 
 - [ ] Plugin loads without Penumbra installed
 - [ ] Plugin loads without Glamourer installed
 - [ ] Local player is first in Actors
-- [ ] Actors only contains PC, EventNpc, and BattleNpc entries
+- [ ] Actors only contains PC, EventNpc, BattleNpc, and Companion entries
+- [ ] The local player's summoned Companion is fixed immediately after the local player when present
 - [ ] Actor name/type/race/gender filters combine correctly
 - [ ] Actor selection clears after index reuse by another actor
 - [ ] Model Search returns Human, Demihuman, and Monster rows
@@ -16,7 +19,7 @@ Enable Full diagnostics before testing native appearance operations. Stop after 
 - [ ] Hyur limits Tribe choices to Midlander and Highlander
 - [ ] Any Race exposes all 16 localized Tribe names
 - [ ] Young-only search does not include old/adult NPCs
-- [ ] Model detail shows completeness and disabled reason
+- [ ] Every displayed Model Search result is applyable and contains its category payload; unconstructable rows are absent
 - [ ] Rapidly changing Model Search selection settles on only the last preview
 - [ ] Leaving Model Search pauses the preview and returning reloads the selection
 - [ ] Closing and reopening the plugin window reloads the selected preview without a stale model
@@ -58,7 +61,7 @@ Enable Full diagnostics before testing native appearance operations. Stop after 
 - [ ] Stain columns show color swatches and hover displays the correct RGB and HEX values
 - [ ] Selected Human Actor details show the same equipment table as Bulk source
 - [ ] Human Model Search details show icons, model IDs, names, and both Stain swatches
-- [ ] Bulk-modified Actor names are colored and pinned Actor names use the pinned color
+- [ ] Actor names are green only when current rendered equipment differs from an existing Bulk `Original`; no Bulk `Original` stays white and pinned uses the pinned color
 - [ ] Actor details show original and applied Bulk equipment as separate tables
 - [ ] A pinned outfit reapplies after territory change, game restart, and plugin update
 - [ ] Restore clears the pin and leaves the original outfit restored
@@ -75,21 +78,22 @@ Enable Full diagnostics before testing native appearance operations. Stop after 
 
 ## Native appearance verification
 
-- [ ] Ryne (`BNpcBase#10072`) Apply records `CharacterBase.ModelScale=0.84` and matches the original NPC height
+- [ ] Applying an exact Ryne search row records its `Source`/`SourceId`; `CharacterData.ModelScale` and `GameObject.Scale` equal that row's source Scale, and the visible size matches that exact NPC
 - [x] After Ryne Apply and a local-player Bulk Outfit, the cutscene and returning field player keep Ryne's face and the latest applied outfit (User visual acceptance, 2026-08-30)
 - [ ] Entering a cutscene after Ryne Apply keeps Ryne's original NPC height on the cutscene copy
 - [ ] Cutscene entry records `AM4006` for parent ObjectIndex 0 and `AM4005` with `isCutsceneCopy=true`
 - [ ] Leaving the cutscene or destroying its actor records `AM4007` and does not affect unrelated cutscene actors
-- [ ] Ryne Restore returns the exact pre-apply player model scale and visible height
-- [ ] Human Apply and Restore, including Young NPC bones
-- [ ] Monster Apply and Restore
-- [ ] complete Demihuman Apply and Restore
-- [ ] GPose override propagation and exit synchronization
+- [ ] Restore is always callable; after any Bulk Original succeeds it clears transition carry, hook, pin, and local outfit carry before one original-player regeneration request, reads no saved pre-Apply appearance, and does not reinstate carry after redraw failure
+- [ ] Human Apply, including Young NPC bones, uses the selected payload once; later manual changes become latest C
+- [ ] Monster Apply and one-time latest-C transfer to each new territory/GPose Representation
+- [ ] Demihuman Apply uses its structural parts and one-time latest-C transfer to each new territory/GPose Representation
+- [ ] GPose entry/exit uses the latest actor state rather than the original Model Search source
 - [ ] ten-slot Bulk Outfit Apply and Restore
 - [ ] Stain 1 and Stain 2 visual verification
 - [ ] Facewear Apply and removal
 - [ ] Unequip All while preserving both weapons, job, customize, and ModelChara ID
-- [ ] repeated Apply/Restore and cancellation stress tests
+- [ ] Model Search Apply queue, rejection, failure, and success leave pin plus Bulk `Original`/`Desired` unchanged
+- [ ] A second Apply while one is pending is rejected without cancelling or replacing the first
 
 For each Bulk Outfit test, verify that main hand, off hand, weapon dyes, weapon visibility, class job, level, race, gender, customize, and ModelChara ID remain unchanged.
 
@@ -104,7 +108,7 @@ For each Bulk Outfit test, verify that main hand, off hand, weapon dyes, weapon 
 - [ ] UI log paths match the actual files
 - [ ] Actor selection and Model selection are recorded once per action
 - [ ] Redraw operations use a shared Operation ID
-- [ ] GPose entry, exit, mapping, and timeout are recorded
+- [ ] GPose entry, exit, mapping, and mapping-readiness terminal failure are recorded; this is not a Model Search Verify timeout
 - [ ] Diagnostic Marker is recorded with normalized text
 - [ ] Troubleshooting Capture temporarily changes Off to Full
 - [ ] Ending Capture restores the previous persistent mode

@@ -1,4 +1,5 @@
 using Dalamud.Configuration;
+using ActorMorpher.BulkOutfit;
 using ActorMorpher.Localization;
 
 namespace ActorMorpher;
@@ -6,7 +7,10 @@ namespace ActorMorpher;
 [Serializable]
 public sealed class Configuration : IPluginConfiguration
 {
-    public int Version { get; set; } = 5;
+    private const int BulkRaceFilterMaximum = 8;
+    private const int BulkGenderFilterMaximum = 2;
+
+    public int Version { get; set; } = 6;
     public UiLanguage UiLanguage { get; set; } = UiLanguage.Automatic;
     public bool Enable3DPreview { get; set; } = true;
     public FileDiagnosticMode FileDiagnosticMode { get; set; }
@@ -17,6 +21,18 @@ public sealed class Configuration : IPluginConfiguration
     public int DiagnosticMaximumSessions { get; set; } = 10;
     public int DiagnosticMaximumFileSizeMb { get; set; } = 10;
     public int DiagnosticMaximumTotalSizeMb { get; set; } = 100;
+    public bool BulkIncludeYourself { get; set; }
+    public int BulkActorType { get; set; }
+    public int BulkRace { get; set; }
+    public int BulkGender { get; set; }
+    public int BulkAge { get; set; }
+    public string BulkNameFilter { get; set; } = string.Empty;
+    public bool BulkExclusionEnabled { get; set; }
+    public int BulkExcludeActorType { get; set; }
+    public int BulkExcludeRace { get; set; }
+    public int BulkExcludeGender { get; set; }
+    public int BulkExcludeAge { get; set; }
+    public string BulkExcludeNameFilter { get; set; } = string.Empty;
     public List<PinnedOutfitConfiguration> PinnedOutfits { get; set; } = [];
 
     public static Configuration Create(bool isDev)
@@ -46,6 +62,22 @@ public sealed class Configuration : IPluginConfiguration
             Enable3DPreview = true;
             Version = 5;
         }
+        if (Version < 6)
+        {
+            BulkIncludeYourself = false;
+            BulkActorType = 0;
+            BulkRace = 0;
+            BulkGender = 0;
+            BulkAge = 0;
+            BulkNameFilter = string.Empty;
+            BulkExclusionEnabled = false;
+            BulkExcludeActorType = 0;
+            BulkExcludeRace = 0;
+            BulkExcludeGender = 0;
+            BulkExcludeAge = 0;
+            BulkExcludeNameFilter = string.Empty;
+            Version = 6;
+        }
 
         if (!Enum.IsDefined(UiLanguage))
             UiLanguage = UiLanguage.Automatic;
@@ -55,6 +87,16 @@ public sealed class Configuration : IPluginConfiguration
         DiagnosticMaximumSessions = Math.Clamp(DiagnosticMaximumSessions, 1, 100);
         DiagnosticMaximumFileSizeMb = Math.Clamp(DiagnosticMaximumFileSizeMb, 1, 100);
         DiagnosticMaximumTotalSizeMb = Math.Clamp(DiagnosticMaximumTotalSizeMb, 10, 1000);
+        BulkActorType = Math.Clamp(BulkActorType, 0, (int)ActorTargetType.Npcs);
+        BulkRace = Math.Clamp(BulkRace, 0, BulkRaceFilterMaximum);
+        BulkGender = Math.Clamp(BulkGender, 0, BulkGenderFilterMaximum);
+        BulkAge = Math.Clamp(BulkAge, 0, (int)BulkOutfitAge.Child);
+        BulkNameFilter ??= string.Empty;
+        BulkExcludeActorType = Math.Clamp(BulkExcludeActorType, 0, (int)ActorTargetType.Npcs);
+        BulkExcludeRace = Math.Clamp(BulkExcludeRace, 0, BulkRaceFilterMaximum);
+        BulkExcludeGender = Math.Clamp(BulkExcludeGender, 0, BulkGenderFilterMaximum);
+        BulkExcludeAge = Math.Clamp(BulkExcludeAge, 0, (int)BulkOutfitAge.Child);
+        BulkExcludeNameFilter ??= string.Empty;
         PinnedOutfitStore.Normalize(this);
     }
 }
