@@ -10,19 +10,23 @@ public sealed unsafe class NativeCutsceneActorTracker : IDisposable
     public const ushort CutsceneStartIndex = 200;
     public const ushort CutsceneEndIndex = 440;
 
-    private readonly bool[] localPlayerCopies = new bool[CutsceneEndIndex - CutsceneStartIndex];
+    private readonly ActorCopyLinks copies = new();
+    private readonly Func<nint, LogicalActorKey> resolveActor;
+    private readonly Action<nint> forgetLifetime;
     private readonly IGameInteropProvider interop;
     private readonly IDiagnosticLog diagnostics;
     private Hook<CopyCharacterDelegate>? copyCharacterHook;
-    private Hook<CharacterDestructorDelegate>? characterDestructorHook;
-    private nint characterDestructorAddress;
+    private readonly Dictionary<nint, Hook<CharacterDestructorDelegate>> destructorHooks = new();
     private bool enabled;
     private bool disposed;
 
-    public NativeCutsceneActorTracker(IGameInteropProvider interop, IDiagnosticLog diagnostics)
+    public NativeCutsceneActorTracker(IGameInteropProvider interop, IDiagnosticLog diagnostics,
+        Func<nint, LogicalActorKey> resolveActor, Action<nint> forgetLifetime)
     {
         this.interop = interop;
         this.diagnostics = diagnostics;
+        this.resolveActor = resolveActor;
+        this.forgetLifetime = forgetLifetime;
         try
         {
             copyCharacterHook = interop.HookFromAddress<CopyCharacterDelegate>(
@@ -43,33 +47,30 @@ public sealed unsafe class NativeCutsceneActorTracker : IDisposable
         }
     }
 
-    public bool IsLocalPlayerCopy(GameObject* gameObject)
+    public LogicalActorKey? GetSource(GameObject* gameObject)
     {
         if (!enabled || gameObject is null)
-            return false;
+            return null;
 
-        var index = gameObject->ObjectIndex;
-        return IsCutsceneIndex(index) && localPlayerCopies[index - CutsceneStartIndex];
+        return copies.Get((nint)gameObject);
     }
 
     public void Enable(Character* localPlayer)
     {
-        if (disposed || enabled || copyCharacterHook is null || localPlayer is null)
+        if (disposed || copyCharacterHook is null || localPlayer is null)
             return;
 
         try
         {
             EnsureCharacterDestructorHook(localPlayer);
+            if (enabled)
+                return;
             ClearLinks();
             copyCharacterHook.Enable();
-            characterDestructorHook!.Enable();
             enabled = true;
         }
         catch (Exception exception)
         {
-            copyCharacterHook.Disable();
-            characterDestructorHook?.Disable();
-            ClearLinks();
             diagnostics.Write(new DiagnosticLogEntry
             {
                 Level = DiagnosticLogLevel.Error,
@@ -87,7 +88,8 @@ public sealed unsafe class NativeCutsceneActorTracker : IDisposable
             return;
 
         copyCharacterHook?.Disable();
-        characterDestructorHook?.Disable();
+        foreach (var hook in destructorHooks.Values)
+            hook.Disable();
         enabled = false;
         ClearLinks();
     }
@@ -110,12 +112,22 @@ public sealed unsafe class NativeCutsceneActorTracker : IDisposable
         var address = (nint)localPlayer->VirtualTable->Dtor;
         if (address == nint.Zero)
             throw new InvalidOperationException("The local player's Character destructor is unavailable.");
-        if (characterDestructorHook is not null && characterDestructorAddress == address)
+        if (destructorHooks.ContainsKey(address))
             return;
 
-        characterDestructorHook?.Dispose();
-        characterDestructorHook = interop.HookFromAddress<CharacterDestructorDelegate>(address, CharacterDestructorDetour);
-        characterDestructorAddress = address;
+        Hook<CharacterDestructorDelegate>? hook = null;
+        hook = interop.HookFromAddress<CharacterDestructorDelegate>(address,
+            (actor, flags) => CharacterDestructorDetour(actor, flags, hook!));
+        try
+        {
+            hook.Enable();
+            destructorHooks.Add(address, hook);
+        }
+        catch
+        {
+            hook.Dispose();
+            throw;
+        }
     }
 
     private ulong CopyCharacterDetour(CharacterSetupContainer* target, Character* source, uint unknown)
@@ -125,68 +137,62 @@ public sealed unsafe class NativeCutsceneActorTracker : IDisposable
         {
             var targetIndex = targetCharacter->GameObject.ObjectIndex;
             if (IsCutsceneIndex(targetIndex))
-                SetLocalPlayerCopy(
-                    targetIndex,
-                    source is not null && source->GameObject.ObjectIndex == 0,
-                    "CopyFromCharacter");
+            {
+                copies.Remove((nint)targetCharacter);
+                try
+                {
+                    EnsureCharacterDestructorHook(targetCharacter);
+                    if (source is not null)
+                    {
+                        EnsureCharacterDestructorHook(source);
+                        copies.Link((nint)targetCharacter, (nint)source, resolveActor);
+                    }
+                }
+                catch (Exception exception)
+                {
+                    // Hook installation failure must not suppress the game's CopyFromCharacter.
+                    try
+                    {
+                        diagnostics.Write(new DiagnosticLogEntry
+                        {
+                            Level = DiagnosticLogLevel.Error,
+                            EventId = DiagnosticEventIds.HandledException,
+                            Category = DiagnosticCategory.Redraw,
+                            Message = "Actor copy lifetime tracking could not be initialized.",
+                            Exception = DiagnosticExceptionInfo.FromException(exception),
+                        });
+                    }
+                    catch { }
+                }
+            }
         }
 
         return copyCharacterHook!.Original(target, source, unknown);
     }
 
-    private GameObject* CharacterDestructorDetour(Character* character, byte freeFlags)
+    private GameObject* CharacterDestructorDetour(Character* character, byte freeFlags,
+        Hook<CharacterDestructorDelegate> hook)
     {
         if (character is not null)
         {
-            var objectIndex = character->GameObject.ObjectIndex;
-            if (objectIndex == 0)
-                ClearLinks();
-            else if (IsCutsceneIndex(objectIndex))
-                SetLocalPlayerCopy(objectIndex, false, "CharacterDestructor");
+            // A live copy still owns its source identity after the field actor disappears.
+            copies.Remove((nint)character);
+            forgetLifetime((nint)character);
         }
 
-        return characterDestructorHook!.Original(character, freeFlags);
-    }
-
-    private void SetLocalPlayerCopy(
-        ushort objectIndex,
-        bool isLocalPlayerCopy,
-        string source)
-    {
-        var slot = objectIndex - CutsceneStartIndex;
-        var changed = localPlayerCopies[slot] != isLocalPlayerCopy;
-        localPlayerCopies[slot] = isLocalPlayerCopy;
-        if (!changed)
-            return;
-
-        diagnostics.Write(new DiagnosticLogEntry
-        {
-            EventId = isLocalPlayerCopy
-                ? DiagnosticEventIds.CutsceneActorLinked
-                : DiagnosticEventIds.CutsceneActorUnlinked,
-            Category = DiagnosticCategory.Redraw,
-            Message = isLocalPlayerCopy
-                ? "Cutscene actor linked to the local player."
-                : "Cutscene actor local-player link cleared.",
-            Properties = new Dictionary<string, object?>
-            {
-                ["objectIndex"] = objectIndex,
-                ["parentObjectIndex"] = isLocalPlayerCopy ? 0 : null,
-                ["source"] = source,
-            },
-        });
+        return hook.Original(character, freeFlags);
     }
 
     private void ClearLinks()
-        => Array.Clear(localPlayerCopies);
+        => copies.Clear();
 
     private void DisposeHooks()
     {
-        characterDestructorHook?.Dispose();
+        foreach (var hook in destructorHooks.Values)
+            hook.Dispose();
+        destructorHooks.Clear();
         copyCharacterHook?.Dispose();
-        characterDestructorHook = null;
         copyCharacterHook = null;
-        characterDestructorAddress = nint.Zero;
     }
 
     private static bool IsCutsceneIndex(ushort objectIndex)
@@ -195,4 +201,15 @@ public sealed unsafe class NativeCutsceneActorTracker : IDisposable
     private delegate ulong CopyCharacterDelegate(CharacterSetupContainer* target, Character* source, uint unknown);
 
     private delegate GameObject* CharacterDestructorDelegate(Character* character, byte freeFlags);
+}
+
+internal sealed class ActorCopyLinks
+{
+    private readonly Dictionary<nint, LogicalActorKey> sources = new();
+    public LogicalActorKey? Get(nint address)
+        => sources.TryGetValue(address, out var source) ? source : null;
+    public void Link(nint target, nint source, Func<nint, LogicalActorKey> resolve)
+        => sources[target] = Get(source) ?? resolve(source);
+    public void Remove(nint address) => sources.Remove(address);
+    public void Clear() => sources.Clear();
 }

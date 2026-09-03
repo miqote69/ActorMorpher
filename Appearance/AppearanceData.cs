@@ -16,6 +16,8 @@ public sealed record AppearanceData(
     ushort? FacewearModelId = null,
     bool? HatVisible = null)
 {
+    public ImmutableArray<ArmorAppearance> ColoredEquipment { get; init; } = [];
+
     public static AppearanceData Create(
         uint modelCharaId,
         ModelCategory category,

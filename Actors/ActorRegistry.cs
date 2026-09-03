@@ -17,7 +17,10 @@ public sealed unsafe class ActorRegistry : IDisposable
     private readonly IFramework framework;
     private readonly IHumanModelClassifier humanModelClassifier;
     private readonly IDiagnosticLog diagnostics;
-    private readonly Func<ActorRepresentationKey, AppearanceData?> getRetainedAppearance;
+    private readonly Func<ActorSnapshot, AppearanceData?> getRetainedAppearance;
+    private readonly ActorAppearancePersistence? persistence;
+    private readonly NativeActorContinuity continuity;
+    internal Func<nint, LogicalActorKey?>? ResolveCopyActor { get; set; }
     private readonly object syncRoot = new();
     private IReadOnlyList<ActorEntry> entries = Array.Empty<ActorEntry>();
     private long publicationVersion;
@@ -31,7 +34,9 @@ public sealed unsafe class ActorRegistry : IDisposable
         IFramework framework,
         IHumanModelClassifier humanModelClassifier,
         IDiagnosticLog? diagnostics = null,
-        Func<ActorRepresentationKey, AppearanceData?>? getRetainedAppearance = null)
+        Func<ActorSnapshot, AppearanceData?>? getRetainedAppearance = null,
+        ActorAppearancePersistence? persistence = null,
+        NativeActorContinuity? continuity = null)
     {
         this.objectTable = objectTable;
         this.clientState = clientState;
@@ -39,6 +44,8 @@ public sealed unsafe class ActorRegistry : IDisposable
         this.humanModelClassifier = humanModelClassifier;
         this.diagnostics = diagnostics ?? NullDiagnosticLog.Instance;
         this.getRetainedAppearance = getRetainedAppearance ?? (_ => null);
+        this.persistence = persistence;
+        this.continuity = continuity ?? new NativeActorContinuity();
         framework.Update += OnFrameworkUpdate;
     }
 
@@ -67,6 +74,37 @@ public sealed unsafe class ActorRegistry : IDisposable
     {
         lock (syncRoot)
             return GetPublishedAppearance(entries, representation);
+    }
+
+    internal Func<LogicalActorKey, OutfitData?>? GetColorOutfit { get; set; }
+    internal Func<ushort, byte, FacewearAppearance>? ResolveFacewear { get; set; }
+
+    internal AppearanceData? CaptureCurrentAppearance(ActorSnapshot expected)
+    {
+        var key = expected.RepresentationKey;
+        var obj = objectTable[key.ObjectIndex];
+        if (obj is null || obj.GameObjectId != key.GameObjectId || obj.EntityId != key.EntityId)
+            return null;
+        var fresh = CreateSnapshot(obj, clientState.TerritoryType, null, nint.Zero);
+        return DescribeRenderedAppearance(expected, fresh);
+    }
+
+    internal static AppearanceData? DescribeRenderedAppearance(ActorSnapshot expected, ActorSnapshot? fresh)
+    {
+        if (fresh is null || fresh.LogicalKey != expected.LogicalKey)
+            return null;
+        var raw = fresh.CurrentAppearance;
+        return raw is not null && expected.IsAppearanceManaged
+            && expected.CurrentAppearance is { } managed && managed.Category == raw.Category
+                // ModelCharaId and IsHatHidden belong to restored game backing, not
+                // rendered readback. Use the same descriptors as managed publication;
+                // equipment (including the head), weapons and other fields stay fresh.
+                ? raw with
+                {
+                    ModelCharaId = managed.ModelCharaId,
+                    HatVisible = raw.Category == ModelCategory.Human ? managed.HatVisible : raw.HatVisible,
+                }
+                : raw;
     }
 
     internal (long PublicationVersion, AppearanceData? Appearance) GetPublishedAppearanceState(
@@ -168,7 +206,7 @@ public sealed unsafe class ActorRegistry : IDisposable
                 clientState.TerritoryType),
             IsLocalPlayer = true,
         };
-        IReadOnlyDictionary<ActorRepresentationKey, AppearanceData> retainedAppearances;
+        IReadOnlyDictionary<(LogicalActorKey, ActorRepresentationKey), AppearanceData> retainedAppearances;
         lock (syncRoot)
         {
             retainedAppearances = entries
@@ -176,7 +214,7 @@ public sealed unsafe class ActorRegistry : IDisposable
                 .Where(static representation => representation.IsAppearanceManaged
                     && representation.CurrentAppearance is not null)
                 .ToDictionary(
-                    static representation => representation.RepresentationKey,
+                    static representation => (representation.LogicalKey, representation.RepresentationKey),
                     static representation => representation.CurrentAppearance!);
         }
         snapshot = RetainManagedAppearance(mapped, retainedAppearances, getRetainedAppearance);
@@ -226,7 +264,7 @@ public sealed unsafe class ActorRegistry : IDisposable
             .ToArray();
 
         IReadOnlyDictionary<ActorRepresentationKey, LogicalActorKey> mappings;
-        IReadOnlyDictionary<ActorRepresentationKey, AppearanceData> retainedAppearances;
+        IReadOnlyDictionary<(LogicalActorKey, ActorRepresentationKey), AppearanceData> retainedAppearances;
         IReadOnlyList<ActorEntry> previousEntries;
         lock (syncRoot)
         {
@@ -235,7 +273,7 @@ public sealed unsafe class ActorRegistry : IDisposable
             retainedAppearances = entries
                 .SelectMany(static entry => entry.Representations)
                 .Where(static snapshot => snapshot.IsAppearanceManaged && snapshot.CurrentAppearance is not null)
-                .ToDictionary(static snapshot => snapshot.RepresentationKey, static snapshot => snapshot.CurrentAppearance!);
+                .ToDictionary(static snapshot => (snapshot.LogicalKey, snapshot.RepresentationKey), static snapshot => snapshot.CurrentAppearance!);
         }
 
         TryWriteFirstAppliedSnapshotDiagnostics(previousEntries, snapshots);
@@ -313,6 +351,11 @@ public sealed unsafe class ActorRegistry : IDisposable
             obj.ObjectKind,
             territoryId);
 
+        var observedIdentity = continuity.Read((NativeGameObject*)native, territoryId);
+        var identity = observedIdentity.Key;
+        logical = logical with { Continuity = identity, Lifetime = observedIdentity.Lifetime };
+        var copyActor = ResolveCopyActor?.Invoke(obj.Address);
+        logical = copyActor ?? persistence?.Resolve(identity, logical) ?? logical;
         var snapshot = new ActorSnapshot(
             logical,
             representation,
@@ -326,7 +369,10 @@ public sealed unsafe class ActorRegistry : IDisposable
             native->CharacterData.ClassJob,
             native->CharacterData.Level,
             obj.GameObjectId == localPlayerId,
-            IsOwnMinion(obj.ObjectKind, obj.Address, localPlayerChildObjectAddress));
+            IsOwnMinion(obj.ObjectKind, obj.Address, localPlayerChildObjectAddress))
+        {
+            ContinuityKey = copyActor is null ? identity : null,
+        };
 
         var characterBase = ((NativeGameObject*)native)->GetCharacterBase();
         if (characterBase is null)
@@ -351,12 +397,12 @@ public sealed unsafe class ActorRegistry : IDisposable
         {
             var human = (Human*)characterBase;
             customize = human->Customize.Data.ToArray();
-            var outfit = NativeOutfitMemory.CaptureRendered(native, human);
+            var outfit = NativeOutfitMemory.CaptureRendered(native, human, ResolveFacewear);
             equipment = outfit.Equipment.Select(ToEquipmentModelValue).ToArray();
             mainhand = NativeAppearanceMemory.CaptureRenderedWeapon(native, DrawDataContainer.WeaponSlot.MainHand);
             offhand = NativeAppearanceMemory.CaptureRenderedWeapon(native, DrawDataContainer.WeaponSlot.OffHand);
             visorToggled = outfit.VisorToggled;
-            facewearModelId = outfit.Facewear.ModelId;
+            facewearModelId = outfit.Facewear.IsAvailable ? outfit.Facewear.ModelId : null;
             hatVisible = outfit.HatVisible;
         }
         else if (category == ModelCategory.Demihuman)
@@ -382,6 +428,12 @@ public sealed unsafe class ActorRegistry : IDisposable
             visorToggled,
             facewearModelId,
             hatVisible));
+        if (category == ModelCategory.Human && GetColorOutfit?.Invoke(snapshot.LogicalKey) is { } colors
+            && EquipmentDisplayFormatting.CreateHumanOutfit(currentAppearance) is { } renderedOutfit)
+            currentAppearance = currentAppearance with
+            {
+                ColoredEquipment = NativeOutfitMemory.WithColors(renderedOutfit, colors).Equipment,
+            };
         snapshot = snapshot with { CurrentAppearance = currentAppearance };
         if (category != ModelCategory.Human)
             return snapshot;
@@ -407,7 +459,6 @@ public sealed unsafe class ActorRegistry : IDisposable
                 && current.Mainhand is not null
                 && current.Offhand is not null
                 && current.VisorToggled is not null
-                && current.FacewearModelId is not null
                 && current.HatVisible is not null,
             ModelCategory.Demihuman => current.Completeness == AppearanceCompleteness.Complete
                 && current.Customize.IsEmpty
@@ -449,14 +500,14 @@ public sealed unsafe class ActorRegistry : IDisposable
 
     internal static ActorSnapshot RetainManagedAppearance(
         ActorSnapshot snapshot,
-        IReadOnlyDictionary<ActorRepresentationKey, AppearanceData> retainedAppearances,
-        Func<ActorRepresentationKey, AppearanceData?> getTransitionAppearance)
+        IReadOnlyDictionary<(LogicalActorKey, ActorRepresentationKey), AppearanceData> retainedAppearances,
+        Func<ActorSnapshot, AppearanceData?> getTransitionAppearance)
     {
-        if (retainedAppearances.TryGetValue(snapshot.RepresentationKey, out var retained))
+        if (retainedAppearances.TryGetValue((snapshot.LogicalKey, snapshot.RepresentationKey), out var retained))
             return MergeManagedAppearance(snapshot, retained);
 
         var current = snapshot.CurrentAppearance;
-        var transitioned = getTransitionAppearance(snapshot.RepresentationKey);
+        var transitioned = getTransitionAppearance(snapshot);
         return transitioned is null
             || current is null
             || !IsCompleteCurrentAppearance(current)

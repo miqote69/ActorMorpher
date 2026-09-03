@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 namespace ActorMorpher;
 
 public static class EquipmentDisplayFormatting
@@ -35,7 +37,6 @@ public static class EquipmentDisplayFormatting
             {
                 Category: ModelCategory.Human,
                 Equipment.Length: 10,
-                FacewearModelId: { } facewear,
                 HatVisible: { } hatVisible,
                 VisorToggled: { } visor,
             })
@@ -47,8 +48,15 @@ public static class EquipmentDisplayFormatting
                 checked((byte)((packed >> 16) & 0xFF)),
                 checked((byte)((packed >> 24) & 0xFF)),
                 checked((byte)((packed >> 32) & 0xFF)))),
-            new FacewearAppearance(true, facewear),
+            appearance.FacewearModelId is { } facewear
+                ? new FacewearAppearance(true, facewear) : FacewearAppearance.Unavailable,
             hatVisible,
-            visor);
+            visor) with
+        {
+            Equipment = appearance.ColoredEquipment.Length == 10
+                ? appearance.ColoredEquipment
+                : appearance.Equipment.Select(static packed => new ArmorAppearance(
+                    (ushort)packed, (byte)(packed >> 16), (byte)(packed >> 24), (byte)(packed >> 32))).ToImmutableArray(),
+        };
     }
 }

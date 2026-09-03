@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
@@ -10,6 +11,9 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
     private readonly IObjectTable objectTable;
     private readonly IHumanModelClassifier humanModelClassifier;
     private readonly IDiagnosticLog diagnostics;
+    internal Func<ushort, byte, FacewearAppearance>? ResolveFacewear { get; set; }
+    internal Func<LogicalActorKey, OutfitData?>? GetColorOutfit { get; set; }
+    internal Action<LogicalActorKey, OutfitData>? SetColorOutfit { get; set; }
 
     public NativeOutfitMemory(
         IObjectTable objectTable,
@@ -55,18 +59,30 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
         }
 
         var human = (Human*)characterBase;
-        outfit = CaptureRendered(character, human);
+        outfit = CaptureRendered(character, human, ResolveFacewear);
+        if (GetColorOutfit?.Invoke(actor.LogicalKey) is { } colors)
+            outfit = WithColors(outfit, colors);
         return true;
     }
 
-    internal static OutfitData CaptureRendered(Character* character, Human* human)
+    internal static OutfitData WithColors(OutfitData current, OutfitData colors)
+        => current with { Equipment = current.Equipment.Select((armor, slot) =>
+            slot < colors.Equipment.Length
+                && armor.Set == colors.Equipment[slot].Set && armor.Variant == colors.Equipment[slot].Variant
+                ? armor with { Color1 = colors.Equipment[slot].Color1, Color2 = colors.Equipment[slot].Color2 }
+                : armor).ToImmutableArray() };
+
+    internal static OutfitData CaptureRendered(Character* character, Human* human,
+        Func<ushort, byte, FacewearAppearance>? resolveFacewear = null)
     {
         var equipment = human->EquipmentModels
             .ToArray()
             .Select(static item => new ArmorAppearance(item.Id, item.Variant, item.Stain0, item.Stain1));
         return OutfitData.Create(
             equipment,
-            new FacewearAppearance(true, checked((ushort)human->Glasses0.Id)),
+            human->Glasses0.Id == 0 ? new FacewearAppearance(true, 0)
+                : resolveFacewear?.Invoke(human->Glasses0.Id, human->Glasses0.Variant)
+                    ?? FacewearAppearance.Unavailable,
             !character->DrawData.IsHatHidden,
             ((CharacterBase*)human)->VisorToggled);
     }
@@ -82,22 +98,13 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
             return false;
         var human = (Human*)characterBase;
 
-        for (var index = 0; index < outfit.Equipment.Length; ++index)
-        {
-            var source = outfit.Equipment[index];
-            var current = character->DrawData.EquipmentModelIds[index];
-            var model = new EquipmentModelId
-            {
-                Id = source.Set,
-                Variant = source.Variant,
-                Stain0 = source.Stain1,
-                Stain1 = source.Stain2,
-            };
-            if (current.Value != model.Value)
-                character->DrawData.LoadEquipment((DrawDataContainer.EquipmentSlot)index, &model, true);
-            if (human->EquipmentModels[index].Value != model.Value)
-                characterBase->SetEquipmentSlotModel((uint)index, &model);
-        }
+        var previousColors = GetColorOutfit?.Invoke(actor.LogicalKey);
+        SetColorOutfit?.Invoke(actor.LogicalKey, outfit);
+        ApplyRenderedEquipment(human, outfit);
+        for (var slot = 0; slot < outfit.Equipment.Length; ++slot)
+            NativeEquipmentColors.ApplySlot(characterBase, slot, outfit.Equipment[slot],
+                previousColors is not null && slot < previousColors.Equipment.Length
+                && (previousColors.Equipment[slot].Color1 is not null || previousColors.Equipment[slot].Color2 is not null));
         if (outfit.Facewear.IsAvailable && character->DrawData.GlassesIds[0] != outfit.Facewear.ModelId)
             character->DrawData.SetGlasses(0, outfit.Facewear.ModelId);
         if (character->DrawData.IsHatHidden == outfit.HatVisible)
@@ -105,6 +112,33 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
         if (character->DrawData.IsVisorToggled != outfit.VisorToggled)
             character->DrawData.SetVisor(outfit.VisorToggled);
         return true;
+    }
+
+    internal static void ApplyRenderedEquipment(Human* human, OutfitData outfit)
+    {
+        for (var index = 0; index < outfit.Equipment.Length; ++index)
+        {
+            var source = outfit.Equipment[index];
+            var model = new EquipmentModelId
+            {
+                Id = source.Set,
+                Variant = source.Variant,
+                Stain0 = source.Stain1,
+                Stain1 = source.Stain2,
+            };
+            if (human->EquipmentModels[index].Value != model.Value)
+            {
+                var requested = model.Value;
+                ((CharacterBase*)human)->SetEquipmentSlotModel((uint)index, &model);
+                if (index == 0)
+                {
+                    // A nested setter can reinterpret an empty Head as a hat-visibility
+                    // update. Keep this operation's head in the existing pending slot.
+                    ((EquipmentModelId*)human->ChangedEquipData)->Value = requested;
+                    human->SlotNeedsUpdateBitfield |= 1u;
+                }
+            }
+        }
     }
 
     private bool TryResolveHuman(ActorSnapshot expected, out Character* character)

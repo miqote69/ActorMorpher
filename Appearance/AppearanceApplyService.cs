@@ -53,6 +53,13 @@ public sealed class AppearanceApplyService : IDisposable
         => TryApply(key, desired, out _, out message);
 
     public bool TryApply(LogicalActorKey key, AppearanceData desired, out Guid operationId, out string message)
+        => TryApply(key, null, desired, out operationId, out message);
+
+    public bool TryApply(ActorSnapshot target, AppearanceData desired, out Guid operationId, out string message)
+        => TryApply(target.LogicalKey, target.RepresentationKey, desired, out operationId, out message);
+
+    private bool TryApply(LogicalActorKey key, ActorRepresentationKey? targetRepresentation,
+        AppearanceData desired, out Guid operationId, out string message)
     {
         operationId = Guid.Empty;
         if (disposed)
@@ -70,7 +77,10 @@ public sealed class AppearanceApplyService : IDisposable
             message = "The player is not logged in.";
             return false;
         }
-        if (!resolver.TryResolve(key, out var actor))
+        ActorSnapshot actor;
+        if (!(targetRepresentation is { } target
+                ? resolver.TryResolve(key, target, out actor)
+                : resolver.TryResolve(key, out actor)))
         {
             message = "The actor is no longer available.";
             return false;

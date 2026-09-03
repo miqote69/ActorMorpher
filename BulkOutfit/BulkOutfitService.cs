@@ -17,6 +17,7 @@ public sealed class BulkOutfitService : IDisposable
     private BulkOperation? operation;
     private OutfitData? operationOutfit;
     private bool operationUsesEmptySource;
+    private Func<LogicalActorKey, bool>? operationActorRestore;
     private uint lastTerritory;
     private bool disposed;
 
@@ -47,7 +48,9 @@ public sealed class BulkOutfitService : IDisposable
         this.diagnostics = diagnostics;
     }
 
-    public OutfitData? SourceOutfit { get; private set; }
+    public OutfitData? SourceOutfit { get; private set; } = OutfitData.Create(
+        new ArmorAppearance[Enum.GetValues<OutfitSlot>().Length],
+        new FacewearAppearance(true, 0), true, false);
     public BulkOperation? CurrentOperation => operation;
     public OutfitOverrideStore Store => store;
     public string LastStatus { get; private set; } = string.Empty;
@@ -57,7 +60,7 @@ public sealed class BulkOutfitService : IDisposable
     {
         if (!disposed
             && resolver.TryResolve(actorKey, out var actor)
-            && memory.TryCapture(actor, out outfit))
+            && memory.TryCaptureRendered(actor, out outfit))
             return true;
         outfit = null!;
         return false;
@@ -104,6 +107,46 @@ public sealed class BulkOutfitService : IDisposable
         return true;
     }
 
+    public void SetSourceColor(OutfitSlot slot, int channel, DyeColor? color)
+    {
+        if (SourceOutfit is null)
+            return;
+        var armor = SourceOutfit.Equipment[(int)slot];
+        armor = channel == 0 ? armor with { Color1 = color } : armor with { Color2 = color };
+        SourceOutfit = SourceOutfit with { Equipment = SourceOutfit.Equipment.SetItem((int)slot, armor) };
+    }
+
+    public void ClearSourceDye(OutfitSlot slot, int channel)
+    {
+        if (SourceOutfit is null)
+            return;
+        var armor = SourceOutfit.Equipment[(int)slot];
+        armor = channel == 0 ? armor with { Stain1 = 0, Color1 = null }
+            : armor with { Stain2 = 0, Color2 = null };
+        SourceOutfit = SourceOutfit with { Equipment = SourceOutfit.Equipment.SetItem((int)slot, armor) };
+    }
+
+    public bool SelectEquipment(EquipmentChoiceKey choice, LogicalActorKey? actor, out string message)
+    {
+        if (actor is { } key)
+        {
+            if (!TryCaptureOutfit(key, out var current))
+            {
+                message = "Actor outfit is unavailable.";
+                return false;
+            }
+            return StartPersistentApply(key, EquipmentChoice.Replace(current, choice), out message);
+        }
+        if (SourceOutfit is null)
+        {
+            message = "Refresh the source outfit before editing it.";
+            return false;
+        }
+        SourceOutfit = EquipmentChoice.Replace(SourceOutfit, choice);
+        message = "Source outfit updated.";
+        return true;
+    }
+
     public bool IsOutfitModified(LogicalActorKey actorKey)
     {
         if (disposed
@@ -145,6 +188,26 @@ public sealed class BulkOutfitService : IDisposable
 
     public bool StartRestore(LogicalActorKey actor, out string message)
         => Start(BulkOperationType.Restore, [actor], null, out message);
+
+    internal bool StartActorRestore(IReadOnlyList<LogicalActorKey> targets,
+        Func<LogicalActorKey, bool> restore, out string message)
+    {
+        if (!Start(BulkOperationType.Restore, targets, null, out message))
+            return false;
+        operationActorRestore = restore;
+        return true;
+    }
+
+    internal bool RestoreOriginalOutfitNow(LogicalActorKey key)
+    {
+        if (!resolver.TryResolve(key, out var actor) || !memory.TryCaptureRendered(actor, out _)
+            || !store.TryGet(key, out var state))
+            return false;
+        if (!memory.TryApply(actor, state.Original))
+            return false;
+        store.CompleteRestore(key);
+        return true;
+    }
 
     public bool StartPersistentApply(LogicalActorKey actor, OutfitData outfit, out string message)
         => Start(BulkOperationType.ApplyOutfit, [actor], outfit, out message);
@@ -192,6 +255,7 @@ public sealed class BulkOutfitService : IDisposable
         operation = null;
         operationOutfit = null;
         operationUsesEmptySource = false;
+        operationActorRestore = null;
         pendingReapply.Clear();
         SourceOutfit = null;
         store.Clear();
@@ -256,7 +320,6 @@ public sealed class BulkOutfitService : IDisposable
             if (operation is not null)
                 FinishOperation(true);
             pendingReapply.Clear();
-            store.Clear();
             lastTerritory = context.TerritoryId;
             return;
         }
@@ -271,6 +334,33 @@ public sealed class BulkOutfitService : IDisposable
 
         var activeOperation = operation;
         var key = activeOperation.Targets[activeOperation.CurrentIndex];
+        if (operationActorRestore is { } restoreActor)
+        {
+            // The explicit batch uses the same Actor Restore operation as the list.
+            // Model-only Actors must not pass through the Human outfit capture path.
+            bool succeeded;
+            try
+            {
+                succeeded = restoreActor(key);
+            }
+            catch (Exception exception)
+            {
+                diagnostics.Write(new DiagnosticLogEntry
+                {
+                    Level = DiagnosticLogLevel.Error,
+                    EventId = DiagnosticEventIds.BulkActorFailed,
+                    Category = DiagnosticCategory.BulkOutfit,
+                    Message = "Actor restore threw an exception.",
+                    Exception = DiagnosticExceptionInfo.FromException(exception),
+                });
+                succeeded = false;
+            }
+            if (succeeded)
+                activeOperation.RecordSuccess();
+            else
+                activeOperation.RecordFailure();
+            return;
+        }
         store.TryGet(key, out var storeBeforeOperation);
         try
         {
@@ -405,7 +495,7 @@ public sealed class BulkOutfitService : IDisposable
         if (operation is null)
             return;
         var completedOperation = operation;
-        if (cancelled)
+        if (cancelled && operationActorRestore is null)
         {
             for (var index = completedOperation.CurrentIndex; index < completedOperation.Targets.Count; ++index)
                 NotifyActorOperationCompleted(
@@ -432,6 +522,7 @@ public sealed class BulkOutfitService : IDisposable
         operation = null;
         operationOutfit = null;
         operationUsesEmptySource = false;
+        operationActorRestore = null;
         if (cancelled)
             pendingReapply.Clear();
         else

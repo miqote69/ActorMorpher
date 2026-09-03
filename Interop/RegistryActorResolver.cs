@@ -2,6 +2,30 @@ namespace ActorMorpher.Interop;
 
 public sealed class RegistryActorResolver(ActorRegistry registry, IClientContext? context = null) : IActorResolver
 {
+    public bool TryResolve(LogicalActorKey key, ActorRepresentationKey representation, out ActorSnapshot snapshot)
+    {
+        if (registry.TryGet(key, out var actor))
+        {
+            snapshot = actor.Representations.FirstOrDefault(item => item.RepresentationKey == representation)!;
+            if (snapshot is not null)
+                return true;
+            if (representation.IsGPoseRepresentation && actor.IsLocalPlayer
+                && registry.TryGetGPoseLocalPlayer(key, out snapshot)
+                && snapshot.RepresentationKey == representation)
+                return true;
+        }
+        snapshot = null!;
+        return false;
+    }
+
+    internal static ActorSnapshot? FindTarget(IEnumerable<ActorEntry> actors,
+        ushort objectIndex, ulong gameObjectId, uint entityId, uint territoryId)
+        => actors.SelectMany(static actor => actor.Representations)
+            .FirstOrDefault(snapshot => snapshot.RepresentationKey.ObjectIndex == objectIndex
+                && snapshot.RepresentationKey.GameObjectId == gameObjectId
+                && snapshot.RepresentationKey.EntityId == entityId
+                && snapshot.RepresentationKey.TerritoryId == territoryId);
+
     public bool TryResolve(LogicalActorKey key, out ActorSnapshot snapshot)
     {
         if (registry.TryGet(key, out var actor))

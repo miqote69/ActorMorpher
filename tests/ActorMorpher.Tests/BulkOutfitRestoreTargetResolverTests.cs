@@ -9,17 +9,19 @@ namespace ActorMorpher.Tests;
 public sealed class BulkOutfitRestoreTargetResolverTests
 {
     [Fact]
-    public void PinnedActorsAreExcludedFromBulkRestore()
+    public void OutfitModelAndPinnedActorsAreIncludedWithoutDuplicates()
     {
         var first = Key(1);
         var pinned = Key(2);
         var third = Key(3);
+        var untouched = Key(4);
 
         var targets = BulkOutfitRestoreTargetResolver.Resolve(
-            [first, pinned, third, first],
-            actor => actor == pinned);
+            [first, first],
+            [first, pinned, third, untouched],
+            actor => actor == pinned || actor == third);
 
-        Assert.Equal([first, third], targets.ToArray());
+        Assert.Equal([first, pinned, third], targets.ToArray());
     }
 
     private static LogicalActorKey Key(ushort index)

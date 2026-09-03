@@ -1,8 +1,26 @@
 # Appearance Application Specification
 
+## Apply to Target (User decision 2026-09-03)
+
+Model Search's former Apply to Selected Actor action now applies to the current FF14 target at click time (GPoseTarget during GPose), with the selected model payload unchanged. Actor-list selection is unrelated. The operation binds the target's canonical Actor and exact current Representation; later target selection does not redirect it. No target produces feedback without choosing another recipient. Apply to Yourself remains unchanged.
+
+## Bulk Actor Restore (User decision 2026-09-03)
+
+The Bulk Outfit tab's Restore button invokes the same explicit Actor restoration as the Actor list for every stored outfit override and currently model-managed or pinned Actor. Pins do not exclude targets. Original outfit restoration, when present, precedes clearing retained appearance and pin plus one game-original redraw. The button is always enabled; existing operation-busy and no-target feedback remains. This supersedes earlier outfit-only/pin-excluding bulk Restore descriptions.
+
+## Full appearance pinning (User decision 2026-09-03)
+
+Pin capture and comparison use the same existing managed model identity and Human hat-visibility descriptor as the Actor display. Game-owned ModelCharaId and IsHatHidden are restored backing, not rendered readback. Customize, equipment (including Head=0), weapons, scale, facewear and visor remain fresh values. A restored backing hat flag alone must not cause periodic full-model regeneration.
+
+Full pins bind to the existing Actor continuity identity. Only ContentId (Source 1) and layout/territory (Source 3) identify a saved Actor across plugin sessions; owner-bearing GameObjectId (Source 2) and EntityId (Source 4) require the saved session as well. Provisional Source 5/null additionally requires the exact logical key/lifetime. A fresh capture belonging to a different canonical Actor is unavailable rather than saved under the old Actor. These are target-identity boundaries, not payload/completeness/readback Apply gates.
+
+A new pin stores the currently displayed model and equipment together, including Customize, scale, weapons, dyes and visibility fields present in that appearance. Individual and Actor-list bulk pin use the same capture operation. Bulk pin covers all modified Actors in the current area regardless of list filtering. All-clear removes every saved pin, including absent Actors, without restoring or changing their current appearance. Explicit Restore retains its existing meaning and removes that Actor's pin. Existing outfit-only records remain outfit-only until the User pins a current full appearance; no model is inferred for them. Reuse the existing pin enforcement scan and normal appearance Apply path for full pins. A large bulk selection must not silently evict pins.
+
+2026-09-03 head callback replan: the User-authorized single removable generation callback may update only the generated Human's pending head input and its existing update bit after the original Human setup finishes, while CharacterBase.Create is still running. The previous setup-entry argument substitution failed with Glamourer ON and was removed; Glamourer OFF works. This revision targets the nested equipment consumer without another callback, post-Create call, second Create, retry, actor-backing change or Glamourer-state change. New safety measures: none.
+
 ## Authority
 
-This document is the sole normative specification for Model Search Apply, local-player representation transitions, Model Search Restore, and current-appearance display in the Actor list and Actor detail. `TEST_PLAN.md`, `TEST_SPECIFICATION.md`, `IMPLEMENTATION_NOTES.md`, `MANUAL_TEST_CHECKLIST.md`, `PENUMBRA_COMPATIBILITY.md`, `TESTING.md`, and `DIAGNOSTICS.md` are subordinate to it. Historical incident descriptions are evidence only and cannot redefine current behavior.
+This document records the User-approved Model Search Apply, representation transitions, Restore, and current-appearance display behavior. The User's latest explicit request takes precedence. The 2026-09-03 all-Actor continuity section below supersedes the previous local-only latest-publication/arm contract, including contradictory historical descriptions of retained B/C and same-key recreation. `TEST_PLAN.md` and `TEST_SPECIFICATION.md` define the corresponding verification.
 
 ## Terms
 
@@ -72,7 +90,17 @@ Apply performs one bounded transaction against the selected target.
 
 On terminal Apply success, the complete selected-NPC payload becomes C for that exact target Representation and is published through the existing `ActorRegistry` / `ActorSnapshot` state. It is no longer a selectable source B or an Apply request: it is the current applied value. The next normal Framework refresh must not replace NPC-owned `ModelCharaId`, Facewear, hat visibility, or Scale with the target Actor's restored backing A. No target-Actor value supplements a missing NPC field. A failed, rejected, or merely queued Apply does not publish C. Later same-Representation rendered changes and successful Actor Morpher outfit changes update that same published C and cannot create a second authority, retry, rollback, or redraw.
 
-## Latest-state representation transfer
+## All-Actor continuity — User request 2026-09-03
+
+All modified Actors retain successful model and Bulk Outfit changes through field/teleport and cutscene recreation until the User explicitly restores them. The retained model value is the last successful requested payload, updated only in outfit-owned fields by subsequent successful Bulk operations. Rendered snapshots remain observations for UI/diagnostics; missing, partial or different readback does not replace or disarm that retained value. A subsequent successful Model Search Apply replaces the retained model with the newly selected payload.
+
+The existing EnableDraw/Create path consumes the retained value once per natural creation, including recreation with a previously used Representation key. The plugin does not initiate another redraw, poll for equality, retry or perform post-Create correction. Explicit Apply's active transaction takes precedence so that it does not receive another persistent injection. Outfit-only continuity preserves the game's model ID, Customize, weapons and scale and supplies only the outfit to the same Create. Bulk Original is retained across territory changes and subsequent operations.
+
+The same Actor is linked by native individual identity: player ContentId (network EntityId when no ContentId), owner-bearing companion GameObjectId plus companion BaseId, NPC layout identity scoped to its territory, or individual EntityId. Objects without these identifiers retain their exact territory/slot/game identity, not a Name/BaseId match across different slots. Cutscene/GPose copies inherit the logical source through the existing CopyFromCharacter relation, including copy chains. A surviving copy keeps that source when the field actor is destroyed. Identity availability and actual creation timing for each kind remain runtime acceptance items; an unidentified different object must not receive an unrelated Actor's changes.
+
+Actor Restore clears that Actor's model/outfit carry before the existing payload-free game redraw. It does not disable the shared hooks or clear other modified Actors. Bulk-only Restore removes the Bulk override; if a model is retained, its equipment is updated to the restored Original. No state is discarded merely because an Actor is temporarily absent or a territory changes. Disk persistence across plugin unload/restart is outside this transition repair. 新規安全施策: なし。
+
+## Historical latest-state transfer contract (superseded by 2026-09-03)
 
 The local player's C must survive field, cutscene, and GPose representation replacement. This is a transition bridge, not source-NPC persistence.
 
@@ -91,10 +119,10 @@ The local player's C must survive field, cutscene, and GPose representation repl
 
 ## Restore
 
-The Actor-list Restore control is always enabled for a selectable actor. For the local player it performs this order:
+The Actor-list Restore control is always enabled for a selectable actor. For every modified Actor it performs this order:
 
 1. If a Bulk Outfit override exists for that actor, restore that Bulk Outfit `Original` through the existing single-actor Bulk path.
-2. If that Bulk `Original` restore fails, retain transition carry, hook, pin, and local outfit carry and do not start regeneration. After it succeeds, or when no Bulk override exists, clear Model Search transition carry, the transition hook, the actor pin, and local outfit carry before regeneration.
+2. If that Bulk `Original` restore fails, retain the Actor's carry and pin and do not start regeneration. After it succeeds, or when no Bulk override exists, clear that Actor's model/outfit carry and pin before regeneration. Shared transition hooks remain available for other Actors.
 3. With no Actor Morpher payload active, invoke one `DisableDraw -> EnableDraw` cycle. Because Apply restored the temporary B backing in `finally`, this asks the game to generate the actor once from its game-owned backing, equivalent in outcome to the regeneration observed when leaving the inn. If this redraw fails, report failure without restoring any cleared Actor Morpher carry.
 
 Restore does not read a saved pre-Apply A, B, or an earlier C. It must clear all Actor Morpher carry before the payload-free redraw, and it must restore any Bulk `Original` first so the game-owned outfit is also authoritative. A redraw while C is still active, before Bulk `Original` is restored, or while a pin/local carry can automatically reapply is not a valid Restore. A saved snapshot or a new speculative native API must not be substituted for this existing path.
@@ -109,6 +137,8 @@ Model Search Apply and Bulk Outfit state are independent. Apply success does not
 
 The User's 2026-09-03 mixed Model Search/Bulk defect report requires preserving the original outfit rather than learning an applied NPC outfit as the restore target. When creating the first Bulk override on an `IsAppearanceManaged` Representation, capture `Original` from the existing game-backing outfit reader before the Bulk write. The existing rendered reader still supplies Refresh Source and the current values used to construct a Bulk unequip operation. If a Bulk override already exists, retain its `Original` across model switches and subsequent Bulk changes. For an unmanaged Representation, retain the existing rendered pre-Bulk `Original` behavior. If the required first original cannot be captured, use the existing capture-unavailable termination before writing; do not substitute NPC C, guess, or add recovery. Explicit Restore consumes and clears that same Bulk Original through the existing path. No Model Search snapshot, additional persistence, or automatic restore is introduced.
 
+The User's later 2026-09-03 approval for the Minion Mirage interaction changes the Bulk armor write destination: all ten equipment slots are applied to the current displayed Human without writing `Character.DrawData.EquipmentModelIds`. Explicit Bulk Restore uses the same destination with the retained Original. Facewear, hat and visor retain their existing metadata behavior in this armor-only repair. No new hooks, automatic reapply, redraw, or readback-derived gate are added.
+
 - Apply and Restore buttons are not disabled by operation history or the absence of a saved snapshot.
 - Queue acceptance is not displayed as Apply success. Success is shown only after the terminal native operation succeeds.
 - Visual mismatch is a runtime/User-acceptance failure, but it does not authorize automatic retry, rollback, or another appearance write.
@@ -116,7 +146,7 @@ The User's 2026-09-03 mixed Model Search/Bulk defect report requires preserving 
 
 ## Explicitly superseded behavior
 
-The following are not current behavior: permanent B writes to game backing, continuous source-row enforcement, same-Representation reapply, timer reapply, transition lookup of B, pre-Apply appearance snapshots, mismatch-driven Verify/timeout, automatic rollback, automatic visibility recovery, second redraw, and cancelling the first pending Apply to run a second.
+The following are not current behavior: permanent B writes to game backing, continuous source-row enforcement, timer-driven transition reapply, transition source-row lookup, pre-Apply model snapshots, mismatch-driven Verify/timeout, automatic rollback, automatic visibility recovery, second redraw, and cancelling the first pending Apply to run a second. Natural recreation with the same Representation key consumes the retained changes under the 2026-09-03 requirement.
 
 ## Document boundary
 

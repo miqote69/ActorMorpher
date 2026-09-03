@@ -8,6 +8,20 @@ namespace ActorMorpher.Tests;
 
 public sealed class EquipmentDisplayFormattingTests
 {
+    [Fact]
+    public void UnknownFacewearDoesNotHideTheOtherEquipment()
+    {
+        var appearance = AppearanceData.Create(0, ModelCategory.Human, 0, AppearanceCompleteness.Complete,
+            new byte[26], Enumerable.Repeat(51UL | (2UL << 16), 10),
+            modelScale: 1, mainhand: 0, offhand: 0, visorToggled: false, facewearModelId: null, hatVisible: true);
+        var outfit = Assert.IsType<OutfitData>(EquipmentDisplayFormatting.CreateHumanOutfit(appearance));
+        Assert.Equal(10, outfit.Equipment.Length);
+        Assert.All(outfit.Equipment, armor => Assert.Equal((ushort)51, armor.Set));
+        Assert.Equal(FacewearAppearance.Unavailable, outfit.Facewear);
+        Assert.Null(appearance.FacewearModelId);
+        Assert.True(ActorRegistry.IsCompleteCurrentAppearance(appearance));
+    }
+
     [Theory]
     [InlineData(OutfitSlot.Head, 21, "e0021")]
     [InlineData(OutfitSlot.Feet, 321, "e0321")]

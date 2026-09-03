@@ -34,6 +34,7 @@ public sealed class Configuration : IPluginConfiguration
     public int BulkExcludeAge { get; set; }
     public string BulkExcludeNameFilter { get; set; } = string.Empty;
     public List<PinnedOutfitConfiguration> PinnedOutfits { get; set; } = [];
+    public HashSet<EquipmentChoiceKey> FavoriteEquipment { get; set; } = [];
 
     public static Configuration Create(bool isDev)
         => new()

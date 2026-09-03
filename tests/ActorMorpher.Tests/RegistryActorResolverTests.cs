@@ -8,6 +8,21 @@ namespace ActorMorpher.Tests;
 public sealed class RegistryActorResolverTests
 {
     [Fact]
+    public void TargetLookupSelectsExactRepresentationInsteadOfFirstActorOrFirstCopy()
+    {
+        var normal = Snapshot(1, false);
+        var target = Snapshot(202, true);
+        var actor = Entry(normal, target);
+        var selected = RegistryActorResolver.FindTarget([actor], 202, 302, 212, 0);
+        Assert.Same(target, selected);
+        Assert.Null(RegistryActorResolver.FindTarget([actor], 201, 302, 212, 0));
+        Assert.Null(RegistryActorResolver.FindTarget([actor], 202, 999, 212, 0));
+        Assert.Null(RegistryActorResolver.FindTarget([actor], 202, 302, 999, 0));
+        Assert.Null(RegistryActorResolver.FindTarget([actor], 202, 302, 212, 30));
+        Assert.Null(RegistryActorResolver.FindTarget([], 202, 302, 212, 0));
+    }
+
+    [Fact]
     public void GPoseDoesNotFallBackToNormalRepresentation()
     {
         var normal = Snapshot(1, false);

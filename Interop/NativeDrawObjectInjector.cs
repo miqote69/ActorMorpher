@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using Dalamud.Hooking;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
@@ -17,16 +16,17 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
 
     private readonly IGameInteropProvider interop;
     private readonly Hook<CreateCharacterBaseDelegate> createHook;
+    private readonly HumanHeadInputOverride headInputOverride;
     private readonly OneShotAppearanceConsumerTransaction consumerTransaction;
     private readonly NativeCutsceneActorTracker cutsceneActors;
     private readonly IObjectTable objectTable;
     private readonly IClientState clientState;
     private readonly IDiagnosticLog diagnostics;
-    private readonly LocalPlayerAppearancePersistence transitionState;
-    private readonly Func<ActorRepresentationKey, (long PublicationVersion, AppearanceData? Appearance)> getPublishedAppearance;
-    private Hook<EnableDrawDelegate>? localEnableDrawHook;
-    private nint localEnableDrawAddress;
+    private readonly ActorAppearancePersistence transitionState;
+    private readonly NativeActorContinuity continuity;
+    private readonly Dictionary<nint, Hook<EnableDrawDelegate>> enableDrawHooks = new();
     private bool disposed;
+    internal Func<ushort, byte, FacewearAppearance>? ResolveFacewear { get; set; }
 
     [ThreadStatic]
     private static InjectionContext? active;
@@ -36,21 +36,33 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
         IObjectTable objectTable,
         IClientState clientState,
         IDiagnosticLog diagnostics,
-        LocalPlayerAppearancePersistence transitionState,
-        Func<ActorRepresentationKey, (long PublicationVersion, AppearanceData? Appearance)> getPublishedAppearance)
+        ActorAppearancePersistence transitionState,
+        NativeActorContinuity continuity)
     {
         this.interop = interop;
         this.objectTable = objectTable;
         this.clientState = clientState;
         this.diagnostics = diagnostics;
         this.transitionState = transitionState;
-        this.getPublishedAppearance = getPublishedAppearance;
-        cutsceneActors = new NativeCutsceneActorTracker(interop, diagnostics);
-        consumerTransaction = new OneShotAppearanceConsumerTransaction(interop);
-        createHook = interop.HookFromAddress<CreateCharacterBaseDelegate>(
-            (nint)CharacterBase.MemberFunctionPointers.Create,
-            CreateCharacterBaseDetour);
-        createHook.Enable();
+        this.continuity = continuity;
+        try
+        {
+            cutsceneActors = new NativeCutsceneActorTracker(interop, diagnostics, CaptureCopySource, continuity.Forget);
+            consumerTransaction = new OneShotAppearanceConsumerTransaction(interop);
+            headInputOverride = new HumanHeadInputOverride(interop);
+            createHook = interop.HookFromAddress<CreateCharacterBaseDelegate>(
+                (nint)CharacterBase.MemberFunctionPointers.Create,
+                CreateCharacterBaseDetour);
+            createHook.Enable();
+        }
+        catch
+        {
+            headInputOverride?.Dispose();
+            createHook?.Dispose();
+            consumerTransaction?.Dispose();
+            cutsceneActors?.Dispose();
+            throw;
+        }
     }
 
     public bool Invoke(
@@ -69,25 +81,27 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
         return InvokeWithTemporaryBacking(context, gameObject, static target => target->EnableDraw());
     }
 
-    public void EnablePersistentLocalAppearance()
+    public void EnablePersistentAppearance(ActorSnapshot actor)
     {
         if (disposed)
             return;
 
-        var localPlayer = objectTable.LocalPlayer;
-        if (localPlayer is null || localPlayer.Address == nint.Zero)
+        var current = objectTable[actor.RepresentationKey.ObjectIndex];
+        if (current is null || current.Address == nint.Zero)
             return;
 
-        EnsureLocalEnableDrawHook((GameObject*)localPlayer.Address);
-        cutsceneActors.Enable((Character*)localPlayer.Address);
+        EnsureEnableDrawHook((GameObject*)current.Address);
+        if (objectTable.LocalPlayer is { Address: not 0 } local)
+            EnsureEnableDrawHook((GameObject*)local.Address);
+        cutsceneActors.Enable((Character*)current.Address);
     }
 
-    public void ClearPersistentLocalAppearance()
+    private void ClearPersistentHooks()
     {
         cutsceneActors.Disable();
-        localEnableDrawHook?.Dispose();
-        localEnableDrawHook = null;
-        localEnableDrawAddress = nint.Zero;
+        foreach (var hook in enableDrawHooks.Values)
+            hook.Dispose();
+        enableDrawHooks.Clear();
     }
 
     public void Dispose()
@@ -96,13 +110,14 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
             return;
         disposed = true;
         active = null;
-        ClearPersistentLocalAppearance();
+        ClearPersistentHooks();
         createHook.Dispose();
+        headInputOverride.Dispose();
         consumerTransaction.Dispose();
         cutsceneActors.Dispose();
     }
 
-    private void EnsureLocalEnableDrawHook(GameObject* gameObject)
+    private void EnsureEnableDrawHook(GameObject* gameObject)
     {
         var virtualTable = *(nint**)gameObject;
         if (virtualTable is null)
@@ -112,28 +127,25 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
         var address = virtualTable[enableDrawVtableIndex];
         if (address == nint.Zero)
             throw new InvalidOperationException("The local player's EnableDraw function is unavailable.");
-        if (localEnableDrawHook is not null && localEnableDrawAddress == address)
+        if (enableDrawHooks.ContainsKey(address))
             return;
 
-        localEnableDrawHook?.Dispose();
-        localEnableDrawHook = interop.HookFromAddress<EnableDrawDelegate>(address, LocalEnableDrawDetour);
-        localEnableDrawAddress = address;
-        localEnableDrawHook.Enable();
+        Hook<EnableDrawDelegate>? hook = null;
+        hook = interop.HookFromAddress<EnableDrawDelegate>(address,
+            obj => PersistentEnableDrawDetour(obj, hook!));
+        enableDrawHooks.Add(address, hook);
+        hook.Enable();
     }
 
-    private void LocalEnableDrawDetour(GameObject* gameObject)
+    private void PersistentEnableDrawDetour(GameObject* gameObject, Hook<EnableDrawDelegate> drawHook)
     {
-        var drawHook = localEnableDrawHook;
-        if (drawHook is null)
-            return;
-
         if (disposed || gameObject is null)
         {
             drawHook.Original(gameObject);
             return;
         }
 
-        if (!TryDescribeLocalRepresentation(
+        if (!TryDescribeRepresentation(
                 gameObject,
                 out var representation,
                 out var representationKind,
@@ -149,12 +161,10 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
             return;
         }
 
-        if (!TryPreparePersistentTransfer(
-                transitionState,
-                representation,
-                getPublishedAppearance,
-                out var actor,
-                out var appearance))
+        var actor = ResolveActor((nint)gameObject);
+        var appearance = transitionState.GetCreateAppearance(actor,
+            (uint)((Character*)gameObject)->ModelContainer.ModelCharaId, out var outfitOnly);
+        if (appearance is null)
         {
             drawHook.Original(gameObject);
             return;
@@ -164,6 +174,7 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
         {
             RuntimeObjectIndex = gameObject->ObjectIndex,
             IsCutsceneCopy = isCutsceneCopy,
+            OutfitOnly = outfitOnly,
         };
         InvokeWithTemporaryBacking(
             runtimeContext,
@@ -171,48 +182,31 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
             target => drawHook.Original(target));
     }
 
-    internal static bool TryPreparePersistentTransfer(
-        LocalPlayerAppearancePersistence transitionState,
-        ActorRepresentationKey representation,
-        Func<ActorRepresentationKey, (long PublicationVersion, AppearanceData? Appearance)> getPublishedAppearance,
-        out LogicalActorKey actor,
-        [NotNullWhen(true)] out AppearanceData? appearance)
+    public LogicalActorKey? GetCopyActor(nint address)
+        => cutsceneActors.GetSource((GameObject*)address);
+
+    private LogicalActorKey CaptureCopySource(nint address)
     {
-        actor = default;
-        appearance = null;
-        if (!transitionState.TryGetArmedSource(out _, out var source))
-        {
-            transitionState.ObserveRepresentation(representation);
-            return false;
-        }
-        if (!transitionState.CanBeginTransfer(representation))
-            return false;
-
-        var latest = getPublishedAppearance(source);
-        if (!ActorRegistry.IsCompleteCurrentAppearance(latest.Appearance))
-        {
-            transitionState.UpdatePublishedAppearance(source, false, latest.PublicationVersion);
-            transitionState.ObserveRepresentation(representation);
-            return false;
-        }
-
-        transitionState.UpdateRetainedAppearance(
-            source,
-            latest.Appearance!,
-            latest.PublicationVersion);
-
-        if (!transitionState.TryBeginTransfer(
-                source,
-                representation,
-                latest.PublicationVersion,
-                out actor))
-            return false;
-
-        appearance = latest.Appearance!;
-        return true;
+        var actor = ResolveActor(address);
+        if (GetCopyActor(address) is null)
+            transitionState.BindIdentity(continuity.Read((GameObject*)address, clientState.TerritoryType).Key, actor);
+        return actor;
     }
 
-    private bool TryDescribeLocalRepresentation(
+    internal LogicalActorKey ResolveActor(nint address)
+    {
+        var obj = (GameObject*)address;
+        if (cutsceneActors.GetSource(obj) is { } source)
+            return source;
+        var current = new LogicalActorKey(obj->ObjectIndex, obj->GetGameObjectId().Id,
+            obj->EntityId, obj->BaseId,
+            (Dalamud.Game.ClientState.Objects.Enums.ObjectKind)obj->ObjectKind, clientState.TerritoryType);
+        var identity = continuity.Read(obj, clientState.TerritoryType);
+        current = current with { Continuity = identity.Key, Lifetime = identity.Lifetime };
+        return transitionState.Resolve(identity.Key, current);
+    }
+
+    private bool TryDescribeRepresentation(
         GameObject* gameObject,
         out ActorRepresentationKey representation,
         out string representationKind,
@@ -223,24 +217,21 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
         isCutsceneCopy = false;
 
         var current = objectTable[gameObject->ObjectIndex];
-        if (current is null || current.Address != (nint)gameObject)
+        if (current is null || current.Address != (nint)gameObject
+            || !ActorRegistry.IsSupportedObjectKind(current.ObjectKind))
             return false;
 
-        isCutsceneCopy = cutsceneActors.IsLocalPlayerCopy(gameObject);
-        var isDirectLocalPlayer = objectTable.LocalPlayer?.Address == (nint)gameObject;
-        var isGPoseLocalPlayer = clientState.IsGPosing
-            && gameObject->ObjectIndex == ActorRegistry.GPoseLocalPlayerSlot
-            && current.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc;
-        if (!isCutsceneCopy && !isDirectLocalPlayer && !isGPoseLocalPlayer)
-            return false;
+        isCutsceneCopy = cutsceneActors.GetSource(gameObject) is not null;
+        var isGPoseRepresentation = clientState.IsGPosing
+            && gameObject->ObjectIndex >= NativeCutsceneActorTracker.CutsceneStartIndex;
 
         representation = new ActorRepresentationKey(
             gameObject->ObjectIndex,
             current.GameObjectId,
             current.EntityId,
-            isGPoseLocalPlayer,
+            isGPoseRepresentation,
             clientState.TerritoryType);
-        representationKind = isCutsceneCopy ? "Cutscene" : isGPoseLocalPlayer ? "GPose" : "Field";
+        representationKind = isCutsceneCopy ? "Cutscene" : isGPoseRepresentation ? "GPose" : "Field";
         return true;
     }
 
@@ -275,7 +266,7 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
 
         try
         {
-            SubstituteBacking(character, appearance);
+            SubstituteBacking(character, appearance, context.OutfitOnly);
             active = context;
             enableDraw(gameObject);
             var consumerCompletionObserved = transaction is null
@@ -326,9 +317,10 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
         return IsRequestedCreateSuccessful(createCallObserved, createCallSucceeded);
     }
 
-    internal static void SubstituteBacking(Character* character, AppearanceData appearance)
+    internal static void SubstituteBacking(Character* character, AppearanceData appearance, bool outfitOnly = false)
     {
-        character->ModelContainer.ModelCharaId = checked((int)appearance.ModelCharaId);
+        if (!outfitOnly)
+            character->ModelContainer.ModelCharaId = checked((int)appearance.ModelCharaId);
         // Selected Customize and equipment belong to the Create arguments, not the actor's
         // game-owned base. Stateful Create/slot listeners must not learn temporary B as that base.
 
@@ -358,7 +350,9 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
     {
         var context = active;
         if (context is null || context.CreateCallObserved)
-            return createHook.Original(modelId, customize, equipment, unknown);
+            return (CharacterBase*)NativeEquipmentColors.DuringCreate(null,
+                () => HumanHeadInputOverride.Invoke(null,
+                    () => (nint)createHook.Original(modelId, customize, equipment, unknown)));
         context.CreateCallObserved = true;
         if (context.ConsumerTransaction is { } transaction)
             transaction.TryBeginCreate();
@@ -376,11 +370,12 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
             (customizeAddress, equipmentAddress) =>
             {
                 TryWriteCreateArguments(context, customizeAddress, equipmentAddress, "BeforeOriginalCreate");
-                var result = createHook.Original(
-                    appearance.ModelCharaId,
+                var result = (CharacterBase*)NativeEquipmentColors.DuringCreate(appearance,
+                    () => HumanHeadInputOverride.Invoke(appearance, () => (nint)createHook.Original(
+                    context.OutfitOnly ? modelId : appearance.ModelCharaId,
                     (CustomizeData*)customizeAddress,
                     (EquipmentModelId*)equipmentAddress,
-                    unknown);
+                    unknown)));
                 TryWriteCreateArguments(context, customizeAddress, equipmentAddress, "OriginalCreateReturnedArguments",
                     result is not null ? "NonNull" : "Null");
                 TryWriteCreateObservation(
@@ -668,7 +663,7 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
         }
     }
 
-    private static HumanDiagnosticObservation CaptureHumanObservation(
+    private HumanDiagnosticObservation CaptureHumanObservation(
         Character* character,
         CharacterBase* characterBase,
         uint? modelCharaId,
@@ -723,7 +718,7 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
 
         var human = (Human*)characterBase;
         var customize = human->Customize.Data.ToArray();
-        var outfit = NativeOutfitMemory.CaptureRendered(character, human);
+        var outfit = NativeOutfitMemory.CaptureRendered(character, human, ResolveFacewear);
         return new HumanDiagnosticObservation(
             modelCharaId,
             modelCharaIdSource,
@@ -733,7 +728,7 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
             NativeModelScale.CaptureRendered(character),
             NativeAppearanceMemory.CaptureRenderedWeapon(character, DrawDataContainer.WeaponSlot.MainHand),
             NativeAppearanceMemory.CaptureRenderedWeapon(character, DrawDataContainer.WeaponSlot.OffHand),
-            outfit.Facewear.ModelId,
+            outfit.Facewear.IsAvailable ? outfit.Facewear.ModelId : null,
             hatVisibleBacking,
             null,
             null,
@@ -994,6 +989,7 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
         public Guid? OperationId { get; } = operationId;
         public ushort RuntimeObjectIndex { get; init; }
         public bool IsCutsceneCopy { get; init; }
+        public bool OutfitOnly { get; init; }
         public bool CreateCallObserved { get; set; }
         public bool CreateCallSucceeded { get; set; }
         public nint CreatedCharacterBaseAddress { get; set; }

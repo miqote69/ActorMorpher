@@ -120,9 +120,12 @@ public sealed class RedrawCoordinator : IDisposable
             return;
         }
 
-        if (!resolver.TryResolve(operation.Actor, out var actor))
+        if (!resolver.TryResolve(operation.Actor, operation.TargetRepresentation, out var actor))
         {
-            Finish(operation with { Stage = RedrawStage.Cancelled, Error = "Actor is no longer available." });
+            var error = resolver.TryResolve(operation.Actor, out _)
+                ? "Actor representation changed."
+                : "Actor is no longer available.";
+            Finish(operation with { Stage = RedrawStage.Cancelled, Error = error });
             return;
         }
         if (actor.RepresentationKey != operation.TargetRepresentation)

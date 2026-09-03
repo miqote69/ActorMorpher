@@ -8,4 +8,8 @@ public readonly record struct LogicalActorKey(
     uint EntityId,
     uint BaseId,
     ObjectKind ObjectKind,
-    uint TerritoryId);
+    uint TerritoryId)
+{
+    public ActorContinuityKey? Continuity { get; init; }
+    public ulong Lifetime { get; init; }
+}

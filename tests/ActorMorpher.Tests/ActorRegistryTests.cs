@@ -122,7 +122,7 @@ public sealed class ActorRegistryTests
 
         var retained = ActorRegistry.RetainManagedAppearance(
             raw,
-            new Dictionary<ActorRepresentationKey, AppearanceData> { [representation] = selectedNpc },
+            new Dictionary<(LogicalActorKey, ActorRepresentationKey), AppearanceData> { [(raw.LogicalKey, representation)] = selectedNpc },
             _ => null);
 
         var current = Assert.IsType<AppearanceData>(retained.CurrentAppearance);
@@ -156,7 +156,7 @@ public sealed class ActorRegistryTests
 
         var published = ActorRegistry.RetainManagedAppearance(
             raw,
-            new Dictionary<ActorRepresentationKey, AppearanceData> { [representation] = oldComplete },
+            new Dictionary<(LogicalActorKey, ActorRepresentationKey), AppearanceData> { [(raw.LogicalKey, representation)] = oldComplete },
             _ => oldComplete);
 
         Assert.Same(latest, published.CurrentAppearance);
@@ -172,8 +172,8 @@ public sealed class ActorRegistryTests
 
         var retained = ActorRegistry.RetainManagedAppearance(
             Snapshot(representation, Appearance(100, ModelCategory.Human)),
-            new Dictionary<ActorRepresentationKey, AppearanceData>(),
-            key => key == representation ? selectedNpc : null);
+            new Dictionary<(LogicalActorKey, ActorRepresentationKey), AppearanceData>(),
+            snapshot => snapshot.RepresentationKey == representation ? selectedNpc : null);
 
         Assert.Same(selectedNpc, retained.CurrentAppearance);
         Assert.True(retained.IsAppearanceManaged);
@@ -191,7 +191,7 @@ public sealed class ActorRegistryTests
         Assert.False(ActorRegistry.IsCompleteCurrentAppearance(Human(mainhand: null)));
         Assert.False(ActorRegistry.IsCompleteCurrentAppearance(Human(offhand: null)));
         Assert.False(ActorRegistry.IsCompleteCurrentAppearance(Human(visorToggled: null)));
-        Assert.False(ActorRegistry.IsCompleteCurrentAppearance(Human(facewearModelId: null)));
+        Assert.True(ActorRegistry.IsCompleteCurrentAppearance(Human(facewearModelId: null)));
         Assert.False(ActorRegistry.IsCompleteCurrentAppearance(Human(hatVisible: null)));
 
         Assert.True(ActorRegistry.IsCompleteCurrentAppearance(Demihuman()));
@@ -223,6 +223,21 @@ public sealed class ActorRegistryTests
             [],
             [],
             0)));
+    }
+
+    [Fact]
+    public void UnknownFacewearDoesNotSuppressManagedMerge()
+    {
+        var representation = Representation(201, true, 30);
+        var raw = Snapshot(representation, Human(facewearModelId: null));
+        var managed = Human() with { ModelCharaId = 200 };
+        var retained = ActorRegistry.RetainManagedAppearance(raw,
+            new Dictionary<(LogicalActorKey, ActorRepresentationKey), AppearanceData>
+                { [(raw.LogicalKey, representation)] = managed }, _ => null);
+        Assert.True(retained.IsAppearanceManaged);
+        Assert.Equal(200u, retained.CurrentAppearance!.ModelCharaId);
+        Assert.Null(retained.CurrentAppearance.FacewearModelId);
+        Assert.Equal(raw.CurrentAppearance!.Equipment, retained.CurrentAppearance.Equipment);
     }
 
     [Fact]
@@ -292,7 +307,7 @@ public sealed class ActorRegistryTests
 
         var published = ActorRegistry.RetainManagedAppearance(
             rawSnapshot,
-            new Dictionary<ActorRepresentationKey, AppearanceData> { [representation] = desired },
+            new Dictionary<(LogicalActorKey, ActorRepresentationKey), AppearanceData> { [(rawSnapshot.LogicalKey, representation)] = desired },
             _ => null);
         var current = Assert.IsType<AppearanceData>(published.CurrentAppearance);
         Assert.Equal(0u, current.SourceRowId);
