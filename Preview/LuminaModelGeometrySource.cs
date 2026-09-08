@@ -13,6 +13,7 @@ public sealed class LuminaModelGeometrySource
     private readonly MtrlPreviewParser materialParser = new();
     private readonly ConcurrentDictionary<string, MaterialRenderInfo> materialRenderCache = new(StringComparer.Ordinal);
     private readonly HumanPbdDeformer? humanDeformer;
+    private readonly PreviewResourceCache<(string Path, byte Variant, ushort Target, byte Features), ModelPreviewCpuModel> modelCache = new();
 
     public LuminaModelGeometrySource(IDataManager dataManager)
     {
@@ -69,6 +70,14 @@ public sealed class LuminaModelGeometrySource
         byte requestedVariant,
         ushort humanTargetCode,
         byte facialFeatures)
+        => modelCache.GetOrCreate((path, requestedVariant, humanTargetCode, facialFeatures),
+            () => BuildCpuModel(path, requestedVariant, humanTargetCode, facialFeatures),
+            static model => model.VertexCount * 48 + model.IndexCount * 2
+                + model.Meshes.Sum(static mesh => 128L + mesh.MaterialPath.Length * 2L)
+                + model.Issues.Count * 32L);
+
+    private ModelPreviewCpuModel? BuildCpuModel(
+        string path, byte requestedVariant, ushort humanTargetCode, byte facialFeatures)
     {
         var data = dataManager.GetFile(path)?.Data;
         if (data is null)

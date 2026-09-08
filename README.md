@@ -47,9 +47,11 @@ See the [latest release](https://github.com/miqote69/ActorMorpher/releases/lates
 
 ### Bulk Outfit
 
-- Copies the refreshed local-player outfit to matching Human actors.
+- Imports the current outfit from yourself, the game target, or one of your saved glamour plates into an editable source.
+- Retrieves unloaded glamour plate data when you import, without requiring the game's glamour plate window to be opened manually.
+- Applies the source outfit to matching Human actors or directly to the current game target.
 - Unequips supported armor and accessory slots.
-- Uses independent target and exclusion filters; exclusion takes priority.
+- Uses separate, labeled target and exclusion filter panels; exclusion takes priority for batch operations.
 - Shows affected actors before applying.
 - Restores captured outfits while excluding pinned actors.
 - Persists pinned outfits across restarts, territory changes, and plugin updates when the actor can be matched again.

@@ -47,6 +47,9 @@ public sealed class MainWindow : Window, IDisposable
     private int bulkExcludeAge;
     private bool bulkIncludeYourself;
     private string bulkActionStatus = string.Empty;
+    private int bulkSourceKind;
+    private int bulkSourcePlate;
+    private string bulkSourceStatus = string.Empty;
     private string pinActionStatus = string.Empty;
     private string diagnosticMarker = string.Empty;
     private bool diagnosticSettingsDirty;
@@ -306,25 +309,52 @@ public sealed class MainWindow : Window, IDisposable
 
     private void DrawBulkOutfitTab()
     {
-        if (ImGui.Button($"{T(TextKey.RefreshSourcePreview)}###refresh-source"))
-            plugin.RefreshSourceOutfit(out bulkActionStatus);
-
-        var source = plugin.SourceOutfit;
-        DrawOutfitDisplay("source-outfit", source, true);
-
-        ImGui.Separator();
-        ImGui.TextUnformatted(T(TextKey.TargetFilters));
-        var filtersChanged = ImGui.Checkbox($"{T(TextKey.IncludeYourself)}###bulk-include-yourself", ref bulkIncludeYourself);
-        filtersChanged |= DrawBulkFilterControls("target", ref bulkActorType, ref bulkRace, ref bulkGender, ref bulkAge, ref bulkNameFilter);
+        if (ImGui.CollapsingHeader($"{T(TextKey.BulkSourceEquipment)}###bulk-source-equipment", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            DrawBulkSourceChooser();
+            if (plugin.IsPlateImportPending)
+                ImGui.BeginDisabled();
+            DrawOutfitDisplay("source-outfit", plugin.SourceOutfit, true);
+            if (plugin.IsPlateImportPending)
+                ImGui.EndDisabled();
+        }
 
         ImGui.Spacing();
-        ImGui.TextUnformatted(T(TextKey.ExclusionFilters));
-        filtersChanged |= ImGui.Checkbox($"{T(TextKey.EnableExclusionFilters)}###bulk-exclusion-enabled", ref bulkExclusionEnabled);
-        if (!bulkExclusionEnabled)
-            ImGui.BeginDisabled();
-        filtersChanged |= DrawBulkFilterControls("exclude", ref bulkExcludeActorType, ref bulkExcludeRace, ref bulkExcludeGender, ref bulkExcludeAge, ref bulkExcludeNameFilter);
-        if (!bulkExclusionEnabled)
-            ImGui.EndDisabled();
+        var filtersChanged = false;
+        var columns = ImGui.GetContentRegionAvail().X >= ImGui.GetFontSize() * 52 ? 2 : 1;
+        ImGui.PushStyleVar(ImGuiStyleVar.CellPadding, new Vector2(ImGui.GetFontSize() * 0.4f, ImGui.GetFontSize() * 0.4f));
+        if (ImGui.BeginTable("##bulk-filter-sections", columns, ImGuiTableFlags.SizingStretchSame))
+        {
+            ImGui.TableNextColumn();
+            var targetPanel = BeginBulkPanel("##bulk-target-panel");
+            if (targetPanel)
+            {
+                ImGui.TextColored(new Vector4(0.68f, 0.87f, 0.79f, 1), T(TextKey.BulkTargetHeading));
+                ImGui.TextWrapped(T(TextKey.BulkTargetHint));
+                ImGui.Spacing();
+                filtersChanged |= ImGui.Checkbox($"{T(TextKey.IncludeYourself)}###bulk-include-yourself", ref bulkIncludeYourself);
+                ImGui.Separator();
+                filtersChanged |= DrawBulkFilterControls("target", ref bulkActorType, ref bulkRace, ref bulkGender, ref bulkAge, ref bulkNameFilter);
+            }
+            EndBulkPanel(targetPanel);
+            ImGui.TableNextColumn();
+            var excludePanel = BeginBulkPanel("##bulk-exclude-panel");
+            if (excludePanel)
+            {
+                ImGui.TextColored(new Vector4(0.94f, 0.70f, 0.74f, 1), T(TextKey.BulkExcludeHeading));
+                ImGui.TextWrapped(T(TextKey.BulkExcludeHint));
+                ImGui.Spacing();
+                filtersChanged |= ImGui.Checkbox($"{T(TextKey.EnableExclusionFilters)}###bulk-exclusion-enabled", ref bulkExclusionEnabled);
+                ImGui.Separator();
+                if (bulkExclusionEnabled)
+                    filtersChanged |= DrawBulkFilterControls("exclude", ref bulkExcludeActorType, ref bulkExcludeRace, ref bulkExcludeGender, ref bulkExcludeAge, ref bulkExcludeNameFilter);
+                else
+                    ImGui.TextWrapped(T(TextKey.BulkExclusionOff));
+            }
+            EndBulkPanel(excludePanel);
+            ImGui.EndTable();
+        }
+        ImGui.PopStyleVar();
         if (filtersChanged)
             SaveBulkOutfitFilterSettings();
 
@@ -347,12 +377,21 @@ public sealed class MainWindow : Window, IDisposable
                 : null,
             bulkIncludeYourself));
 
+        ImGui.Spacing();
+        var resultPanel = BeginBulkPanel("##bulk-result-panel");
+        if (resultPanel)
+        {
+        ImGui.TextColored(new Vector4(0.68f, 0.87f, 0.79f, 1), T(TextKey.EligibleHumanActors, preview.EligibleHumanActors));
         ImGui.Separator();
-        ImGui.TextUnformatted(T(TextKey.MatchingActors, preview.MatchingLogicalActors));
-        ImGui.TextUnformatted(T(TextKey.ExcludedActors, preview.ExcludedLogicalActors));
-        ImGui.TextUnformatted(T(TextKey.EligibleHumanActors, preview.EligibleHumanActors));
-        ImGui.TextUnformatted(T(TextKey.SkippedNonHumanActors, preview.SkippedNonHumanActors));
-        ImGui.TextUnformatted(T(TextKey.UnavailableActors, preview.UnavailableActors));
+        ImGui.TextWrapped($"{T(TextKey.BulkTargetHeading)}: {BulkFilterSummary(bulkActorType, bulkRace, bulkGender, bulkAge, bulkNameFilter)} / {T(bulkIncludeYourself ? TextKey.IncludeYourself : TextKey.BulkSelfExcluded)}");
+        ImGui.TextWrapped($"{T(TextKey.BulkExcludeHeading)}: {(bulkExclusionEnabled ? BulkFilterSummary(bulkExcludeActorType, bulkExcludeRace, bulkExcludeGender, bulkExcludeAge, bulkExcludeNameFilter) : T(TextKey.BulkNoExclusion))}");
+        if (ImGui.CollapsingHeader($"{T(TextKey.BulkFilterBreakdown)}###bulk-filter-breakdown"))
+        {
+            ImGui.TextUnformatted(T(TextKey.MatchingActors, preview.MatchingLogicalActors));
+            ImGui.TextUnformatted(T(TextKey.ExcludedActors, preview.ExcludedLogicalActors));
+            ImGui.TextUnformatted(T(TextKey.SkippedNonHumanActors, preview.SkippedNonHumanActors));
+            ImGui.TextUnformatted(T(TextKey.UnavailableActors, preview.UnavailableActors));
+        }
 
         ImGui.Spacing();
         var operationRunning = plugin.CurrentBulkOperation is not null;
@@ -361,12 +400,19 @@ public sealed class MainWindow : Window, IDisposable
         if (!canApply)
             ImGui.BeginDisabled();
         ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.12f, 0.45f, 0.25f, 1.0f));
-        if (ImGui.Button($"{T(TextKey.ApplyMatchingActors)}###bulk-apply"))
+        if (ImGui.Button($"{T(TextKey.BulkApplyCount, preview.EligibleHumanActors)}###bulk-apply"))
             plugin.StartBulkOutfit(preview, out bulkActionStatus);
         ImGui.PopStyleColor();
         if (!canApply)
             ImGui.EndDisabled();
-        ImGui.SameLine();
+        ContinueBulkActionRow(T(TextKey.ApplyToTarget));
+        if (operationRunning)
+            ImGui.BeginDisabled();
+        if (ImGui.Button($"{T(TextKey.ApplyToTarget)}###bulk-apply-target"))
+            plugin.StartOutfitToTarget(out bulkActionStatus);
+        if (operationRunning)
+            ImGui.EndDisabled();
+        ContinueBulkActionRow(T(TextKey.UnequipAll));
         var canUnequip = !operationRunning && preview.EligibleHumanActors > 0;
         if (!canUnequip)
             ImGui.BeginDisabled();
@@ -376,10 +422,10 @@ public sealed class MainWindow : Window, IDisposable
         ImGui.PopStyleColor();
         if (!canUnequip)
             ImGui.EndDisabled();
-        ImGui.SameLine();
+        ContinueBulkActionRow(T(TextKey.RestoreModifiedActors));
         if (ImGui.Button($"{T(TextKey.RestoreModifiedActors)}###bulk-restore"))
             plugin.StartRestoreModifiedActors(out bulkActionStatus);
-        ImGui.SameLine();
+        ContinueBulkActionRow(T(TextKey.CancelPendingOperation));
         if (!operationRunning)
             ImGui.BeginDisabled();
         if (ImGui.Button($"{T(TextKey.CancelPendingOperation)}###bulk-cancel"))
@@ -396,6 +442,34 @@ public sealed class MainWindow : Window, IDisposable
             ImGui.TextWrapped(bulkActionStatus);
         if (!string.IsNullOrWhiteSpace(plugin.BulkOutfitStatus))
             ImGui.TextWrapped(plugin.BulkOutfitStatus);
+        }
+        EndBulkPanel(resultPanel);
+    }
+
+    private static bool BeginBulkPanel(string id)
+    {
+        var unit = ImGui.GetFontSize();
+        ImGui.PushStyleColor(ImGuiCol.TableBorderStrong, new Vector4(0.36f, 0.37f, 0.42f, 1));
+        ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.22f, 0.23f, 0.27f, 1));
+        ImGui.PushStyleVar(ImGuiStyleVar.CellPadding, new Vector2(unit, unit));
+        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(unit * 0.6f, unit * 0.6f));
+        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(unit * 0.5f, unit * 0.35f));
+        var visible = ImGui.BeginTable(id, 1, ImGuiTableFlags.BordersOuter | ImGuiTableFlags.SizingStretchSame);
+        if (visible)
+        {
+            ImGui.TableNextColumn();
+            ImGui.TableSetBgColor(ImGuiTableBgTarget.CellBg,
+                ImGui.GetColorU32(new Vector4(0.13f, 0.14f, 0.17f, 0.97f)));
+        }
+        return visible;
+    }
+
+    private static void EndBulkPanel(bool visible)
+    {
+        if (visible)
+            ImGui.EndTable();
+        ImGui.PopStyleVar(3);
+        ImGui.PopStyleColor(2);
     }
 
     private bool DrawBulkFilterControls(
@@ -406,41 +480,175 @@ public sealed class MainWindow : Window, IDisposable
         ref int age,
         ref string name)
     {
-        ImGui.SetNextItemWidth(160.0f);
-        var actorTypeNames = BulkActorTypeNames();
-        var changed = ImGui.Combo($"{T(TextKey.ActorType)}###bulk-{id}-actor-type", ref actorType, actorTypeNames, actorTypeNames.Length);
-        ImGui.SetNextItemWidth(160.0f);
-        if (ImGui.BeginCombo($"{T(TextKey.Race)}###bulk-{id}-race", GetRaceFilterName(race)))
+        var changed = false;
+        ImGui.PushStyleVar(ImGuiStyleVar.CellPadding, new Vector2(ImGui.GetFontSize() * 0.3f, ImGui.GetFontSize() * 0.3f));
+        if (ImGui.BeginTable($"##bulk-{id}-fields", 2, ImGuiTableFlags.SizingStretchSame))
         {
-            for (var i = 0; i < HumanRaces.Length; ++i)
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(T(TextKey.ActorType));
+            ImGui.SetNextItemWidth(-1.0f);
+            var actorTypeNames = BulkActorTypeNames();
+            changed |= ImGui.Combo($"###bulk-{id}-actor-type", ref actorType, actorTypeNames, actorTypeNames.Length);
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(T(TextKey.Race));
+            ImGui.SetNextItemWidth(-1.0f);
+            if (ImGui.BeginCombo($"###bulk-{id}-race", GetRaceFilterName(race)))
             {
-                if (ImGui.Selectable($"{GetRaceFilterName(i)}###bulk-{id}-race-{i}", race == i) && race != i)
+                for (var i = 0; i < HumanRaces.Length; ++i)
                 {
-                    race = i;
-                    changed = true;
+                    if (ImGui.Selectable($"{GetRaceFilterName(i)}###bulk-{id}-race-{i}", race == i) && race != i)
+                    {
+                        race = i;
+                        changed = true;
+                    }
                 }
+                ImGui.EndCombo();
             }
-            ImGui.EndCombo();
-        }
-        ImGui.SetNextItemWidth(160.0f);
-        if (ImGui.BeginCombo($"{T(TextKey.Gender)}###bulk-{id}-gender", GetGenderFilterName(gender)))
-        {
-            for (var i = 0; i < HumanGenders.Length; ++i)
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(T(TextKey.Gender));
+            ImGui.SetNextItemWidth(-1.0f);
+            if (ImGui.BeginCombo($"###bulk-{id}-gender", GetGenderFilterName(gender)))
             {
-                if (ImGui.Selectable($"{GetGenderFilterName(i)}###bulk-{id}-gender-{i}", gender == i) && gender != i)
+                for (var i = 0; i < HumanGenders.Length; ++i)
                 {
-                    gender = i;
-                    changed = true;
+                    if (ImGui.Selectable($"{GetGenderFilterName(i)}###bulk-{id}-gender-{i}", gender == i) && gender != i)
+                    {
+                        gender = i;
+                        changed = true;
+                    }
                 }
+                ImGui.EndCombo();
             }
-            ImGui.EndCombo();
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(T(TextKey.Age));
+            ImGui.SetNextItemWidth(-1.0f);
+            var ageNames = BulkAgeNames();
+            changed |= ImGui.Combo($"###bulk-{id}-age", ref age, ageNames, ageNames.Length);
+            ImGui.EndTable();
         }
-        ImGui.SetNextItemWidth(160.0f);
-        var ageNames = BulkAgeNames();
-        changed |= ImGui.Combo($"{T(TextKey.Age)}###bulk-{id}-age", ref age, ageNames, ageNames.Length);
-        ImGui.SetNextItemWidth(260.0f);
-        changed |= ImGui.InputTextWithHint($"{T(TextKey.Name)}###bulk-{id}-name", T(TextKey.FilterByName), ref name, 128);
+        ImGui.PopStyleVar();
+        ImGui.TextUnformatted(T(TextKey.Name));
+        ImGui.SetNextItemWidth(-1.0f);
+        changed |= ImGui.InputTextWithHint($"###bulk-{id}-name", T(TextKey.FilterByName), ref name, 128);
+        DrawBulkConditionChips(BulkFilterConditions(actorType, race, gender, age, name));
         return changed;
+    }
+
+    private List<string> BulkFilterConditions(int actorType, int race, int gender, int age, string name)
+    {
+        var conditions = new List<string>();
+        if (actorType != 0) conditions.Add(BulkActorTypeNames()[actorType]);
+        if (race != 0) conditions.Add(GetRaceFilterName(race));
+        if (gender != 0) conditions.Add(GetGenderFilterName(gender));
+        if (age != 0) conditions.Add(BulkAgeNames()[age]);
+        if (!string.IsNullOrWhiteSpace(name)) conditions.Add($"{T(TextKey.Name)}: \"{name}\"");
+        return conditions;
+    }
+
+    private string BulkFilterSummary(int actorType, int race, int gender, int age, string name)
+    {
+        var conditions = BulkFilterConditions(actorType, race, gender, age, name);
+        return conditions.Count == 0 ? T(TextKey.BulkAllMatching) : string.Join(" · ", conditions);
+    }
+
+    private static void DrawBulkConditionChips(List<string> conditions)
+    {
+        var first = true;
+        foreach (var condition in conditions)
+        {
+            var padding = ImGui.GetStyle().FramePadding;
+            if (!first)
+            {
+                ImGui.SameLine();
+                if (ImGui.GetContentRegionAvail().X < ImGui.CalcTextSize(condition).X + padding.X * 2)
+                    ImGui.NewLine();
+            }
+            var width = Math.Max(1.0f, ImGui.GetContentRegionAvail().X - padding.X * 2);
+            var size = ImGui.CalcTextSize(condition, false, width) + padding * 2;
+            var position = ImGui.GetCursorScreenPos();
+            ImGui.GetWindowDrawList().AddRectFilled(position, position + size,
+                ImGui.GetColorU32(ImGuiCol.FrameBg), ImGui.GetStyle().FrameRounding);
+            ImGui.SetCursorScreenPos(position + padding);
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + width);
+            ImGui.TextUnformatted(condition);
+            ImGui.PopTextWrapPos();
+            ImGui.SetCursorScreenPos(position);
+            ImGui.Dummy(size);
+            first = false;
+        }
+    }
+
+    private void DrawBulkSourceChooser()
+    {
+        if (plugin.TakePlateImportMessage() is { } completed)
+            bulkSourceStatus = completed;
+        var pending = plugin.IsPlateImportPending;
+        if (pending)
+            ImGui.BeginDisabled();
+        ImGui.TextUnformatted(T(TextKey.BulkSourceChoose));
+        var sources = new[] { T(TextKey.BulkSourceSelf), T(TextKey.BulkSourceTarget), T(TextKey.BulkSourcePlate) };
+        ImGui.SetNextItemWidth(Math.Min(ImGui.GetContentRegionAvail().X, ImGui.GetFontSize() * 18));
+        if (ImGui.BeginCombo("##bulk-source-kind", sources[bulkSourceKind]))
+        {
+            for (var index = 0; index < sources.Length; ++index)
+                if (ImGui.Selectable(sources[index], index == bulkSourceKind))
+                {
+                    bulkSourceKind = index;
+                    bulkSourceStatus = string.Empty;
+                }
+            ImGui.EndCombo();
+        }
+        if (bulkSourceKind == 2)
+        {
+            var plateWidth = ImGui.GetFontSize() * 12;
+            ImGui.SameLine();
+            if (ImGui.GetContentRegionAvail().X < plateWidth)
+                ImGui.NewLine();
+            ImGui.SetNextItemWidth(Math.Min(ImGui.GetContentRegionAvail().X, plateWidth));
+            if (ImGui.BeginCombo("##bulk-source-plate", T(TextKey.BulkPlateNumber, bulkSourcePlate + 1)))
+            {
+                for (var index = 0; index < GlamourPlateSource.PlateCount; ++index)
+                {
+                    if (ImGui.Selectable(T(TextKey.BulkPlateNumber, index + 1), index == bulkSourcePlate))
+                    {
+                        bulkSourcePlate = index;
+                        bulkSourceStatus = string.Empty;
+                    }
+                    if (index == bulkSourcePlate)
+                        ImGui.SetItemDefaultFocus();
+                }
+                ImGui.EndCombo();
+            }
+        }
+        ContinueBulkActionRow(T(TextKey.BulkSourceImport));
+        if (ImGui.Button($"{T(TextKey.BulkSourceImport)}###bulk-source-import"))
+        {
+            switch (bulkSourceKind)
+            {
+                case 0: plugin.RefreshSourceOutfit(out bulkSourceStatus); break;
+                case 1: plugin.RefreshSourceOutfitFromTarget(out bulkSourceStatus); break;
+                case 2: plugin.ImportGlamourPlate(bulkSourcePlate, out bulkSourceStatus); break;
+            }
+        }
+        if (pending)
+            ImGui.EndDisabled();
+        if (plugin.IsPlateImportPending)
+        {
+            ContinueBulkActionRow(T(TextKey.CancelPendingOperation));
+            if (ImGui.Button($"{T(TextKey.CancelPendingOperation)}###plate-import-cancel"))
+                plugin.CancelGlamourPlateImport();
+        }
+        ImGui.TextWrapped(T(bulkSourceKind == 2 ? TextKey.BulkPlateSourceHint : TextKey.BulkActorSourceHint));
+        if (!string.IsNullOrEmpty(bulkSourceStatus))
+            ImGui.TextWrapped(bulkSourceStatus);
+        ImGui.Spacing();
+    }
+
+    private static void ContinueBulkActionRow(string label)
+    {
+        ImGui.SameLine();
+        if (ImGui.GetContentRegionAvail().X < ImGui.CalcTextSize(label).X + ImGui.GetStyle().FramePadding.X * 2)
+            ImGui.NewLine();
     }
 
     private void SaveBulkOutfitFilterSettings()
@@ -521,11 +729,16 @@ public sealed class MainWindow : Window, IDisposable
             : display is { } named && !string.IsNullOrWhiteSpace(named.Item.Name)
                 ? named.Item.Name : T(TextKey.Unavailable));
         ImGui.EndGroup();
-        if (editActor is { } actor && outfit is not null && ImGui.IsItemHovered())
+        if ((sourceEditing || editActor is not null) && outfit is not null && ImGui.IsItemHovered())
         {
             ImGui.SetTooltip(T(TextKey.ActorEquipmentHint));
             if (ImGui.IsMouseClicked(ImGuiMouseButton.Right))
-                applySucceeded = plugin.SelectEquipment(new(10, 0, 0), actor, out applyStatus);
+            {
+                if (editActor is { } actor)
+                    applySucceeded = plugin.SelectEquipment(new(10, 0, 0), actor, out applyStatus);
+                else
+                    plugin.SelectEquipment(new(10, 0, 0), null, out bulkActionStatus);
+            }
         }
         ImGui.TableNextColumn();
         ImGui.TextUnformatted(empty ? "0" : display is { } model ? model.Model.ToString() : "-");
@@ -621,13 +834,16 @@ public sealed class MainWindow : Window, IDisposable
             return;
         }
         ImGui.TextWrapped(T(equipmentPickerActor is null ? TextKey.PickerSourceHint : TextKey.PickerActorHint));
+        var sourceImportPending = equipmentPickerActor is null && plugin.IsPlateImportPending;
         ImGui.SetNextItemWidth(-1);
         var changed = ImGui.InputTextWithHint("##equipment-search", T(TextKey.EquipmentSearchHint), ref equipmentSearch, 128);
         changed |= ImGui.Checkbox(T(TextKey.FavoritesOnly), ref equipmentFavoritesOnly);
         if (changed) RefreshEquipmentResults();
         ImGui.SameLine(); ImGui.TextDisabled($"({equipmentResults.Length})");
+        ImGui.BeginDisabled(sourceImportPending);
         if (ImGui.Button(T(TextKey.NoEquipment)))
             SelectPickerEquipment(new EquipmentChoiceKey(equipmentPickerSlot, 0, 0));
+        ImGui.EndDisabled();
         ImGui.SameLine();
         if (ImGui.Button(T(plugin.Configuration.FavoriteEquipment.Contains(equipmentPickerCurrent)
                 ? TextKey.RemoveCurrentFavorite : TextKey.FavoriteCurrentEquipment)))
@@ -646,8 +862,10 @@ public sealed class MainWindow : Window, IDisposable
             var valid = EquipmentChoice.TryParseModel(equipmentNumber, equipmentPickerSlot, out var model)
                 && equipmentVariant is >= 0 and <= byte.MaxValue;
             ImGui.BeginDisabled(!valid);
+            ImGui.BeginDisabled(sourceImportPending);
             if (ImGui.Button(T(TextKey.UseEquipmentNumber)))
                 SelectPickerEquipment(new EquipmentChoiceKey(equipmentPickerSlot, model, (byte)equipmentVariant));
+            ImGui.EndDisabled();
             ImGui.SameLine();
             var direct = new EquipmentChoiceKey(equipmentPickerSlot, model, valid ? (byte)equipmentVariant : (byte)0);
             if (ImGui.Button(T(plugin.Configuration.FavoriteEquipment.Contains(direct)
@@ -684,6 +902,7 @@ public sealed class MainWindow : Window, IDisposable
                     var choicePosition = ImGui.GetCursorScreenPos();
                     var choiceWidth = ImGui.GetContentRegionAvail().X;
                     var label = $"{choice.Name}  ({choice.Number} / {choice.Key.Variant})";
+                    ImGui.BeginDisabled(sourceImportPending);
                     if (ImGui.Selectable("##choice", choice.Key == equipmentPickerCurrent,
                             ImGuiSelectableFlags.DontClosePopups, new Vector2(0, 32)))
                         SelectPickerEquipment(choice.Key);
@@ -695,6 +914,7 @@ public sealed class MainWindow : Window, IDisposable
                     drawList.AddText(choicePosition + new Vector2(32 + ImGui.GetStyle().ItemSpacing.X, 0),
                         ImGui.GetColorU32(ImGuiCol.Text), label);
                     drawList.PopClipRect();
+                    ImGui.EndDisabled();
                     ImGui.PopID();
                 }
             }

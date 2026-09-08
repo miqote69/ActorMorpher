@@ -14,6 +14,158 @@ namespace ActorMorpher.Tests;
 
 public sealed class ApplyServicesTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(6072)]
+    public void ImportedPlateEquipmentUsesSourceEditingApplyAndRestorePath(ushort head)
+    {
+        var actor = Snapshot(1);
+        var original = Outfit(10) with { HatVisible = false, VisorToggled = true };
+        var memory = new FakeOutfitMemory(new() { [actor.LogicalKey] = original });
+        using var service = new BulkOutfitService(new FakeResolver(actor), memory, new FakeContext(),
+            new OutfitOverrideStore(), NullDiagnosticLog.Instance);
+        Assert.True(service.RefreshSource(actor.LogicalKey, out _));
+        service.SetSourceColor(OutfitSlot.Body, 0, new(1, 0, 0));
+        var imported = Outfit(20).Equipment.SetItem(0, head == 0 ? default : new(head, 1, 0, 118));
+        service.SetSourceEquipment(imported);
+        Assert.Equal(original with { Equipment = imported, HatVisible = true }, service.SourceOutfit);
+        Assert.Null(service.SourceOutfit!.Equipment[1].Color1);
+        Assert.Empty(memory.ApplyCalls);
+        Assert.Null(service.CurrentOperation);
+        Assert.False(service.Store.TryGet(actor.LogicalKey, out _));
+        Assert.True(service.StartApply([actor.LogicalKey], out _));
+        service.ProcessNextFrame();
+        service.ProcessNextFrame();
+        service.ProcessNextFrame();
+        Assert.Equal(service.SourceOutfit, memory.Rendered[actor.LogicalKey]);
+        Assert.True(service.StartRestore(actor.LogicalKey, out _));
+        service.ProcessNextFrame();
+        service.ProcessNextFrame();
+        Assert.Equal(original, memory.Rendered[actor.LogicalKey]);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void CopyTargetOutfitUsesExactRenderedRepresentationWithoutApplying(bool targetPresent)
+    {
+        var actor = Snapshot(1);
+        var target = actor with { RepresentationKey = new(201, 201, 201, true, 30) };
+        var other = Snapshot(2);
+        var backing = Outfit(10);
+        var visible = Outfit(50) with { HatVisible = false };
+        visible = visible with { Equipment = visible.Equipment.SetItem(1,
+            visible.Equipment[1] with { Color1 = new(0.1f, 0.2f, 0.3f), Color2 = new(1, 0, 0) }) };
+        var memory = new FakeOutfitMemory(new() { [actor.LogicalKey] = backing });
+        memory.SetRendered(actor.LogicalKey, visible);
+        var resolver = new TargetResolver(actor, other, targetPresent ? target : null);
+        using var service = new BulkOutfitService(resolver, memory, new FakeContext(),
+            new OutfitOverrideStore(), NullDiagnosticLog.Instance);
+        Assert.Equal(targetPresent, service.RefreshSource(target.LogicalKey, out _, target.RepresentationKey));
+        if (targetPresent)
+        {
+            Assert.Equal(target.RepresentationKey, memory.LastRenderedCapture);
+            Assert.Equal(visible, service.SourceOutfit);
+        }
+        else
+        {
+            Assert.Null(memory.LastRenderedCapture);
+            Assert.Null(service.SourceOutfit);
+        }
+        Assert.Empty(memory.ApplyCalls);
+        Assert.Null(service.CurrentOperation);
+        Assert.False(service.Store.TryGet(actor.LogicalKey, out _));
+        Assert.Equal(backing, memory.Current[actor.LogicalKey]);
+        Assert.Equal(visible, memory.Rendered[actor.LogicalKey]);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ApplyToTargetUsesSelectedRepresentationAndDoesNotBindLaterBatches(bool targetPresent)
+    {
+        // TEST_ONLY resolver/memory exercise the normal outfit operation path.
+        var actor = Snapshot(1);
+        var target = actor with { RepresentationKey = new(201, 201, 201, true, 30) };
+        var sourceActor = Snapshot(2);
+        var original = Outfit(10);
+        var source = Outfit(20);
+        source = source with { Equipment = source.Equipment.SetItem(1,
+            source.Equipment[1] with { Color1 = new(0.2f, 0.3f, 0.4f) }) };
+        var memory = new FakeOutfitMemory(new()
+            { [actor.LogicalKey] = original, [sourceActor.LogicalKey] = source });
+        var resolver = new TargetResolver(actor, sourceActor, targetPresent ? target : null);
+        using var service = new BulkOutfitService(resolver, memory, new FakeContext(),
+            new OutfitOverrideStore(), NullDiagnosticLog.Instance);
+        var completedRepresentations = new List<ActorRepresentationKey>();
+        service.ActorOperationCompleted += (key, _, _, succeeded) =>
+        {
+            if (succeeded)
+            {
+                Assert.True(service.TryResolveOperationActor(key, out var completedActor));
+                completedRepresentations.Add(completedActor.RepresentationKey);
+            }
+        };
+        service.ProcessNextFrame();
+        Assert.True(service.RefreshSource(sourceActor.LogicalKey, out _));
+        Assert.True(service.StartApplyToTarget(target, out _));
+        service.SetSourceColor(OutfitSlot.Body, 0, null);
+        service.ProcessNextFrame();
+        service.ProcessNextFrame();
+        Assert.Equal(source, memory.Rendered[sourceActor.LogicalKey]);
+        if (targetPresent)
+        {
+            Assert.Equal(target.RepresentationKey, Assert.Single(memory.AppliedRepresentations));
+            Assert.Equal(target.RepresentationKey, Assert.Single(completedRepresentations));
+            Assert.Equal(source, memory.Rendered[actor.LogicalKey]);
+            Assert.True(service.Store.TryGet(actor.LogicalKey, out var state));
+            Assert.Equal(original, state.Original);
+            Assert.True(service.StartRestore(actor.LogicalKey, out _));
+            service.ProcessNextFrame();
+            service.ProcessNextFrame();
+            Assert.Equal(original, memory.Rendered[actor.LogicalKey]);
+        }
+        else
+        {
+            Assert.Empty(memory.ApplyCalls);
+            Assert.Empty(completedRepresentations);
+            Assert.Equal(original, memory.Rendered[actor.LogicalKey]);
+        }
+        Assert.True(service.StartApply([sourceActor.LogicalKey], out _));
+        service.ProcessNextFrame();
+        service.ProcessNextFrame();
+        Assert.Equal(sourceActor.RepresentationKey, memory.AppliedRepresentations[^1]);
+        Assert.Equal(sourceActor.RepresentationKey, completedRepresentations[^1]);
+        Assert.Equal(service.SourceOutfit, memory.Rendered[sourceActor.LogicalKey]);
+    }
+
+    [Theory]
+    [InlineData(17)]
+    [InlineData(0)]
+    public void ClearingSourceFacewearPreservesOtherEquipmentUntilExplicitApplyAndRestore(ushort facewearId)
+    {
+        var actor = Snapshot(1);
+        var original = Outfit(10) with { Facewear = new FacewearAppearance(true, facewearId) };
+        var memory = new FakeOutfitMemory(new() { [actor.LogicalKey] = original });
+        var store = new OutfitOverrideStore();
+        using var service = new BulkOutfitService(new FakeResolver(actor), memory,
+            new FakeContext(), store, NullDiagnosticLog.Instance);
+        service.ProcessNextFrame();
+        Assert.True(service.RefreshSource(actor.LogicalKey, out _));
+        Assert.True(service.SelectEquipment(new(10, 0, 0), null, out _));
+        Assert.Equal(original with { Facewear = new FacewearAppearance(true, 0) }, service.SourceOutfit);
+        Assert.Empty(memory.ApplyCalls);
+        Assert.Equal(original, memory.Rendered[actor.LogicalKey]);
+        Assert.True(service.StartApply(new[] { actor.LogicalKey }, out _));
+        service.ProcessNextFrame();
+        service.ProcessNextFrame();
+        Assert.Equal(service.SourceOutfit, memory.Rendered[actor.LogicalKey]);
+        Assert.True(service.StartRestore(out _));
+        service.ProcessNextFrame();
+        service.ProcessNextFrame();
+        Assert.Equal(original, memory.Rendered[actor.LogicalKey]);
+    }
+
     [Fact]
     public void EquipmentPickerEditsSourceAndExactActorWhilePreservingDyesAndOriginal()
     {
@@ -1056,11 +1208,28 @@ public sealed class ApplyServicesTests
             => Current = appearance;
     }
 
+    private sealed class TargetResolver(ActorSnapshot actor, ActorSnapshot source, ActorSnapshot? target) : IActorResolver
+    {
+        public bool TryResolve(LogicalActorKey key, out ActorSnapshot snapshot)
+        {
+            snapshot = key == source.LogicalKey ? source : actor;
+            return key == snapshot.LogicalKey;
+        }
+
+        public bool TryResolve(LogicalActorKey key, ActorRepresentationKey representation, out ActorSnapshot snapshot)
+        {
+            snapshot = target!;
+            return target is not null && target.LogicalKey == key && target.RepresentationKey == representation;
+        }
+    }
+
     private sealed class FakeOutfitMemory(Dictionary<LogicalActorKey, OutfitData> current) : IOutfitMemory
     {
         public Dictionary<LogicalActorKey, OutfitData> Current { get; } = current;
         public Dictionary<LogicalActorKey, OutfitData> Rendered { get; } = new(current);
         public List<(LogicalActorKey Actor, OutfitData Outfit)> ApplyCalls { get; } = [];
+        public List<ActorRepresentationKey> AppliedRepresentations { get; } = [];
+        public ActorRepresentationKey? LastRenderedCapture { get; private set; }
         public LogicalActorKey? ThrowActor { get; init; }
         public OutfitData? ThrowOutfit { get; init; }
         public bool CaptureUnavailable { get; set; }
@@ -1079,7 +1248,10 @@ public sealed class ApplyServicesTests
         }
 
         public bool TryCaptureRendered(ActorSnapshot actor, out OutfitData outfit)
-            => Rendered.TryGetValue(actor.LogicalKey, out outfit!);
+        {
+            LastRenderedCapture = actor.RepresentationKey;
+            return Rendered.TryGetValue(actor.LogicalKey, out outfit!);
+        }
 
         public void SetRendered(LogicalActorKey actor, OutfitData outfit)
             => Rendered[actor] = outfit;
@@ -1087,6 +1259,7 @@ public sealed class ApplyServicesTests
         public bool TryApply(ActorSnapshot actor, OutfitData outfit)
         {
             ApplyCalls.Add((actor.LogicalKey, outfit));
+            AppliedRepresentations.Add(actor.RepresentationKey);
             if (actor.LogicalKey == ThrowActor && ReferenceEquals(outfit, ThrowOutfit))
                 throw new InvalidOperationException("Simulated actor-local outfit failure.");
             if (!ApplySucceeds)

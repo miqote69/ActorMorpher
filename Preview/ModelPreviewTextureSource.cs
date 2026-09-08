@@ -16,6 +16,7 @@ public sealed class ModelPreviewTextureSource(IDataManager dataManager)
     private readonly ModelPreviewStainSource stainSource = new(dataManager);
     private byte[]? humanCmp;
     private bool humanCmpLoaded;
+    private readonly PreviewResourceCache<TextureKey, ModelPreviewTexturePayload> payloadCache = new();
 
     public ModelPreviewTextureContext CreateContext(ModelSearchEntry? model)
     {
@@ -31,6 +32,17 @@ public sealed class ModelPreviewTextureSource(IDataManager dataManager)
     }
 
     public ModelPreviewTexturePayload? Load(string materialPath, ModelPreviewTextureContext context)
+        => payloadCache.GetOrCreate(TextureKey.From(materialPath, context),
+            () => LoadUncached(materialPath, context),
+            static payload => (payload.BgraPixels?.LongLength ?? 0) + (payload.GamePath?.Length ?? 0) * 2L + 512);
+
+    internal readonly record struct TextureKey(string Path, ModelPreviewTextureContext Colors, ModelPreviewStains Stains)
+    {
+        public static TextureKey From(string path, ModelPreviewTextureContext context)
+            => new(path, context with { EquipmentStains = Array.Empty<ModelPreviewStains>() }, context.StainsForMaterial(path));
+    }
+
+    private ModelPreviewTexturePayload? LoadUncached(string materialPath, ModelPreviewTextureContext context)
     {
         if (string.IsNullOrWhiteSpace(materialPath))
             return null;

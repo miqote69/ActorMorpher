@@ -11,6 +11,27 @@ namespace ActorMorpher.Tests;
 public sealed class SoftwareModelPreviewTests
 {
     [Fact]
+    public void BackendReselectionReusesGeometryWithoutChangingScene()
+    {
+        var cache = new PreviewResourceCache<(string, byte, ushort, byte), ModelPreviewCpuModel>();
+        var loads = 0;
+        var a = AssetEntry();
+        var b = a with { SourceId = a.SourceId + 1 };
+        var assets = new ModelPreviewAssetReport(a.ModelId, a.Category, ModelPreviewReadiness.AssetsComplete,
+            [new(ModelPreviewAssetKind.Model, "Body", "body.mdl", true)]);
+        using var backend = new SoftwareModelPreviewBackend(_ => assets,
+            (path, variant, target, features) => cache.GetOrCreate((path, variant, target, features),
+                () => { loads++; return Model([0, 1, 2]); }, _ => 256));
+        backend.Select(a);
+        var original = backend.GetView()!.Value.Scene.Triangles.ToArray();
+        backend.Select(b);
+        backend.Select(a);
+        Assert.Equal(1, loads);
+        Assert.Equal(original, backend.GetView()!.Value.Scene.Triangles.ToArray());
+        Assert.Equal(ModelPreviewState.Ready, backend.Snapshot.State);
+    }
+
+    [Fact]
     public void StaticProjectionReusesTrianglesWithoutEnumeratingTheSceneAgain()
     {
         var original = new SoftwareModelPreviewSceneBuilder().Build([Model([0, 1, 2])]);

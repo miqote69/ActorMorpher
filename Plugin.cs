@@ -32,11 +32,16 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] private static IDataManager DataManager { get; set; } = null!;
     [PluginService] private static IPluginLog Log { get; set; } = null!;
     [PluginService] private static IClientState ClientState { get; set; } = null!;
+    [PluginService] private static IPlayerState PlayerState { get; set; } = null!;
+    [PluginService] private static ISigScanner SigScanner { get; set; } = null!;
     [PluginService] private static IFramework Framework { get; set; } = null!;
     [PluginService] private static IGameInteropProvider GameInteropProvider { get; set; } = null!;
     [PluginService] private static ITextureProvider TextureProvider { get; set; } = null!;
 
     private readonly MainWindow mainWindow;
+    private readonly GlamourPlateImportOperation plateImport = new();
+    private string? completedPlateImportMessage;
+    public bool IsPlateImportPending => plateImport.IsPending;
     private readonly WindowSystem windowSystem = new("ActorMorpher");
     private readonly DiagnosticLogRouter diagnosticRouter;
     private readonly DiagnosticController diagnosticController;
@@ -222,6 +227,7 @@ public sealed class Plugin : IDalamudPlugin
 
     public void Dispose()
     {
+        plateImport.Cancel();
         Framework.Update -= OnPluginFrameworkUpdate;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleMainUi;
         PluginInterface.UiBuilder.Draw -= DrawUi;
@@ -310,6 +316,71 @@ public sealed class Plugin : IDalamudPlugin
         return bulkOutfitService.RefreshSource(local.Key, out message);
     }
 
+    public bool RefreshSourceOutfitFromTarget(out string message)
+        => TryGetCurrentTarget(out var target, out message)
+            && bulkOutfitService.RefreshSource(target.LogicalKey, out message, target.RepresentationKey);
+
+    public bool ImportGlamourPlate(int index, out string message)
+    {
+        if (!ClientState.IsLoggedIn)
+        {
+            message = Localizer.Get(TextKey.PlateSourceRequestFailed);
+            return false;
+        }
+        if (GlamourPlateSource.IsLoaded)
+            return CompleteGlamourPlateImport(index, out message);
+        if (!plateImport.Start(index, PlayerState.ContentId, ClientState.TerritoryType,
+            () => GlamourPlateSource.Request(SigScanner)))
+        {
+            message = Localizer.Get(TextKey.PlateSourceRequestFailed);
+            return false;
+        }
+        message = Localizer.Get(TextKey.PlateSourceLoading, index + 1);
+        return true;
+    }
+
+    public void CancelGlamourPlateImport()
+    {
+        plateImport.Cancel();
+        completedPlateImportMessage = Localizer.Get(TextKey.PlateSourceCancelled);
+    }
+
+    public string? TakePlateImportMessage()
+    {
+        var message = completedPlateImportMessage;
+        completedPlateImportMessage = null;
+        return message;
+    }
+
+    private void ProcessGlamourPlateImport()
+    {
+        if (!plateImport.IsPending)
+            return;
+        var result = plateImport.Poll(ClientState.IsLoggedIn ? PlayerState.ContentId : 0,
+            ClientState.TerritoryType, ClientState.IsLoggedIn && GlamourPlateSource.IsLoaded, out var index);
+        if (result == PlateImportProgress.Ready)
+            CompleteGlamourPlateImport(index, out completedPlateImportMessage);
+        else if (result == PlateImportProgress.ContextChanged)
+            completedPlateImportMessage = Localizer.Get(TextKey.PlateSourceContextChanged);
+    }
+
+    private bool CompleteGlamourPlateImport(int index, out string message)
+    {
+        uint missingItem = 0;
+        if (!ClientState.IsLoggedIn || !GlamourPlateSource.TryRead(index,
+            itemId => DataManager.GetExcelSheet<Item>().TryGetRow(
+                Dalamud.Utility.ItemUtil.GetBaseId(itemId).ItemId, out var item) ? item.ModelMain : null,
+            out var equipment, out missingItem))
+        {
+            message = missingItem == 0 ? Localizer.Get(TextKey.PlateSourceUnavailable)
+                : Localizer.Get(TextKey.PlateSourceMissingItem, missingItem);
+            return false;
+        }
+        bulkOutfitService.SetSourceEquipment(equipment);
+        message = Localizer.Get(TextKey.PlateSourceImported, index + 1);
+        return true;
+    }
+
     public bool StartBulkOutfit(BulkOutfitPreview preview, out string message)
     {
         if (!CanStartBulkOutfitInCurrentContext(out message))
@@ -332,6 +403,14 @@ public sealed class Plugin : IDalamudPlugin
         var started = bulkOutfitService.StartUnequip(preview.EligibleTargets, out message);
         LogBulkTargetPreview(preview, BulkOperationType.UnequipAll, started);
         return started;
+    }
+
+    public bool StartOutfitToTarget(out string message)
+    {
+        if (!CanStartBulkOutfitInCurrentContext(out message)
+            || !TryGetCurrentTarget(out var target, out message))
+            return false;
+        return bulkOutfitService.StartApplyToTarget(target, out message);
     }
 
     public bool StartRestoreModifiedActors(out string message)
@@ -484,7 +563,8 @@ public sealed class Plugin : IDalamudPlugin
         => BulkOutfitRestoreTargetResolver.Resolve(
             bulkOutfitService.Store.States.Keys,
             actorRegistry.Entries.Select(static actor => actor.Key),
-            actor => IsActorModified(actor) || IsOutfitPinned(actor));
+            IsActorModified,
+            IsOutfitPinned);
 
     private IReadOnlyList<ActorEntry> GetBulkOutfitActors()
         => GPoseBulkActorSelector.Select(
@@ -683,20 +763,28 @@ public sealed class Plugin : IDalamudPlugin
     {
         operationId = Guid.Empty;
         restoreStatus = string.Empty;
+        return TryGetCurrentTarget(out var snapshot, out message)
+            && appearanceApplyService.TryApply(snapshot, model.ModelAppearance, out operationId, out message);
+    }
+
+    private bool TryGetCurrentTarget(out ActorSnapshot snapshot, out string message)
+    {
+        snapshot = null!;
         var target = ClientState.IsGPosing ? TargetManager.GPoseTarget : TargetManager.Target;
         if (target is null)
         {
             message = Localizer.Get(TextKey.NoTargetSelected);
             return false;
         }
-        var snapshot = RegistryActorResolver.FindTarget(actorRegistry.Entries,
-            target.ObjectIndex, target.GameObjectId, target.EntityId, ClientState.TerritoryType);
+        snapshot = RegistryActorResolver.FindTarget(actorRegistry.Entries,
+            target.ObjectIndex, target.GameObjectId, target.EntityId, ClientState.TerritoryType)!;
         if (snapshot is null)
         {
             message = Localizer.Get(TextKey.TargetActorUnavailable);
             return false;
         }
-        return appearanceApplyService.TryApply(snapshot, model.ModelAppearance, out operationId, out message);
+        message = string.Empty;
+        return true;
     }
 
     public bool TryApplyModel(LogicalActorKey actor, ModelSearchEntry model, out Guid operationId, out string message)
@@ -1034,7 +1122,7 @@ public sealed class Plugin : IDalamudPlugin
             pinnedOutfitStore.Unpin(restoredActor);
 
         if (succeeded && desired is not null
-            && actorResolver.TryResolve(actor, out var current))
+            && bulkOutfitService.TryResolveOperationActor(actor, out var current))
         {
             appearancePersistence.RecordOutfit(current, desired);
             drawObjectInjector.EnablePersistentAppearance(current);
@@ -1060,6 +1148,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnPluginFrameworkUpdate(IFramework framework)
     {
+        ProcessGlamourPlateImport();
         EnsureCommandsRegistered();
         var now = Environment.TickCount64;
         if (pinnedOutfitTerritory != ClientState.TerritoryType || !ClientState.IsLoggedIn)

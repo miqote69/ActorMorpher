@@ -18,6 +18,7 @@ public sealed class BulkOutfitService : IDisposable
     private OutfitData? operationOutfit;
     private bool operationUsesEmptySource;
     private Func<LogicalActorKey, bool>? operationActorRestore;
+    private ActorRepresentationKey? operationTargetRepresentation;
     private uint lastTerritory;
     private bool disposed;
 
@@ -56,6 +57,11 @@ public sealed class BulkOutfitService : IDisposable
     public string LastStatus { get; private set; } = string.Empty;
     public event Action<LogicalActorKey, BulkOperationType, OutfitData?, bool>? ActorOperationCompleted;
 
+    internal bool TryResolveOperationActor(LogicalActorKey key, out ActorSnapshot actor)
+        => operationTargetRepresentation is { } representation
+            ? resolver.TryResolve(key, representation, out actor)
+            : resolver.TryResolve(key, out actor);
+
     public bool TryCaptureOutfit(LogicalActorKey actorKey, out OutfitData outfit)
     {
         if (!disposed
@@ -66,23 +72,35 @@ public sealed class BulkOutfitService : IDisposable
         return false;
     }
 
-    public bool RefreshSource(LogicalActorKey localPlayer, out string message)
+    public bool RefreshSource(LogicalActorKey actorKey, out string message, ActorRepresentationKey? representation = null)
     {
         if (disposed)
         {
             message = "Bulk Outfit services are shutting down.";
             return false;
         }
-        if (!resolver.TryResolve(localPlayer, out var actor) || !memory.TryCaptureRendered(actor, out var outfit))
+        var resolved = representation is { } selected
+            ? resolver.TryResolve(actorKey, selected, out var actor)
+            : resolver.TryResolve(actorKey, out actor);
+        if (!resolved || !memory.TryCaptureRendered(actor, out var outfit))
         {
             SourceOutfit = null;
-            message = "The current local player Human outfit is unavailable.";
+            message = representation is null
+                ? "The current local player Human outfit is unavailable."
+                : "The current target Human outfit is unavailable.";
             return false;
         }
         SourceOutfit = outfit;
         message = "Source outfit refreshed.";
         LastStatus = message;
         return true;
+    }
+
+    public void SetSourceEquipment(IEnumerable<ArmorAppearance> equipment)
+    {
+        SourceOutfit = OutfitData.Create(equipment,
+            SourceOutfit?.Facewear ?? new FacewearAppearance(true, 0),
+            true, SourceOutfit?.VisorToggled ?? false);
     }
 
     public bool TryUnequipSourceSlot(OutfitSlot slot, out string message)
@@ -180,6 +198,10 @@ public sealed class BulkOutfitService : IDisposable
         return Start(BulkOperationType.UnequipAll, targets, null, out message);
     }
 
+    public bool StartApplyToTarget(ActorSnapshot target, out string message)
+        => Start(BulkOperationType.ApplyOutfit, [target.LogicalKey], SourceOutfit, out message,
+            SourceOutfit is null, target.RepresentationKey);
+
     public bool StartRestore(out string message)
         => Start(BulkOperationType.Restore, store.States.Keys.ToArray(), null, out message);
 
@@ -256,6 +278,7 @@ public sealed class BulkOutfitService : IDisposable
         operationOutfit = null;
         operationUsesEmptySource = false;
         operationActorRestore = null;
+        operationTargetRepresentation = null;
         pendingReapply.Clear();
         SourceOutfit = null;
         store.Clear();
@@ -266,7 +289,8 @@ public sealed class BulkOutfitService : IDisposable
         IReadOnlyList<LogicalActorKey> targets,
         OutfitData? outfit,
         out string message,
-        bool useEmptySource = false)
+        bool useEmptySource = false,
+        ActorRepresentationKey? targetRepresentation = null)
     {
         if (disposed)
         {
@@ -284,6 +308,7 @@ public sealed class BulkOutfitService : IDisposable
             return false;
         }
         operation = new BulkOperation(type, targets.Distinct().ToArray());
+        operationTargetRepresentation = targetRepresentation;
         operationOutfit = outfit;
         operationUsesEmptySource = useEmptySource;
         message = $"Started {type} for {operation.Targets.Count} actors.";
@@ -364,7 +389,7 @@ public sealed class BulkOutfitService : IDisposable
         store.TryGet(key, out var storeBeforeOperation);
         try
         {
-            if (!resolver.TryResolve(key, out var actor) || !memory.TryCaptureRendered(actor, out var current))
+            if (!TryResolveOperationActor(key, out var actor) || !memory.TryCaptureRendered(actor, out var current))
             {
                 activeOperation.RecordSkip();
                 WriteActorLog(DiagnosticEventIds.OutfitSkipped, "Actor outfit could not be captured.", key, "Skipped");
@@ -523,6 +548,7 @@ public sealed class BulkOutfitService : IDisposable
         operationOutfit = null;
         operationUsesEmptySource = false;
         operationActorRestore = null;
+        operationTargetRepresentation = null;
         if (cancelled)
             pendingReapply.Clear();
         else
