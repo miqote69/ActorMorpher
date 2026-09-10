@@ -1,5 +1,12 @@
 # Test Specification
 
+## Embedded release notes (2026-09-10)
+
+- RELEASE-NOTES-001: The tab immediately after Settings displays the current v0.0.0.51 release notes embedded in the plugin, with no network or external Markdown-file dependency. Japanese, English, German and French UI settings select matching titles and complete translated notes; Automatic follows the existing game-language mapping. Changing the setting on the same Localizer must change the selected text without restarting. Test the actual embedded document, version identity and locale routing. Following the User's content correction, show version changes and usage notes without development verification status.
+- RELEASE-NOTES-002: The tab bar stays fixed; release text wraps and scrolls in its own child like the existing tabs. Review balanced ImGui scopes and stable tab IDs. No Apply, actor state, callbacks, configuration semantics or release publication change. Dev loading and User visual acceptance are separate from managed/static results. Public ZIP refresh is deferred until the User checks Dev.
+- RELEASE-NOTES-003: Release notes must not name unreleased plugins. The User found such a name in the embedded Japanese text. Remove it from all four language sections of the shared release document while retaining a generic explanation that additional motion/attachment assets are separate. Replace the old name-presence assertion with an absence assertion on the actual embedded text. Run only the four affected language-content cases; reuse unchanged version/Automatic checks. Dev DLL is updated first, with the public ZIP left unchanged.
+- RELEASE-NOTES-004: The User also requested removal of the pending-check section. Omit its heading and all three entries from every language of the release document. The same four embedded-content tests must check that the development heading is absent and the eight update entries remain. This presentation change does not establish runtime/UAT completion; existing verification status remains separate.
+
 ## Cutscene outfit animation (2026-09-09)
 
 - CUTSCENE-OUTFIT-004: diagnostics-20260909-012522 records Bulk Apply for Enor and Clemence at 10:23:38 JST followed by full appearance redraws at 10:23:38/39. User confirms both are T-posed without explicit Restore; external read-only observations match the replacement model identities and show native animation control count zero. A full appearance pin whose remaining difference is only Human outfit fields must use the existing equipment operation, preserving the current model and its running animation. Keep the pin's values and existing maintenance timing. Model/customize/scale/weapon differences must still use the existing full appearance path. Provenance/completeness metadata and diagnostics must not change this routing. Test outfit and non-outfit differences separately; static review checks the actual scan caller, and User runtime must confirm animated cutscene playback after the pinned outfit is maintained.
@@ -12,7 +19,7 @@
 
 ## Fixed top tabs while scrolling (2026-09-09)
 
-- TAB-SCROLL-001: Scrolling any of the five main tabs must keep the top tab bar visible and clickable. Only content below it scrolls; long Bulk Outfit/Diagnostics pages remain reachable to the bottom. Actor/model lists and details retain their nested scroll behavior. Switching tabs and resizing must not hide the bar or disable existing controls.
+- TAB-SCROLL-001: Scrolling any main tab must keep the top tab bar visible and clickable. Only content below it scrolls; long Bulk Outfit/Diagnostics pages remain reachable to the bottom. Actor/model lists and details retain their nested scroll behavior. Switching tabs and resizing must not hide the bar or disable existing controls.
 - TAB-SCROLL-002: Scope is main-window layout only. Review the parent/child scroll boundaries and balanced Begin/End calls, including clipped children and an existing nonzero parent scroll after Dev reload. Build the Dev DLL to check binding compatibility; do not add tests that reproduce ImGui internals. Actual wheel/scrollbar, resize, tab switching and equipment/color popup verification in game is UNEXECUTED until user check.
 
 ## Plate import without manually opening game UI (2026-09-08)

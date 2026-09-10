@@ -156,6 +156,18 @@ public sealed class MainWindow : Window, IDisposable
                 ImGui.EndTabItem();
             }
 
+            if (ImGui.BeginTabItem($"{T(TextKey.ReleaseNotes)}###release-notes"))
+            {
+                if (ImGui.BeginChild("##release-notes-tab-content", Vector2.Zero, false))
+                {
+                    ImGui.TextUnformatted(ReleaseNotesContent.Title);
+                    ImGui.Separator();
+                    ImGui.TextWrapped(ReleaseNotesContent.GetText(plugin.Localizer.EffectiveLanguage));
+                }
+                ImGui.EndChild();
+                ImGui.EndTabItem();
+            }
+
             ImGui.EndTabBar();
         }
         var previewActive = modelSearchVisible && plugin.Configuration.Enable3DPreview;

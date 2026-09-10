@@ -14,5 +14,6 @@
   <ItemGroup>
     <Compile Remove="tests/**/*.cs" />
     <InternalsVisibleTo Include="ActorMorpher.Tests" />
+    <EmbeddedResource Include="docs/RELEASE_NOTES_0.0.0.51.md" LogicalName="ActorMorpher.ReleaseNotes" />
   </ItemGroup>
 </Project>

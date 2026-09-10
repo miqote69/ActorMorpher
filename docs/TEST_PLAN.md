@@ -1,5 +1,9 @@
 # Test Plan
 
+## Embedded release notes (2026-09-10)
+
+Add a Release Notes tab immediately after Settings, using the same effective UI language and fixed-tab/scrolling-content layout. Embed the v0.0.0.51 release document in the DLL with Japanese, English, German and French sections. Focused managed checks must read the actual embedded resource and verify translated content, title/version, and language changes through the existing Localizer, including Automatic. A source-only check cannot establish resource packaging or locale selection. Failures require fixing the resource or UI wiring before Dev delivery. Independent static review covers placement and scope; visible layout and language switching in FF14 remain User-operated and UNEXECUTED. Build and deploy Dev first; leave the prepared public ZIP unchanged pending User confirmation.
+
 ## Cutscene outfit animation (2026-09-09)
 
 CUTSCENE-OUTFIT-004/005 cover the subsequently identified redraw paths: equipment-only full-pin maintenance and completion of an outfit-only explicit Restore. Check actual caller routing independently, run the focused pin tests and existing outfit/restore tests against the isolated build, then use User-operated cutscene verification. The tests must retain full model restoration where model fields differ and preserve the pinned outfit values. Already lost cutscene motion is not recovered by this prevention change and is not a runtime PASS.

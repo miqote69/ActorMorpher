@@ -8,6 +8,7 @@ public enum TextKey
     German,
     French,
     Settings,
+    ReleaseNotes,
     UiLanguage,
     GameDataLanguage,
     Actors,
