@@ -30,5 +30,11 @@
     <Reference Update="InteropGenerator.Runtime">
       <Private>true</Private>
     </Reference>
+    <Reference Update="Lumina.Excel">
+      <Private>true</Private>
+    </Reference>
+    <Reference Update="Lumina">
+      <Private>true</Private>
+    </Reference>
   </ItemGroup>
 </Project>

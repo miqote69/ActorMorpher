@@ -13,6 +13,77 @@ namespace ActorMorpher.Tests;
 public sealed unsafe class ActorAppearancePersistenceTests
 {
     [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void WeaponSelectionRetainsOnlySelectedHandOnUnmanagedActor(bool offhand, bool remove)
+    {
+        var state = new ActorAppearancePersistence();
+        var actor = Snapshot(ObjectKind.Companion) with { CurrentAppearance = Model(7) };
+        var weapon = remove ? 0 : 9005UL | (301UL << 16) | (513UL << 32) | (4UL << 48);
+        state.RecordWeapon(actor, offhand, weapon);
+        Assert.Null(state.GetModel(actor.LogicalKey));
+        Assert.Null(state.GetRetainedAppearance(actor));
+        Assert.True(state.HasWeaponOverride(actor.LogicalKey));
+        byte* customize = stackalloc byte[26];
+        ulong* equipment = stackalloc ulong[10];
+        foreach (var gameModel in new uint[] { 0, 72, 99 })
+        {
+            var payload = state.GetCreateAppearance(actor.LogicalKey, gameModel, out var partial)!;
+            Assert.True(partial);
+            Assert.Equal(gameModel, payload.ModelCharaId);
+            Assert.Empty(payload.Customize);
+            Assert.Empty(payload.Equipment);
+            Assert.Empty(payload.ColoredEquipment);
+            Assert.Null(payload.ModelScale);
+            Assert.Null(payload.FacewearModelId);
+            Assert.Null(payload.HatVisible);
+            Assert.Null(payload.VisorToggled);
+            Assert.Equal(offhand ? (ulong?)null : weapon, payload.Mainhand);
+            Assert.Equal(offhand ? weapon : (ulong?)null, payload.Offhand);
+            new Span<byte>(customize, 26).Fill(8);
+            new Span<ulong>(equipment, 10).Fill(20);
+            NativeDrawObjectInjector.InvokeWithTemporaryCreateBuffers(payload, (nint)customize, (nint)equipment,
+                (c, e) =>
+                {
+                    Assert.All(new Span<byte>((void*)c, 26).ToArray(), b => Assert.Equal(8, b));
+                    Assert.All(new Span<ulong>((void*)e, 10).ToArray(), item => Assert.Equal(20UL, item));
+                    return 123;
+                });
+        }
+        state.Restore(actor.LogicalKey);
+        Assert.False(state.HasWeaponOverride(actor.LogicalKey));
+        Assert.Null(state.GetCreateAppearance(actor.LogicalKey, 99, out _));
+    }
+
+    [Theory]
+    [InlineData(300UL)]
+    [InlineData(0UL)]
+    public void WeaponSelectionComposesWithOutfitAndExplicitModelReplacesPartialWeapons(ulong selectedWeapon)
+    {
+        var state = new ActorAppearancePersistence();
+        var actor = Snapshot(ObjectKind.Pc);
+        var outfit = Outfit(20);
+        state.Outfits.SetDesired(actor.LogicalKey, Outfit(1), outfit);
+        state.RecordWeapon(actor, false, 100);
+        state.RecordWeapon(actor, true, 200);
+        var partial = state.GetCreateAppearance(actor.LogicalKey, 72, out var outfitOnly)!;
+        Assert.True(outfitOnly);
+        Assert.Empty(partial.Customize);
+        Assert.Equal(outfit.Equipment.Select(ActorRegistry.ToEquipmentModelValue), partial.Equipment);
+        Assert.Equal(100UL, partial.Mainhand);
+        Assert.Equal(200UL, partial.Offhand);
+        var fullModel = Model(7) with { Mainhand = 30, Offhand = 40 };
+        state.RecordModel(actor, fullModel);
+        Assert.False(state.HasWeaponOverride(actor.LogicalKey));
+        state.RecordWeapon(actor, false, selectedWeapon);
+        Assert.Equal(fullModel with { Mainhand = selectedWeapon }, state.GetModel(actor.LogicalKey));
+        Assert.Equal(fullModel with { Mainhand = selectedWeapon }, state.GetCreateAppearance(actor.LogicalKey, 72, out var full));
+        Assert.False(full);
+    }
+
+    [Theory]
     [InlineData(ObjectKind.Pc, 1, 123ul, 124ul, false)]
     [InlineData(ObjectKind.EventNpc, 3, 90ul, 91ul, false)]
     [InlineData(ObjectKind.Companion, 2, 0x400000001ul, 0x400000002ul, false)]

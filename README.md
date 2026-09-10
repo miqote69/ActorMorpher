@@ -34,7 +34,11 @@ See the [latest release](https://github.com/miqote69/ActorMorpher/releases/lates
 - Keeps the local player at the top of the list.
 - Filters by name, actor type, race, gender, and modification state.
 - Shows original and applied equipment.
+- Shows mainhand/offhand weapon icons, names, model numbers, variants, and dyes.
+- Lets you choose each hand's weapon from your own current class/job using name/model-number search and favorites. Right-click its icon or name to remove that hand's weapon.
 - Restores the appearance captured before the first change.
+
+The top tabs stay visible while their content scrolls.
 
 ### Model Search
 

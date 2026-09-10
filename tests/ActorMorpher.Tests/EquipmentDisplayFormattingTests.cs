@@ -9,6 +9,16 @@ namespace ActorMorpher.Tests;
 public sealed class EquipmentDisplayFormattingTests
 {
     [Fact]
+    public void WeaponDisplaySeparatesBothModelIdsVariantAndDyes()
+    {
+        const ulong packed = 9005UL | (301UL << 16) | (513UL << 32) | (101UL << 48) | (118UL << 56);
+        Assert.Equal(((ushort)9005, (ushort)301, (ushort)513, (byte)101, (byte)118),
+            EquipmentDisplayFormatting.DecodeWeapon(packed));
+        Assert.Equal(((ushort)0, (ushort)0, (ushort)0, (byte)0, (byte)0),
+            EquipmentDisplayFormatting.DecodeWeapon(0));
+    }
+
+    [Fact]
     public void UnknownFacewearDoesNotHideTheOtherEquipment()
     {
         var appearance = AppearanceData.Create(0, ModelCategory.Human, 0, AppearanceCompleteness.Complete,

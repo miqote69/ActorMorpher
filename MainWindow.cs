@@ -64,6 +64,8 @@ public sealed class MainWindow : Window, IDisposable
     private string equipmentPickerStatus = string.Empty;
     private bool equipmentPickerOpen;
     private bool equipmentPickerFocusRequested;
+    private uint equipmentPickerJob;
+    private Dalamud.Game.ClientLanguage equipmentPickerLanguage;
 
     private static readonly uint[] HumanRaces =
     [
@@ -79,6 +81,7 @@ public sealed class MainWindow : Window, IDisposable
         : base($"{Plugin.DisplayName} v{Plugin.DisplayVersion}###ActorMorpherMain")
     {
         this.plugin = plugin;
+        Flags |= ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
         var configuration = plugin.Configuration;
         bulkNameFilter = configuration.BulkNameFilter;
         bulkActorType = configuration.BulkActorType;
@@ -107,37 +110,49 @@ public sealed class MainWindow : Window, IDisposable
 
     public override void Draw()
     {
+        // The parent holds the fixed tab bar; each tab scrolls its own content.
+        ImGui.SetScrollY(0);
         var modelSearchVisible = false;
         if (ImGui.BeginTabBar("##actor-morpher-tabs"))
         {
             if (ImGui.BeginTabItem($"{T(TextKey.Actors)}###actors"))
             {
-                DrawActorsTab();
+                if (ImGui.BeginChild("##actors-tab-content", Vector2.Zero, false))
+                    DrawActorsTab();
+                ImGui.EndChild();
                 ImGui.EndTabItem();
             }
 
             if (ImGui.BeginTabItem($"{T(TextKey.ModelSearch)}###model-search"))
             {
                 modelSearchVisible = true;
-                DrawModelSearchTab();
+                if (ImGui.BeginChild("##model-search-tab-content", Vector2.Zero, false))
+                    DrawModelSearchTab();
+                ImGui.EndChild();
                 ImGui.EndTabItem();
             }
 
             if (ImGui.BeginTabItem($"{T(TextKey.BulkOutfit)}###bulk-outfit"))
             {
-                DrawBulkOutfitTab();
+                if (ImGui.BeginChild("##bulk-outfit-tab-content", Vector2.Zero, false))
+                    DrawBulkOutfitTab();
+                ImGui.EndChild();
                 ImGui.EndTabItem();
             }
 
             if (ImGui.BeginTabItem($"{T(TextKey.Diagnostics)}###diagnostics"))
             {
-                DrawDiagnosticsTab();
+                if (ImGui.BeginChild("##diagnostics-tab-content", Vector2.Zero, false))
+                    DrawDiagnosticsTab();
+                ImGui.EndChild();
                 ImGui.EndTabItem();
             }
 
             if (ImGui.BeginTabItem($"{T(TextKey.Settings)}###settings"))
             {
-                DrawSettingsTab();
+                if (ImGui.BeginChild("##settings-tab-content", Vector2.Zero, false))
+                    DrawSettingsTab();
+                ImGui.EndChild();
                 ImGui.EndTabItem();
             }
 
@@ -670,7 +685,7 @@ public sealed class MainWindow : Window, IDisposable
     }
 
     private void DrawOutfitDisplay(string id, OutfitData? outfit, bool allowSourceEditing = false,
-        LogicalActorKey? editActor = null)
+        LogicalActorKey? editActor = null, bool showWeapons = false, AppearanceData? appearance = null)
     {
         var equipment = plugin.GetOutfitEquipment(outfit).ToDictionary(static item => item.Slot);
         if (ImGui.BeginTable($"##{id}-table", 6, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
@@ -682,6 +697,11 @@ public sealed class MainWindow : Window, IDisposable
             ImGui.TableSetupColumn(T(TextKey.Stain1), ImGuiTableColumnFlags.WidthFixed, 48.0f);
             ImGui.TableSetupColumn(T(TextKey.Stain2), ImGuiTableColumnFlags.WidthFixed, 48.0f);
             ImGui.TableHeadersRow();
+            if (showWeapons)
+            {
+                DrawWeaponRow(id, TextKey.Mainhand, appearance?.Mainhand, editActor);
+                DrawWeaponRow(id, TextKey.Offhand, appearance?.Offhand, editActor);
+            }
             foreach (var slot in Enum.GetValues<OutfitSlot>())
             {
                 var armor = outfit?.Equipment[(int)slot] ?? default;
@@ -710,6 +730,52 @@ public sealed class MainWindow : Window, IDisposable
         ImGui.TextUnformatted($"{T(TextKey.Hat)}: {(outfit.HatVisible ? T(TextKey.Visible) : T(TextKey.Hidden))}");
         ImGui.SameLine();
         ImGui.TextUnformatted($"{T(TextKey.Visor)}: {(outfit.VisorToggled ? T(TextKey.Toggled) : T(TextKey.Normal))}");
+    }
+
+    private void DrawWeaponRow(string id, TextKey slot, ulong? packed, LogicalActorKey? actor)
+    {
+        var weapon = EquipmentDisplayFormatting.DecodeWeapon(packed ?? 0);
+        var empty = packed.HasValue && weapon.Model == 0;
+        var display = packed.HasValue && !empty ? plugin.GetWeaponDisplay(packed.Value) : null;
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn(); ImGui.TextWrapped(T(slot));
+        ImGui.TableNextColumn();
+        ImGui.BeginGroup();
+        var position = ImGui.GetCursorScreenPos();
+        var size = new Vector2(32, 32);
+        if (actor is not null && ImGui.Button($"+##weapon-{id}-{slot}", size))
+        {
+            equipmentPickerSlot = slot == TextKey.Mainhand ? 11 : 12;
+            equipmentPickerActor = actor;
+            equipmentPickerCurrent = new(equipmentPickerSlot, weapon.Model, 0,
+                WeaponModel: (packed ?? 0) & WeaponSelection.ModelMask);
+            equipmentSearch = string.Empty;
+            equipmentPickerStatus = string.Empty;
+            RefreshEquipmentResults();
+            equipmentPickerOpen = true;
+            equipmentPickerFocusRequested = true;
+        }
+        else if (actor is null)
+            ImGui.Dummy(size);
+        if (display?.IconId is > 0 && plugin.TryGetIconTexture(display.IconId, out var icon))
+            ImGui.GetWindowDrawList().AddImage(icon!.Handle, position + new Vector2(2), position + size - new Vector2(2));
+        ImGui.SameLine();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextWrapped(!packed.HasValue ? T(TextKey.Unavailable) : empty ? T(TextKey.NoEquipment)
+            : display?.Name ?? T(TextKey.Unavailable));
+        ImGui.EndGroup();
+        if (actor is { } editActor && ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(T(TextKey.ActorEquipmentHint));
+            if (ImGui.IsMouseClicked(ImGuiMouseButton.Right))
+                applySucceeded = plugin.SelectEquipment(new(slot == TextKey.Mainhand ? 11 : 12, 0, 0),
+                    editActor, out applyStatus);
+        }
+        ImGui.TableNextColumn();
+        ImGui.TextUnformatted(packed.HasValue ? $"w{weapon.Model:D4}\nb{weapon.Type:D4}" : "-");
+        ImGui.TableNextColumn(); ImGui.TextUnformatted(packed.HasValue ? weapon.Variant.ToString() : "-");
+        ImGui.TableNextColumn(); DrawStainSwatch($"{id}-{slot}-1", packed.HasValue, weapon.Stain1);
+        ImGui.TableNextColumn(); DrawStainSwatch($"{id}-{slot}-2", packed.HasValue, weapon.Stain2);
     }
 
     private void DrawFacewearRow(OutfitData? outfit, string id, bool sourceEditing, LogicalActorKey? editActor)
@@ -814,12 +880,19 @@ public sealed class MainWindow : Window, IDisposable
     }
 
     private void RefreshEquipmentResults()
-        => equipmentResults = plugin.SearchEquipment(equipmentPickerSlot, equipmentSearch, equipmentFavoritesOnly);
+    {
+        equipmentPickerJob = plugin.CurrentWeaponJob;
+        equipmentPickerLanguage = plugin.GameLanguage;
+        equipmentResults = plugin.SearchEquipment(equipmentPickerSlot, equipmentSearch, equipmentFavoritesOnly);
+    }
 
     internal void DrawEquipmentPicker()
     {
         if (!IsOpen || !equipmentPickerOpen)
             return;
+        var weaponPicker = equipmentPickerSlot is 11 or 12;
+        if (weaponPicker && (equipmentPickerJob != plugin.CurrentWeaponJob || equipmentPickerLanguage != plugin.GameLanguage))
+            RefreshEquipmentResults();
         if (equipmentPickerFocusRequested)
         {
             ImGui.SetNextWindowFocus();
@@ -827,31 +900,37 @@ public sealed class MainWindow : Window, IDisposable
         }
         var availableHeight = ImGui.GetMainViewport().WorkSize.Y - 32;
         ImGui.SetNextWindowSize(new Vector2(540, Math.Min(800, availableHeight)), ImGuiCond.FirstUseEver);
-        var title = $"{T(TextKey.ChooseEquipment)} · {(equipmentPickerSlot == 10 ? T(TextKey.Facewear) : ((OutfitSlot)equipmentPickerSlot).ToString())}###ActorMorpherEquipmentPicker";
+        var slotName = equipmentPickerSlot switch { 11 => T(TextKey.Mainhand), 12 => T(TextKey.Offhand),
+            10 => T(TextKey.Facewear), _ => ((OutfitSlot)equipmentPickerSlot).ToString() };
+        var title = $"{T(TextKey.ChooseEquipment)} · {slotName}###ActorMorpherEquipmentPicker";
         if (!ImGui.Begin(title, ref equipmentPickerOpen, ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoSavedSettings))
         {
             ImGui.End();
             return;
         }
         ImGui.TextWrapped(T(equipmentPickerActor is null ? TextKey.PickerSourceHint : TextKey.PickerActorHint));
+        if (weaponPicker) ImGui.TextWrapped(T(TextKey.WeaponPickerJobHint));
         var sourceImportPending = equipmentPickerActor is null && plugin.IsPlateImportPending;
         ImGui.SetNextItemWidth(-1);
-        var changed = ImGui.InputTextWithHint("##equipment-search", T(TextKey.EquipmentSearchHint), ref equipmentSearch, 128);
+        var changed = ImGui.InputTextWithHint("##equipment-search", T(weaponPicker ? TextKey.WeaponSearchHint : TextKey.EquipmentSearchHint), ref equipmentSearch, 128);
         changed |= ImGui.Checkbox(T(TextKey.FavoritesOnly), ref equipmentFavoritesOnly);
         if (changed) RefreshEquipmentResults();
         ImGui.SameLine(); ImGui.TextDisabled($"({equipmentResults.Length})");
-        ImGui.BeginDisabled(sourceImportPending);
-        if (ImGui.Button(T(TextKey.NoEquipment)))
-            SelectPickerEquipment(new EquipmentChoiceKey(equipmentPickerSlot, 0, 0));
-        ImGui.EndDisabled();
-        ImGui.SameLine();
+        if (!weaponPicker)
+        {
+            ImGui.BeginDisabled(sourceImportPending);
+            if (ImGui.Button(T(TextKey.NoEquipment)))
+                SelectPickerEquipment(new EquipmentChoiceKey(equipmentPickerSlot, 0, 0));
+            ImGui.EndDisabled();
+            ImGui.SameLine();
+        }
         if (ImGui.Button(T(plugin.Configuration.FavoriteEquipment.Contains(equipmentPickerCurrent)
                 ? TextKey.RemoveCurrentFavorite : TextKey.FavoriteCurrentEquipment)))
         {
             plugin.ToggleEquipmentFavorite(equipmentPickerCurrent);
             RefreshEquipmentResults();
         }
-        if (equipmentPickerSlot != 10)
+        if (equipmentPickerSlot < 10)
         {
             ImGui.Separator();
             ImGui.SetNextItemWidth(140);
@@ -901,7 +980,7 @@ public sealed class MainWindow : Window, IDisposable
                     ImGui.SameLine();
                     var choicePosition = ImGui.GetCursorScreenPos();
                     var choiceWidth = ImGui.GetContentRegionAvail().X;
-                    var label = $"{choice.Name}  ({choice.Number} / {choice.Key.Variant})";
+                    var label = $"{choice.Name}  ({choice.Number} / {choice.DisplayVariant})";
                     ImGui.BeginDisabled(sourceImportPending);
                     if (ImGui.Selectable("##choice", choice.Key == equipmentPickerCurrent,
                             ImGuiSelectableFlags.DontClosePopups, new Vector2(0, 32)))
@@ -1187,10 +1266,10 @@ public sealed class MainWindow : Window, IDisposable
             ImGui.Spacing();
             ImGui.TextUnformatted(T(TextKey.Equipment));
             var currentOutfit = EquipmentDisplayFormatting.CreateHumanOutfit(appearance);
-            if (currentOutfit is not null)
-                DrawOutfitDisplay($"actor-current-outfit-{actor.Key.GetHashCode()}", currentOutfit, editActor: actor.Key);
-            else
-                ImGui.TextDisabled(T(TextKey.Unavailable));
+            DrawOutfitDisplay($"actor-current-outfit-{actor.Key.GetHashCode()}", currentOutfit,
+                editActor: actor.Key, showWeapons: true, appearance: appearance);
+            if (plugin.WeaponSelectionActor == actor.Key && !string.IsNullOrEmpty(plugin.WeaponSelectionStatus))
+                ImGui.TextWrapped(plugin.WeaponSelectionStatus);
 
             ImGui.Spacing();
             var hasOutfitOverride = plugin.TryGetOutfitOverride(actor.Key, out var outfitState);

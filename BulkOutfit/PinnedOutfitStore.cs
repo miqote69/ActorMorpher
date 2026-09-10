@@ -65,6 +65,13 @@ public sealed class PinnedOutfitStore
             && OutfitDataValueComparer.AreEqual(EquipmentDisplayFormatting.CreateHumanOutfit(left),
                 EquipmentDisplayFormatting.CreateHumanOutfit(right));
 
+    internal static bool CanMaintainWithOutfit(AppearanceData current, AppearanceData pinned)
+        => current.Category == ModelCategory.Human && pinned.Category == ModelCategory.Human
+            && current.ModelCharaId == pinned.ModelCharaId
+            && current.Customize.AsSpan().SequenceEqual(pinned.Customize.AsSpan())
+            && current.ModelScale == pinned.ModelScale
+            && current.Mainhand == pinned.Mainhand && current.Offhand == pinned.Offhand;
+
     public bool TryGet(ActorEntry actor, out OutfitData outfit)
     {
         var entry = configuration.PinnedOutfits.LastOrDefault(candidate => candidate.Matches(actor));
@@ -114,6 +121,15 @@ public sealed class PinnedOutfitStore
                 Color1 = armor.Color1, Color2 = armor.Color2,
             };
         }
+        save();
+    }
+
+    internal void UpdateSelectedWeapon(ActorEntry actor, bool offhand, ulong weapon)
+    {
+        var pin = configuration.PinnedOutfits.LastOrDefault(entry => entry.Matches(actor));
+        if (pin?.Appearance is not { } appearance)
+            return;
+        pin.Appearance = offhand ? appearance with { Offhand = weapon } : appearance with { Mainhand = weapon };
         save();
     }
 

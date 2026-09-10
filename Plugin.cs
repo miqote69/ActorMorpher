@@ -74,7 +74,13 @@ public sealed class Plugin : IDalamudPlugin
     private readonly BulkOutfitTargetResolver bulkOutfitTargetResolver = new();
     private readonly Dictionary<ClientLanguage, IReadOnlyList<ModelSearchEntry>> modelSearchCaches = new();
     private readonly Dictionary<ClientLanguage, IReadOnlyDictionary<(OutfitSlot Slot, uint ModelKey), EquipmentItemDisplay>> equipmentDisplayCaches = new();
+    private readonly Dictionary<ClientLanguage, IReadOnlyDictionary<ulong, EquipmentItemDisplay>> weaponDisplayCaches = new();
     private readonly Dictionary<(ClientLanguage, int), EquipmentChoice[]> equipmentChoices = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(ClientLanguage, uint, int), EquipmentChoice[]> weaponChoices = new();
+    private readonly System.Collections.Concurrent.ConcurrentQueue<(ActorSnapshot Actor, EquipmentChoiceKey Choice)> weaponSelections = new();
+    public uint CurrentWeaponJob => ObjectTable.LocalPlayer?.ClassJob.RowId ?? 0;
+    public string WeaponSelectionStatus { get; private set; } = string.Empty;
+    public LogicalActorKey? WeaponSelectionActor { get; private set; }
     private (LogicalActorKey Actor, EquipmentChoiceKey Choice)? pendingEquipmentSelection;
     private readonly Dictionary<ClientLanguage, IReadOnlyDictionary<byte, StainDisplayEntry>> stainDisplayCaches = new();
     private readonly Dictionary<(uint RowId, ModelCategory Category, ModelSource Source, uint SourceId), ModelPreviewAssetReport> previewAssetCaches = new();
@@ -192,7 +198,7 @@ public sealed class Plugin : IDalamudPlugin
             clientContext,
             redrawCoordinator,
             diagnosticRouter);
-        outfitMemory = new NativeOutfitMemory(ObjectTable, humanModelClassifier, diagnosticRouter);
+        outfitMemory = new NativeOutfitMemory(ObjectTable, humanModelClassifier, diagnosticRouter, SigScanner);
         var facewearModels = new FacewearModelLookup(DataManager.GetExcelSheet<Glasses>()
             .Select(row => ((ushort)row.RowId, (ushort)(row.Model & 0xFFFF), (byte)((row.Model >> 16) & 0xFF))));
         outfitMemory.ResolveFacewear = facewearModels.Resolve;
@@ -201,7 +207,7 @@ public sealed class Plugin : IDalamudPlugin
         outfitMemory.GetColorOutfit = appearancePersistence.GetColorOutfit;
         outfitMemory.SetColorOutfit = appearancePersistence.SetColorOutfit;
         equipmentColors = new NativeEquipmentColors(GameInteropProvider, ObjectTable,
-            drawObjectInjector.ResolveActor, appearancePersistence);
+            drawObjectInjector.ResolveActor, appearancePersistence, diagnosticRouter);
         actorRegistry.GetColorOutfit = outfitMemory.GetColorOutfit;
         bulkOutfitService = new BulkOutfitService(
             Framework,
@@ -430,6 +436,23 @@ public sealed class Plugin : IDalamudPlugin
     {
         if (actor is not null && !CanStartBulkOutfitInCurrentContext(out message))
             return false;
+        if (choice.IsWeapon)
+        {
+            if (!WeaponSelection.CanSelect(choice, GetEquipmentChoices(choice.Slot)))
+            {
+                message = Localizer[TextKey.WeaponJobMismatch];
+                return false;
+            }
+            if (actor is not { } weaponActor || !actorResolver.TryResolve(weaponActor, out var target))
+            {
+                message = Localizer[TextKey.TargetActorUnavailable];
+                return false;
+            }
+            weaponSelections.Enqueue((target, choice));
+            WeaponSelectionActor = actor;
+            message = WeaponSelectionStatus = Localizer[TextKey.WeaponSelectionQueued];
+            return true;
+        }
         var started = bulkOutfitService.SelectEquipment(choice, actor, out message);
         if (started && actor is { } selectedActor)
             pendingEquipmentSelection = (selectedActor, choice);
@@ -438,6 +461,8 @@ public sealed class Plugin : IDalamudPlugin
 
     public EquipmentChoice[] GetEquipmentChoices(int slot)
     {
+        if (slot is 11 or 12)
+            return GetWeaponChoices(slot);
         var cacheKey = (ClientState.ClientLanguage, slot);
         if (equipmentChoices.TryGetValue(cacheKey, out var cached))
             return cached;
@@ -460,6 +485,9 @@ public sealed class Plugin : IDalamudPlugin
     public EquipmentChoice[] SearchEquipment(int slot, string query, bool favoritesOnly)
     {
         var choices = GetEquipmentChoices(slot);
+        if (slot is 11 or 12)
+            return WeaponSelection.Filter(choices, Configuration.FavoriteEquipment, favoritesOnly)
+                .Where(choice => choice.Matches(query, ClientState.ClientLanguage)).ToArray();
         var keys = choices.Select(choice => choice.Key).ToHashSet();
         var manualFavorites = Configuration.FavoriteEquipment.Where(key => key.Slot == slot && !keys.Contains(key))
             .Select(key => new EquipmentChoice(key, Localizer[TextKey.ManualEquipment], 0));
@@ -473,6 +501,70 @@ public sealed class Plugin : IDalamudPlugin
         if (!Configuration.FavoriteEquipment.Remove(key))
             Configuration.FavoriteEquipment.Add(key);
         Save();
+    }
+
+    private EquipmentChoice[] GetWeaponChoices(int slot)
+    {
+        var job = CurrentWeaponJob;
+        if (job == 0)
+            return [];
+        var key = (ClientState.ClientLanguage, job, slot);
+        if (weaponChoices.TryGetValue(key, out var cached))
+            return cached;
+        var abbreviation = DataManager.GetExcelSheet<ClassJob>(ClientLanguage.English).GetRow(job).Abbreviation.ToString();
+        var categories = DataManager.GetExcelSheet<ClassJobCategory>(ClientLanguage.English)
+            .Where(category => WeaponSelection.AllowsJob(category, abbreviation))
+            .Select(category => category.RowId).ToHashSet();
+        var choices = new List<EquipmentChoice>();
+        foreach (var item in DataManager.GetExcelSheet<Item>(ClientState.ClientLanguage))
+        {
+            if (!categories.Contains(item.ClassJobCategory.RowId) || !item.EquipSlotCategory.IsValid)
+                continue;
+            var slots = item.EquipSlotCategory.Value;
+            var model = WeaponSelection.ModelForSlot(slot, slots.MainHand == 1, slots.OffHand == 1,
+                item.ModelMain, item.ModelSub);
+            if (model != 0)
+                choices.Add(new(new(slot, (ushort)model, 0, WeaponModel: model), item.Name.ToString(), item.Icon));
+        }
+        cached = choices.GroupBy(choice => choice.Key)
+            .Select(group => group.First() with { Name = string.Join(" / ", group.Select(choice => choice.Name).Distinct()) })
+            .OrderBy(choice => choice.Name, GameTextComparison.GetComparer(ClientState.ClientLanguage)).ToArray();
+        weaponChoices[key] = cached;
+        return cached;
+    }
+
+    private void ProcessWeaponSelections()
+    {
+        while (weaponSelections.TryDequeue(out var selection))
+        {
+            WeaponSelectionActor = selection.Actor.LogicalKey;
+            // Re-check the user-requested job restriction at execution, not only when opening the picker.
+            if (!WeaponSelection.CanSelect(selection.Choice, GetEquipmentChoices(selection.Choice.Slot)))
+            {
+                WeaponSelectionStatus = Localizer[TextKey.WeaponJobMismatch];
+                continue;
+            }
+            if (!actorResolver.TryResolve(selection.Actor.LogicalKey, selection.Actor.RepresentationKey, out var current)
+                || actorRegistry.CaptureCurrentAppearance(current) is not { } appearance)
+            {
+                WeaponSelectionStatus = Localizer[TextKey.TargetActorUnavailable];
+                continue;
+            }
+            var updated = WeaponSelection.Replace(appearance, selection.Choice);
+            var weapon = selection.Choice.Slot == 11 ? updated.Mainhand!.Value : updated.Offhand!.Value;
+            if (!outfitMemory.TryApplyWeapon(current, selection.Choice.Slot == 12, weapon))
+            {
+                WeaponSelectionStatus = Localizer[TextKey.TargetActorUnavailable];
+                continue;
+            }
+            appearancePersistence.RecordWeapon(current, selection.Choice.Slot == 12, weapon);
+            if (appearancePersistence.GetModel(current.LogicalKey) is not null)
+                actorRegistry.RecordAppliedAppearance(current.LogicalKey, current.RepresentationKey, updated);
+            drawObjectInjector.EnablePersistentAppearance(current);
+            if (actorRegistry.TryGet(current.LogicalKey, out var entry))
+                pinnedOutfitStore.UpdateSelectedWeapon(entry, selection.Choice.Slot == 12, weapon);
+            WeaponSelectionStatus = Localizer[TextKey.WeaponSelectionApplied];
+        }
     }
     public void SetSourceColor(OutfitSlot slot, int channel, DyeColor? color)
         => bulkOutfitService.SetSourceColor(slot, channel, color);
@@ -714,6 +806,37 @@ public sealed class Plugin : IDalamudPlugin
         return cache;
     }
 
+    public EquipmentItemDisplay? GetWeaponDisplay(ulong weapon)
+    {
+        var key = weapon & 0xFFFFFFFFFFFFUL;
+        if (key == 0)
+            return null;
+        var language = ClientState.ClientLanguage;
+        if (!weaponDisplayCaches.TryGetValue(language, out var cache))
+        {
+            var candidates = new List<(ulong Model, string Name, uint Icon)>();
+            foreach (var item in DataManager.GetExcelSheet<Item>(language))
+            {
+                if (item.Name.IsEmpty || !item.EquipSlotCategory.IsValid)
+                    continue;
+                var slots = item.EquipSlotCategory.Value;
+                if (slots.MainHand != 1 && slots.OffHand != 1)
+                    continue;
+                if (item.ModelMain != 0)
+                    candidates.Add((item.ModelMain & 0xFFFFFFFFFFFFUL, item.Name.ToString(), (uint)item.Icon));
+                if (item.ModelSub != 0)
+                    candidates.Add((item.ModelSub & 0xFFFFFFFFFFFFUL, item.Name.ToString(), (uint)item.Icon));
+            }
+            cache = candidates.GroupBy(static item => item.Model).ToDictionary(
+                static group => group.Key,
+                group => new EquipmentItemDisplay(
+                    string.Join(" / ", group.Select(static item => item.Name).Distinct(GameTextComparison.GetComparer(language))),
+                    group.Select(static item => item.Icon).FirstOrDefault(static icon => icon != 0)));
+            weaponDisplayCaches[language] = cache;
+        }
+        return cache.GetValueOrDefault(key);
+    }
+
     private static EquipmentDisplayEntry CreateEquipmentDisplay(
         OutfitSlot slot,
         ushort set,
@@ -818,7 +941,7 @@ public sealed class Plugin : IDalamudPlugin
                     restoreStatus = message;
                     return false;
                 }
-                return CompleteActorRestore(actor, out message);
+                return CompleteActorRestore(actor, out message, outfitRestored: true);
             }
             if (!pendingActorRestoreRedraws.Add(actor))
             {
@@ -843,11 +966,24 @@ public sealed class Plugin : IDalamudPlugin
         return CompleteActorRestore(actor, out message);
     }
 
-    private bool CompleteActorRestore(LogicalActorKey actor, out string message)
+    private bool CompleteActorRestore(LogicalActorKey actor, out string message, bool outfitRestored = false)
     {
+        // A pin also registers an appearance without changing the model. Compare the
+        // actual model fields to the game source, not whether a pin/record exists.
+        var outfitOnly = outfitRestored
+            && actorResolver.TryResolve(actor, out var restored)
+            && actorRegistry.CaptureCurrentAppearance(restored) is { } rendered
+            && appearanceMemory.TryCapture(restored, out var gameAppearance)
+            && PinnedOutfitStore.CanMaintainWithOutfit(rendered, gameAppearance);
         actorRegistry.ClearManagedAppearance(actor);
         appearancePersistence.Restore(actor);
         UnpinActor(actor);
+        if (outfitOnly)
+        {
+            message = "Original outfit restored.";
+            restoreStatus = message;
+            return true;
+        }
         if (!actorResolver.TryResolve(actor, out var current))
         {
             message = "The actor is no longer available for redraw.";
@@ -879,7 +1015,7 @@ public sealed class Plugin : IDalamudPlugin
 
     public bool IsActorModified(LogicalActorKey actor)
         => (actorResolver.TryResolve(actor, out var current) && current.IsAppearanceManaged)
-            || IsOutfitModified(actor);
+            || IsOutfitModified(actor) || appearancePersistence.HasWeaponOverride(actor);
 
     public bool TryGetOutfitOverride(LogicalActorKey actor, out OutfitOverrideState state)
         => bulkOutfitService.Store.TryGet(actor, out state!);
@@ -1108,7 +1244,7 @@ public sealed class Plugin : IDalamudPlugin
                 return;
             }
 
-            if (!CompleteActorRestore(actor, out var redrawMessage))
+            if (!CompleteActorRestore(actor, out var redrawMessage, outfitRestored: true))
             {
                 ReportRestoreRedrawFailure(actor, redrawMessage);
                 return;
@@ -1148,6 +1284,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnPluginFrameworkUpdate(IFramework framework)
     {
+        ProcessWeaponSelections();
         ProcessGlamourPlateImport();
         EnsureCommandsRegistered();
         var now = Environment.TickCount64;
@@ -1196,6 +1333,8 @@ public sealed class Plugin : IDalamudPlugin
         nextPinnedOutfitScanTick = now + 500;
         foreach (var actor in actorRegistry.Entries)
         {
+            OutfitData desired;
+            OutfitData current;
             if (pinnedOutfitStore.TryGetAppearance(actor, out var pinnedAppearance))
             {
                 if (!actorResolver.TryResolve(actor.Key, out var representation)
@@ -1207,15 +1346,23 @@ public sealed class Plugin : IDalamudPlugin
                 if (failedPinnedAppearanceStates.TryGetValue(actor.Key, out var failed)
                     && PinnedOutfitStore.AppearanceEquals(rendered, failed))
                     continue;
-                if (!appearanceApplyService.TryApply(actor.Key, pinnedAppearance, out _))
-                    continue;
-                pinnedAppearanceOperationActor = actor.Key;
-                pinnedAppearanceOperationObservedState = rendered;
-                return true;
+                if (!PinnedOutfitStore.CanMaintainWithOutfit(rendered, pinnedAppearance)
+                    || EquipmentDisplayFormatting.CreateHumanOutfit(rendered) is not { } renderedOutfit
+                    || !pinnedOutfitStore.TryGet(actor, out desired))
+                {
+                    if (!appearanceApplyService.TryApply(actor.Key, pinnedAppearance, out _))
+                        continue;
+                    pinnedAppearanceOperationActor = actor.Key;
+                    pinnedAppearanceOperationObservedState = rendered;
+                    return true;
+                }
+                // An equipment-only difference uses the existing slot operation and its
+                // completion/failure handling, preserving the cutscene's animated model.
+                current = renderedOutfit;
             }
-            if (actor.Current.Race is null
-                || !pinnedOutfitStore.TryGet(actor, out var desired)
-                || !bulkOutfitService.TryCaptureOutfit(actor.Key, out var current))
+            else if (actor.Current.Race is null
+                || !pinnedOutfitStore.TryGet(actor, out desired)
+                || !bulkOutfitService.TryCaptureOutfit(actor.Key, out current))
                 continue;
 
             if (failedPinnedOutfitReapplyStates.TryGetValue(actor.Key, out var failedState))

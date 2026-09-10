@@ -11,6 +11,76 @@ namespace ActorMorpher.Tests;
 public sealed class PinnedOutfitStoreTests
 {
     [Theory]
+    [InlineData(false, 9005UL)]
+    [InlineData(true, 9005UL)]
+    [InlineData(false, 0UL)]
+    [InlineData(true, 0UL)]
+    public void WeaponSelectionUpdatesOnlyTheSelectedHandOfAnExistingPin(bool offhand, ulong weapon)
+    {
+        var configuration = new Configuration();
+        var store = new PinnedOutfitStore(configuration, () => { });
+        var actor = Actor("Pinned", true, 1, 10);
+        var original = Appearance(ModelCategory.Human);
+        store.PinCurrent([actor], _ => original);
+        store.UpdateSelectedWeapon(actor, offhand, weapon);
+        Assert.True(store.TryGetAppearance(actor, out var updated));
+        Assert.Equal(offhand ? original with { Offhand = weapon } : original with { Mainhand = weapon }, updated);
+        var other = Actor("Other", false, 2, 10);
+        store.UpdateSelectedWeapon(other, offhand, weapon);
+        Assert.False(store.IsPinned(other));
+    }
+
+    [Fact]
+    public void FullHumanPinKeepsAnimatedModelForOutfitDifferences()
+    {
+        var pinned = Appearance(ModelCategory.Human);
+        var changes = new[]
+        {
+            pinned with { Equipment = pinned.Equipment.SetItem(1, 9005UL | (2UL << 16)) },
+            pinned with { Equipment = pinned.Equipment.SetItem(0, 0) },
+            pinned with { HatVisible = true },
+            pinned with { VisorToggled = true },
+            pinned with { FacewearModelId = 18 },
+            pinned with { ColoredEquipment = EquipmentDisplayFormatting.CreateHumanOutfit(pinned)!.Equipment
+                .SetItem(1, new ArmorAppearance(0, 0, 1, 0) { Color1 = new(0.1f, 0.2f, 0.3f) }) },
+        };
+        foreach (var current in changes)
+            Assert.True(PinnedOutfitStore.CanMaintainWithOutfit(current, pinned));
+        // Classification is based on the requested visible operation, not diagnostic metadata.
+        Assert.True(PinnedOutfitStore.CanMaintainWithOutfit(changes[0], pinned with
+        { SourceRowId = 999, Completeness = AppearanceCompleteness.Unsupported }));
+
+        var configuration = new Configuration();
+        var store = new PinnedOutfitStore(configuration, () => { });
+        var actor = Actor("Pinned cutscene actor", false, 214, 418);
+        store.PinCurrent([actor], _ => pinned);
+        Assert.True(store.TryGet(actor, out var outfit));
+        Assert.True(OutfitDataValueComparer.AreEqual(
+            EquipmentDisplayFormatting.CreateHumanOutfit(pinned), outfit));
+        Assert.True(store.TryGetAppearance(actor, out var retained));
+        Assert.Equal(pinned, retained);
+    }
+
+    [Fact]
+    public void OutfitMaintenanceDoesNotOmitModelScaleCustomizeOrWeapons()
+    {
+        var pinned = Appearance(ModelCategory.Human);
+        var changes = new[]
+        {
+            pinned with { ModelCharaId = 9 },
+            pinned with { Category = ModelCategory.Demihuman },
+            pinned with { Customize = pinned.Customize.SetItem(0, 8) },
+            pinned with { ModelScale = 2 },
+            pinned with { Mainhand = 10 },
+            pinned with { Offhand = 20 },
+        };
+        foreach (var current in changes)
+            Assert.False(PinnedOutfitStore.CanMaintainWithOutfit(current, pinned));
+        var monster = Appearance(ModelCategory.Monster);
+        Assert.False(PinnedOutfitStore.CanMaintainWithOutfit(monster, monster));
+    }
+
+    [Theory]
     [InlineData(false, 1)]
     [InlineData(true, 1)]
     [InlineData(false, 10)]

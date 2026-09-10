@@ -262,4 +262,9 @@ public enum TextKey
     PlateSourceRequestFailed,
     PlateSourceCancelled,
     PlateSourceContextChanged,
+    WeaponPickerJobHint,
+    WeaponSearchHint,
+    WeaponJobMismatch,
+    WeaponSelectionQueued,
+    WeaponSelectionApplied,
 }

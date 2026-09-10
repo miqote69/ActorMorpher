@@ -45,6 +45,7 @@ public static class DiagnosticEventIds
     public const string BulkBatchCompleted = "AM6007";
     public const string BulkBatchCancelled = "AM6008";
     public const string BulkActorFailed = "AM6099";
+    public const string OutfitAnimationObserved = "AM6010";
     public const string UnequipBatchStarted = "AM6101";
     public const string RestoreBatchStarted = "AM6201";
     public const string TroubleshootingCaptureStarted = "AM7001";
@@ -87,6 +88,7 @@ public static class DiagnosticEventIds
         [OutfitSnapshotCaptured] = "OutfitSnapshotCaptured", [OutfitApplied] = "OutfitApplied",
         [OutfitSkipped] = "OutfitSkipped", [BulkBatchCompleted] = "BulkBatchCompleted",
         [BulkBatchCancelled] = "BulkBatchCancelled", [BulkActorFailed] = "BulkActorFailed",
+        [OutfitAnimationObserved] = "OutfitAnimationObserved",
         [UnequipBatchStarted] = "UnequipBatchStarted", [RestoreBatchStarted] = "RestoreBatchStarted",
         [TroubleshootingCaptureStarted] = "TroubleshootingCaptureStarted",
         [TroubleshootingCaptureEnded] = "TroubleshootingCaptureEnded",

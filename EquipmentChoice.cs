@@ -5,11 +5,17 @@ using Dalamud.Game;
 namespace ActorMorpher;
 
 // Slot 10 denotes facewear without extending the native ten-slot armor array.
-public readonly record struct EquipmentChoiceKey(int Slot, ushort Model, byte Variant, ushort FacewearId = 0);
+public readonly record struct EquipmentChoiceKey(int Slot, ushort Model, byte Variant, ushort FacewearId = 0,
+    ulong WeaponModel = 0)
+{
+    public bool IsWeapon => Slot is 11 or 12;
+}
 
 public sealed record EquipmentChoice(EquipmentChoiceKey Key, string Name, uint IconId)
 {
-    public string Number => Key.Slot == 10 ? Key.Model.ToString(CultureInfo.InvariantCulture)
+    public int DisplayVariant => Key.IsWeapon ? (ushort)(Key.WeaponModel >> 32) : Key.Variant;
+    public string Number => Key.IsWeapon ? $"w{Key.Model:D4} / b{(ushort)(Key.WeaponModel >> 16):D4}"
+        : Key.Slot == 10 ? Key.Model.ToString(CultureInfo.InvariantCulture)
         : EquipmentDisplayFormatting.FormatSet((OutfitSlot)Key.Slot, Key.Model);
 
     public bool Matches(string query, ClientLanguage language)
@@ -24,7 +30,7 @@ public sealed record EquipmentChoice(EquipmentChoiceKey Key, string Name, uint I
         text = text.Trim();
         if (text.Length > 0 && char.IsLetter(text[0]))
         {
-            var prefix = slot >= (int)OutfitSlot.Ears && slot < 10 ? 'a' : 'e';
+            var prefix = slot is 11 or 12 ? 'w' : slot >= (int)OutfitSlot.Ears && slot < 10 ? 'a' : 'e';
             if (slot == 10 || char.ToLowerInvariant(text[0]) != prefix)
             {
                 model = 0;

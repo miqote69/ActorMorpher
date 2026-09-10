@@ -14,6 +14,7 @@ internal sealed unsafe class NativeEquipmentColors : IDisposable
     private readonly IObjectTable objects;
     private readonly Func<nint, LogicalActorKey> resolve;
     private readonly ActorAppearancePersistence persistence;
+    private readonly IDiagnosticLog diagnostics;
     [ThreadStatic] private static AppearanceData? creating;
 
     internal static nint DuringCreate(AppearanceData? appearance, Func<nint> create)
@@ -25,11 +26,12 @@ internal sealed unsafe class NativeEquipmentColors : IDisposable
     }
 
     internal NativeEquipmentColors(IGameInteropProvider interop, IObjectTable objects,
-        Func<nint, LogicalActorKey> resolve, ActorAppearancePersistence persistence)
+        Func<nint, LogicalActorKey> resolve, ActorAppearancePersistence persistence, IDiagnosticLog diagnostics)
     {
         this.objects = objects;
         this.resolve = resolve;
         this.persistence = persistence;
+        this.diagnostics = diagnostics;
         hook = interop.HookFromAddress<SetupSlot>((nint)CharacterBase.MemberFunctionPointers.SetupSlotModel, OnSetup);
         try { hook.Enable(); }
         catch { hook.Dispose(); throw; }
@@ -39,7 +41,9 @@ internal sealed unsafe class NativeEquipmentColors : IDisposable
 
     private nint OnSetup(CharacterBase* model, uint slot)
     {
+        NativeOutfitMemory.ObserveAnimation(diagnostics, model, "BeforeSlotSetup", slot);
         var result = hook.Original(model, slot);
+        NativeOutfitMemory.ObserveAnimation(diagnostics, model, "AfterSlotSetup", slot);
         if (slot >= 10 || model->GetModelType() != CharacterBase.ModelType.Human)
             return result;
         if (creating is { } requested)

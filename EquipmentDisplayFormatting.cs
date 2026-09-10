@@ -4,6 +4,10 @@ namespace ActorMorpher;
 
 public static class EquipmentDisplayFormatting
 {
+    public static (ushort Model, ushort Type, ushort Variant, byte Stain1, byte Stain2) DecodeWeapon(ulong packed)
+        => ((ushort)packed, (ushort)(packed >> 16), (ushort)(packed >> 32),
+            (byte)(packed >> 48), (byte)(packed >> 56));
+
     public static string FormatSet(OutfitSlot slot, ushort set)
         => $"{(slot >= OutfitSlot.Ears ? 'a' : 'e')}{set:D4}";
 

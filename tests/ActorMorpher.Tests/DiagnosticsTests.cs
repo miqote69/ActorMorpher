@@ -15,6 +15,61 @@ namespace ActorMorpher.Tests;
 
 public sealed class DiagnosticsTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public unsafe void OutfitAnimationFileUsesCorrelatableIdsWithoutRawAddresses(bool includeRaw)
+    {
+        using var temp = new TemporaryDirectory();
+        using var router = new DiagnosticLogRouter(temp.Path, null, null);
+        Assert.True(router.Switch(Settings(FileDiagnosticMode.Full) with { IncludeRawAddresses = includeRaw }, "animation01"));
+        FFXIVClientStructs.Havok.Animation.Playback.hkaAnimatedSkeleton animation = default;
+        FFXIVClientStructs.FFXIV.Client.Graphics.Render.PartialSkeleton partial = default;
+        partial.HavokAnimatedSkeletons[0] = (ulong)&animation;
+        partial.HavokAnimatedSkeletons[1] = (ulong)&animation;
+        FFXIVClientStructs.FFXIV.Client.Graphics.Render.Skeleton skeleton = default;
+        skeleton.PartialSkeletonCount = 1;
+        skeleton.PartialSkeletons = &partial;
+        FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase model = default;
+        model.Skeleton = &skeleton;
+        FFXIVClientStructs.FFXIV.Client.Graphics.Render.Skeleton renderSkeleton = default;
+        FFXIVClientStructs.FFXIV.Client.Graphics.Render.Model render = default;
+        render.Skeleton = &renderSkeleton;
+        render.BoneCount = 17;
+        render.RenderModelCallback = &model.RenderModelCallback;
+        var slots = stackalloc FFXIVClientStructs.FFXIV.Client.Graphics.Render.Model*[2];
+        slots[0] = null;
+        slots[1] = &render;
+        model.Models = slots;
+        model.SlotCount = 2;
+        Interop.NativeOutfitMemory.ObserveAnimation(router, &model, "BeforeOutfitQueue");
+        Interop.NativeOutfitMemory.ObserveAnimation(router, &model, "AfterOutfitQueue");
+        Assert.True(router.ActiveService!.Flush(TimeSpan.FromSeconds(2)));
+        var lines = ReadAllLinesShared(router.ActiveService.Paths.LatestFile);
+        Assert.Equal(2, lines.Length);
+        var text = string.Join("\n", lines);
+        Assert.DoesNotContain($"0x{(nuint)(&model):X}", text);
+        Assert.DoesNotContain($"0x{(nuint)(&skeleton):X}", text);
+        Assert.DoesNotContain($"0x{(nuint)(&animation):X}", text);
+        Assert.DoesNotContain($"0x{(nuint)(&render):X}", text);
+        Assert.DoesNotContain($"0x{(nuint)(&renderSkeleton):X}", text);
+        using var first = JsonDocument.Parse(lines[0]);
+        using var second = JsonDocument.Parse(lines[1]);
+        var properties = first.RootElement.GetProperty("properties");
+        Assert.Equal(1, properties.GetProperty("renderSlot1.index").GetInt32());
+        Assert.Equal(JsonValueKind.Null, properties.GetProperty("renderSlot0.modelId").ValueKind);
+        Assert.Equal(JsonValueKind.Null, properties.GetProperty("renderSlot1.boneListId").ValueKind);
+        Assert.Equal(17, properties.GetProperty("renderSlot1.boneCount").GetInt32());
+        Assert.NotEqual(properties.GetProperty("skeletonId").GetString(), properties.GetProperty("renderSlot1.skeletonId").GetString());
+        Assert.Equal(properties.GetProperty("renderModelCallbackId").GetString(), properties.GetProperty("renderSlot1.callbackId").GetString());
+        foreach (var key in new[] { "characterBaseId", "skeletonId", "baseAnimationId0", "baseAnimationId1" })
+        {
+            var id = first.RootElement.GetProperty("properties").GetProperty(key).GetString();
+            Assert.Equal(16, id!.Length);
+            Assert.Equal(id, second.RootElement.GetProperty("properties").GetProperty(key).GetString());
+        }
+    }
+
     [Fact]
     public void ReleaseAndDevDefaultsDifferAndValidationClampsValues()
     {
