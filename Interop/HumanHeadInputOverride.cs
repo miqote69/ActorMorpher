@@ -1,17 +1,18 @@
 using Dalamud.Hooking;
 using Dalamud.Plugin.Services;
+using System.Collections.Immutable;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 
 namespace ActorMorpher.Interop;
 
-/// <summary>Removable head-input experiment, scoped to one requested native Create.</summary>
+/// <summary>Selected Human setup inputs, scoped to one requested native Create.</summary>
 internal sealed unsafe class HumanHeadInputOverride : IDisposable
 {
     private readonly Hook<SetupDelegate> hook;
 
     [ThreadStatic]
-    private static HeadInput? current;
+    private static SetupInput? current;
 
     internal HumanHeadInputOverride(IGameInteropProvider interop)
     {
@@ -35,8 +36,9 @@ internal sealed unsafe class HumanHeadInputOverride : IDisposable
     {
         var previous = current;
         current = appearance is { Category: ModelCategory.Human }
-            && !appearance.Equipment.IsDefaultOrEmpty
-                ? new HeadInput(appearance.Equipment[0])
+            && (!appearance.Customize.IsDefaultOrEmpty || !appearance.Equipment.IsDefaultOrEmpty)
+                ? new SetupInput(appearance.Customize,
+                    appearance.Equipment.IsDefaultOrEmpty ? null : appearance.Equipment[0])
                 : null;
         try
         {
@@ -60,19 +62,38 @@ internal sealed unsafe class HumanHeadInputOverride : IDisposable
         // SetupFromCharacterData belongs to this synchronous Create. Claim it once;
         // neither input comparisons nor diagnostic completeness choose the payload.
         input.Consumed = true;
-        var result = original(human, data);
+        // Create listeners can replace Customize before this native consumer reads it.
+        // Supply the selected bytes here without teaching them to the game-owned base.
+        var customizeLength = input.Customize.IsDefaultOrEmpty ? 0 : input.Customize.Length;
+        var customize = new Span<byte>((void*)data, customizeLength);
+        Span<byte> previousCustomize = stackalloc byte[customizeLength];
+        customize.CopyTo(previousCustomize);
+        input.Customize.AsSpan().CopyTo(customize);
+        byte result;
+        try
+        {
+            result = original(human, data);
+        }
+        finally
+        {
+            previousCustomize.CopyTo(customize);
+        }
         // Setup's nested equipment setters may replace an explicit zero with a
         // retained hat. Feed the generated Human's pending head after those calls,
         // before CharacterBase.Create returns. No extra native setter is invoked.
-        var target = (Human*)human;
-        ((EquipmentModelId*)target->ChangedEquipData)->Value = input.Head;
-        target->SlotNeedsUpdateBitfield |= 1u;
+        if (input.Head is { } head)
+        {
+            var target = (Human*)human;
+            ((EquipmentModelId*)target->ChangedEquipData)->Value = head;
+            target->SlotNeedsUpdateBitfield |= 1u;
+        }
         return result;
     }
 
-    private sealed class HeadInput(ulong head)
+    private sealed class SetupInput(ImmutableArray<byte> customize, ulong? head)
     {
-        internal ulong Head { get; } = head;
+        internal ImmutableArray<byte> Customize { get; } = customize;
+        internal ulong? Head { get; } = head;
         internal bool Consumed { get; set; }
     }
 

@@ -12,6 +12,74 @@ namespace ActorMorpher.Tests;
 public sealed unsafe class HumanHeadInputOverrideTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SetupConsumesPinnedCustomizeAfterCreateListenerReplacementAndRestoresInput(bool throwDuringSetup)
+    {
+        using var f = new NativeInputs();
+        byte[] selected = [5, 1, 1, 100, 9, 2, 186, 0, 169, 81, 92, 106, 18, 0, 1, 81, 1, 5, 2, 131, 54, 100, 0, 100, 1, 135];
+        byte[] replacement = [5, 1, 1, 100, 9, 2, 186, 0, 240, 81, 92, 174, 18, 0, 1, 81, 1, 5, 2, 131, 45, 100, 0, 100, 1, 135];
+        var request = AppearanceData.Create(0, ModelCategory.Human, 0,
+            AppearanceCompleteness.Complete, selected, new ulong[10]);
+        new Span<byte>((void*)f.Data, sizeof(Human.DrawData)).Fill(0x6B);
+        replacement.CopyTo(new Span<byte>((void*)f.Data, 26));
+        var before = f.DataBytes();
+        var calls = 0;
+        var failure = new InvalidOperationException("setup failed");
+        nint Create() => HumanHeadInputOverride.Invoke(request, () =>
+            HumanHeadInputOverride.Dispatch(f.Human, f.Data, (_, data) =>
+            {
+                calls++;
+                Assert.Equal(selected, new ReadOnlySpan<byte>((void*)data, 26).ToArray());
+                Assert.Equal(before.Skip(26), f.DataBytes().Skip(26));
+                if (throwDuringSetup)
+                    throw failure;
+                return 1;
+            }));
+        if (throwDuringSetup)
+            Assert.Same(failure, Assert.Throws<InvalidOperationException>(() => Create()));
+        else
+            Assert.Equal((nint)1, Create());
+        Assert.Equal(1, calls);
+        Assert.Equal(before, f.DataBytes());
+        // The selected value remains owned by the pin; no normalization to the listener result.
+        Assert.Equal(selected, request.Customize);
+    }
+
+    [Fact]
+    public void CustomizeOnlyDoesNotAcquireHeadAndNestedCreateDoesNotAcquireCustomize()
+    {
+        using var f = new NativeInputs();
+        var selected = Enumerable.Repeat((byte)19, 26).ToArray();
+        var request = AppearanceData.Create(0, ModelCategory.Human, 0,
+            AppearanceCompleteness.Complete, selected, Array.Empty<ulong>());
+        var before = f.DataBytes();
+        var pendingBefore = f.PendingBytes();
+        HumanHeadInputOverride.Invoke(request, () =>
+        {
+            HumanHeadInputOverride.Invoke(null, () => HumanHeadInputOverride.Dispatch(f.Human, f.Data, (_, _) =>
+            {
+                Assert.Equal(before, f.DataBytes());
+                return 1;
+            }));
+            HumanHeadInputOverride.Dispatch(f.Human, f.Data, (_, _) =>
+            {
+                Assert.Equal(selected, f.DataBytes().Take(26));
+                return 1;
+            });
+            HumanHeadInputOverride.Dispatch(f.Human, f.Data, (_, _) =>
+            {
+                Assert.Equal(before, f.DataBytes());
+                return 1;
+            });
+            return 0;
+        });
+        Assert.Equal(before, f.DataBytes());
+        Assert.Equal(pendingBefore, f.PendingBytes());
+        Assert.Equal(0xA0u, f.Flags);
+    }
+
+    [Theory]
     [InlineData(0UL, 1)]
     [InlineData(123456UL, 1)]
     [InlineData(0UL, 0)]

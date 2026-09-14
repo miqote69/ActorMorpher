@@ -28,6 +28,8 @@ public sealed class ReleaseNotesTests
         Assert.Equal(label, localizer[TextKey.ReleaseNotes]);
         var text = ReleaseNotesContent.GetText(localizer.EffectiveLanguage);
         Assert.Contains(label, text);
+        Assert.Contains("v0.0.0.53", text);
+        Assert.Contains("v0.0.0.52", text);
         Assert.DoesNotContain(pendingHeading, text);
         Assert.Contains("BNpcBase", text);
         Assert.Contains("ON", text);
