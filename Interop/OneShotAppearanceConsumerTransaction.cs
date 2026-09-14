@@ -17,6 +17,7 @@ internal sealed unsafe class OneShotAppearanceConsumerTransaction : IDisposable
     private readonly Hook<HatConsumerDelegate>? hatHook;
     private readonly Hook<VisorConsumerDelegate>? visorHook;
     private Transaction? active;
+    internal Func<nint, bool, ulong, WeaponDyes>? GetWeaponDyes { get; set; }
 
     public OneShotAppearanceConsumerTransaction(IGameInteropProvider interop)
     {
@@ -153,8 +154,9 @@ internal sealed unsafe class OneShotAppearanceConsumerTransaction : IDisposable
             skipGameObject,
             unknown4,
             unknown5,
-            (container, forwardedSlot, forwardedWeapon, first, second, third, fourth, fifth)
-                => weaponHook!.Original(
+            (container, forwardedSlot, forwardedWeapon, first, second, third, fourth, fifth) =>
+            {
+                weaponHook!.Original(
                     (DrawDataContainer*)container,
                     forwardedSlot,
                     forwardedWeapon,
@@ -162,7 +164,14 @@ internal sealed unsafe class OneShotAppearanceConsumerTransaction : IDisposable
                     second,
                     third,
                     fourth,
-                    fifth));
+                    fifth);
+                if (forwardedSlot <= (uint)DrawDataContainer.WeaponSlot.OffHand)
+                {
+                    var rendered = ((DrawDataContainer*)container)->Weapon((DrawDataContainer.WeaponSlot)forwardedSlot).Weapon;
+                    NativeOutfitMemory.ApplyWeaponColors(rendered, forwardedWeapon,
+                        ResolveWeaponDyes(ownerAddress, ownerObjectIndex, forwardedSlot, forwardedWeapon));
+                }
+            });
     }
 
     internal void DispatchWeapon(
@@ -188,6 +197,17 @@ internal sealed unsafe class OneShotAppearanceConsumerTransaction : IDisposable
             skipGameObject,
             unknown4,
             unknown5);
+    }
+
+    internal WeaponDyes ResolveWeaponDyes(nint owner, ushort objectIndex, uint slot, ulong weapon)
+    {
+        if (slot > (uint)DrawDataContainer.WeaponSlot.OffHand)
+            return default;
+        // Use the transaction payload only for its exact owner; other LoadWeapon calls retain their own colors.
+        if (active is { } transaction && transaction.TargetAddress == owner && transaction.RuntimeObjectIndex == objectIndex)
+            return slot == (uint)DrawDataContainer.WeaponSlot.OffHand
+                ? transaction.Appearance.OffhandDyes : transaction.Appearance.MainhandDyes;
+        return GetWeaponDyes?.Invoke(owner, slot == (uint)DrawDataContainer.WeaponSlot.OffHand, weapon) ?? default;
     }
 
     private void FacewearConsumerDetour(DrawDataContainer* drawData, int slot, ushort id)

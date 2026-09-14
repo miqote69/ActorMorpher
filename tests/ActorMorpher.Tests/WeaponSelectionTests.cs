@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using ActorMorpher.Appearance;
+using ActorMorpher.BulkOutfit;
 using Dalamud.Game;
 using Lumina.Excel.Sheets;
 using Newtonsoft.Json;
@@ -32,10 +33,13 @@ public class WeaponSelectionTests
     {
         var current = AppearanceData.Create(0, ModelCategory.Human, 17, AppearanceCompleteness.Complete,
             new byte[26], new ulong[10], 0.84f,
-            15UL | (4UL << 48) | (5UL << 56), 16UL | (6UL << 48) | (7UL << 56));
+            15UL | (4UL << 48) | (5UL << 56), 16UL | (6UL << 48) | (7UL << 56))
+            with { MainhandDyes = new(new DyeColor(1, 0, 0) { Metallic = true }, null),
+                OffhandDyes = new(null, new(0, 1, 0)) };
         var removal = new EquipmentChoiceKey(slot, 0, 0);
         var removed = WeaponSelection.Replace(current, removal);
-        var expected = slot == 11 ? current with { Mainhand = 0 } : current with { Offhand = 0 };
+        var expected = slot == 11 ? current with { Mainhand = 0, MainhandDyes = default }
+            : current with { Offhand = 0, OffhandDyes = default };
         Assert.Equal(expected, removed);
         Assert.Equal(expected, WeaponSelection.Replace(removed, removal));
         Assert.Equal(expected with { Completeness = AppearanceCompleteness.Unsupported },

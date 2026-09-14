@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
-    <Version>0.0.0.51</Version>
+    <Version>0.0.0.52</Version>
     <PackageProjectUrl>https://github.com/miqote69/ActorMorpher</PackageProjectUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <IsPackable>false</IsPackable>
@@ -14,6 +14,6 @@
   <ItemGroup>
     <Compile Remove="tests/**/*.cs" />
     <InternalsVisibleTo Include="ActorMorpher.Tests" />
-    <EmbeddedResource Include="docs/RELEASE_NOTES_0.0.0.51.md" LogicalName="ActorMorpher.ReleaseNotes" />
+    <EmbeddedResource Include="docs/RELEASE_NOTES_0.0.0.52.md" LogicalName="ActorMorpher.ReleaseNotes" />
   </ItemGroup>
 </Project>

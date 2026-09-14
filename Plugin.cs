@@ -18,7 +18,7 @@ using ActorMorpher.Preview;
 
 namespace ActorMorpher;
 
-public sealed class Plugin : IDalamudPlugin
+public sealed partial class Plugin : IDalamudPlugin
 {
     public const string DisplayName = "Actor Morpher";
 
@@ -77,7 +77,8 @@ public sealed class Plugin : IDalamudPlugin
     private readonly Dictionary<ClientLanguage, IReadOnlyDictionary<ulong, EquipmentItemDisplay>> weaponDisplayCaches = new();
     private readonly Dictionary<(ClientLanguage, int), EquipmentChoice[]> equipmentChoices = new();
     private readonly System.Collections.Concurrent.ConcurrentDictionary<(ClientLanguage, uint, int), EquipmentChoice[]> weaponChoices = new();
-    private readonly System.Collections.Concurrent.ConcurrentQueue<(ActorSnapshot Actor, EquipmentChoiceKey Choice)> weaponSelections = new();
+    private readonly System.Collections.Concurrent.ConcurrentQueue<(ActorSnapshot Actor, EquipmentChoiceKey Choice,
+        int? DyeChannel, DyeColor? Color, bool ClearDye)> weaponSelections = new();
     public uint CurrentWeaponJob => ObjectTable.LocalPlayer?.ClassJob.RowId ?? 0;
     public string WeaponSelectionStatus { get; private set; } = string.Empty;
     public LogicalActorKey? WeaponSelectionActor { get; private set; }
@@ -207,8 +208,9 @@ public sealed class Plugin : IDalamudPlugin
         outfitMemory.GetColorOutfit = appearancePersistence.GetColorOutfit;
         outfitMemory.SetColorOutfit = appearancePersistence.SetColorOutfit;
         equipmentColors = new NativeEquipmentColors(GameInteropProvider, ObjectTable,
-            drawObjectInjector.ResolveActor, appearancePersistence, diagnosticRouter);
+            drawObjectInjector.ResolveActor, appearancePersistence, diagnosticRouter, DataManager);
         actorRegistry.GetColorOutfit = outfitMemory.GetColorOutfit;
+        actorRegistry.GetWeaponDyes = appearancePersistence.GetWeaponDyes;
         bulkOutfitService = new BulkOutfitService(
             Framework,
             actorResolver,
@@ -448,7 +450,7 @@ public sealed class Plugin : IDalamudPlugin
                 message = Localizer[TextKey.TargetActorUnavailable];
                 return false;
             }
-            weaponSelections.Enqueue((target, choice));
+            weaponSelections.Enqueue((target, choice, null, null, false));
             WeaponSelectionActor = actor;
             message = WeaponSelectionStatus = Localizer[TextKey.WeaponSelectionQueued];
             return true;
@@ -476,24 +478,24 @@ public sealed class Plugin : IDalamudPlugin
             choices = GetEquipmentDisplays(ClientState.ClientLanguage)
                 .Where(entry => (int)entry.Key.Slot == slot)
                 .Select(entry => new EquipmentChoice(new(slot, (ushort)(entry.Key.ModelKey & 0xFFFF),
-                    (byte)(entry.Key.ModelKey >> 16)), entry.Value.Name, entry.Value.IconId));
+                    (byte)(entry.Key.ModelKey >> 16)), entry.Value.Name, entry.Value.IconId)
+                    { Items = GetEquipmentItemInfos(slot, entry.Key.ModelKey) });
         cached = choices.OrderBy(choice => choice.Name, GameTextComparison.GetComparer(ClientState.ClientLanguage)).ToArray();
         equipmentChoices[cacheKey] = cached;
         return cached;
     }
 
-    public EquipmentChoice[] SearchEquipment(int slot, string query, bool favoritesOnly)
+    public EquipmentChoice[] SearchEquipment(int slot, string query, EquipmentPickerFilter filter)
     {
         var choices = GetEquipmentChoices(slot);
         if (slot is 11 or 12)
-            return WeaponSelection.Filter(choices, Configuration.FavoriteEquipment, favoritesOnly)
-                .Where(choice => choice.Matches(query, ClientState.ClientLanguage)).ToArray();
+            return EquipmentChoice.FilterForPicker(WeaponSelection.Filter(choices, Configuration.FavoriteEquipment, false),
+                Configuration.FavoriteEquipment, filter, query, ClientState.ClientLanguage);
         var keys = choices.Select(choice => choice.Key).ToHashSet();
         var manualFavorites = Configuration.FavoriteEquipment.Where(key => key.Slot == slot && !keys.Contains(key))
             .Select(key => new EquipmentChoice(key, Localizer[TextKey.ManualEquipment], 0));
-        return choices.Concat(manualFavorites)
-            .Where(choice => (!favoritesOnly || Configuration.FavoriteEquipment.Contains(choice.Key))
-                && choice.Matches(query, ClientState.ClientLanguage)).ToArray();
+        return EquipmentChoice.FilterForPicker(choices.Concat(manualFavorites), Configuration.FavoriteEquipment,
+            filter, query, ClientState.ClientLanguage);
     }
 
     public void ToggleEquipmentFavorite(EquipmentChoiceKey key)
@@ -524,10 +526,12 @@ public sealed class Plugin : IDalamudPlugin
             var model = WeaponSelection.ModelForSlot(slot, slots.MainHand == 1, slots.OffHand == 1,
                 item.ModelMain, item.ModelSub);
             if (model != 0)
-                choices.Add(new(new(slot, (ushort)model, 0, WeaponModel: model), item.Name.ToString(), item.Icon));
+                choices.Add(new(new(slot, (ushort)model, 0, WeaponModel: model), item.Name.ToString(), item.Icon)
+                    { Items = [CreateEquipmentItemInfo(item)] });
         }
         cached = choices.GroupBy(choice => choice.Key)
-            .Select(group => group.First() with { Name = string.Join(" / ", group.Select(choice => choice.Name).Distinct()) })
+            .Select(group => group.First() with { Name = string.Join(" / ", group.Select(choice => choice.Name).Distinct()),
+                Items = group.SelectMany(choice => choice.Items).ToArray() })
             .OrderBy(choice => choice.Name, GameTextComparison.GetComparer(ClientState.ClientLanguage)).ToArray();
         weaponChoices[key] = cached;
         return cached;
@@ -539,7 +543,7 @@ public sealed class Plugin : IDalamudPlugin
         {
             WeaponSelectionActor = selection.Actor.LogicalKey;
             // Re-check the user-requested job restriction at execution, not only when opening the picker.
-            if (!WeaponSelection.CanSelect(selection.Choice, GetEquipmentChoices(selection.Choice.Slot)))
+            if (selection.DyeChannel is null && !WeaponSelection.CanSelect(selection.Choice, GetEquipmentChoices(selection.Choice.Slot)))
             {
                 WeaponSelectionStatus = Localizer[TextKey.WeaponJobMismatch];
                 continue;
@@ -550,24 +554,83 @@ public sealed class Plugin : IDalamudPlugin
                 WeaponSelectionStatus = Localizer[TextKey.TargetActorUnavailable];
                 continue;
             }
-            var updated = WeaponSelection.Replace(appearance, selection.Choice);
-            var weapon = selection.Choice.Slot == 11 ? updated.Mainhand!.Value : updated.Offhand!.Value;
-            if (!outfitMemory.TryApplyWeapon(current, selection.Choice.Slot == 12, weapon))
+            if (selection.Choice.Slot < 10 && selection.DyeChannel is { } armorChannel)
+            {
+                if (!bulkOutfitService.TryApplyDye(current, (OutfitSlot)selection.Choice.Slot, armorChannel,
+                    selection.Color, selection.ClearDye, out var outfit, out var confirmed))
+                {
+                    WeaponSelectionStatus = Localizer[TextKey.TargetActorUnavailable];
+                    continue;
+                }
+                appearancePersistence.RecordOutfit(current, outfit);
+                drawObjectInjector.EnablePersistentAppearance(current);
+                if (appearancePersistence.GetModel(current.LogicalKey) is { } updatedModel)
+                    actorRegistry.RecordAppliedAppearance(current.LogicalKey, current.RepresentationKey, updatedModel);
+                if (actorRegistry.TryGet(current.LogicalKey, out var dyedActor))
+                    pinnedOutfitStore.UpdateSelectedEquipment(dyedActor, selection.Choice, outfit);
+                WeaponSelectionStatus = Localizer[confirmed ? TextKey.DyeApplied : TextKey.DyeSavedUnconfirmed];
+                continue;
+            }
+            var offhand = selection.Choice.Slot == 12;
+            var dyes = offhand ? appearance.OffhandDyes : appearance.MainhandDyes;
+            AppearanceData updated;
+            ulong weapon;
+            bool applied;
+            var colorResult = new NativeEquipmentColors.ColorApplyResult();
+            if (selection.DyeChannel is { } channel)
+            {
+                applied = outfitMemory.TryApplyWeaponDyes(current, offhand, channel, selection.Color,
+                    selection.ClearDye, dyes, out weapon, out dyes, out colorResult);
+                updated = offhand ? appearance with { Offhand = weapon, OffhandDyes = dyes }
+                    : appearance with { Mainhand = weapon, MainhandDyes = dyes };
+            }
+            else
+            {
+                updated = WeaponSelection.Replace(appearance, selection.Choice);
+                dyes = offhand ? updated.OffhandDyes : updated.MainhandDyes;
+                weapon = offhand ? updated.Offhand!.Value : updated.Mainhand!.Value;
+                applied = outfitMemory.TryApplyWeapon(current, offhand, weapon, dyes);
+            }
+            if (!applied)
             {
                 WeaponSelectionStatus = Localizer[TextKey.TargetActorUnavailable];
                 continue;
             }
-            appearancePersistence.RecordWeapon(current, selection.Choice.Slot == 12, weapon);
+            appearancePersistence.RecordWeapon(current, offhand, weapon, dyes);
             if (appearancePersistence.GetModel(current.LogicalKey) is not null)
                 actorRegistry.RecordAppliedAppearance(current.LogicalKey, current.RepresentationKey, updated);
             drawObjectInjector.EnablePersistentAppearance(current);
             if (actorRegistry.TryGet(current.LogicalKey, out var entry))
-                pinnedOutfitStore.UpdateSelectedWeapon(entry, selection.Choice.Slot == 12, weapon);
-            WeaponSelectionStatus = Localizer[TextKey.WeaponSelectionApplied];
+                pinnedOutfitStore.UpdateSelectedWeapon(entry, offhand, weapon, dyes);
+            WeaponSelectionStatus = Localizer[selection.DyeChannel is null ? TextKey.WeaponSelectionApplied
+                : colorResult.Applied ? TextKey.DyeApplied : TextKey.DyeSavedUnconfirmed];
         }
     }
     public void SetSourceColor(OutfitSlot slot, int channel, DyeColor? color)
         => bulkOutfitService.SetSourceColor(slot, channel, color);
+
+    public bool SetActorWeaponDye(LogicalActorKey actor, bool offhand, int channel, DyeColor? color,
+        bool clearDye, out string message)
+        => QueueActorDye(actor, offhand ? 12 : 11, channel, color, clearDye, out message);
+
+    public bool SetActorDye(LogicalActorKey actor, OutfitSlot slot, int channel, DyeColor? color, bool clearDye, out string message)
+        => QueueActorDye(actor, (int)slot, channel, color, clearDye, out message);
+
+    private bool QueueActorDye(LogicalActorKey actor, int slot, int channel, DyeColor? color,
+        bool clearDye, out string message)
+    {
+        if (!CanStartBulkOutfitInCurrentContext(out message))
+            return false;
+        if (!actorResolver.TryResolve(actor, out var target))
+        {
+            message = Localizer[TextKey.TargetActorUnavailable];
+            return false;
+        }
+        weaponSelections.Enqueue((target, new(slot, 0, 0), channel, color, clearDye));
+        WeaponSelectionActor = actor;
+        WeaponSelectionStatus = message = Localizer[TextKey.DyeChangeQueued];
+        return true;
+    }
 
     public void ClearSourceDye(OutfitSlot slot, int channel)
         => bulkOutfitService.ClearSourceDye(slot, channel);
@@ -970,17 +1033,30 @@ public sealed class Plugin : IDalamudPlugin
     {
         // A pin also registers an appearance without changing the model. Compare the
         // actual model fields to the game source, not whether a pin/record exists.
-        var outfitOnly = outfitRestored
-            && actorResolver.TryResolve(actor, out var restored)
+        var outfitOnly = false;
+        var weaponColorsConfirmed = true;
+        if (actorResolver.TryResolve(actor, out var restored)
             && actorRegistry.CaptureCurrentAppearance(restored) is { } rendered
             && appearanceMemory.TryCapture(restored, out var gameAppearance)
-            && PinnedOutfitStore.CanMaintainWithOutfit(rendered, gameAppearance);
+            && PinnedOutfitStore.CanMaintainWithOutfit(rendered, gameAppearance)
+            && (outfitRestored || ((appearancePersistence.HasWeaponOverride(actor) || appearancePersistence.GetModel(actor) is not null)
+                && outfitMemory.TryCapture(restored, out var gameOutfit)
+                && OutfitDataValueComparer.AreEqual(EquipmentDisplayFormatting.CreateHumanOutfit(rendered), gameOutfit))))
+        {
+            // Restore weapon stains/materials before removing their retained settings.
+            if (!ApplyMatchingWeaponDyes(restored, rendered, gameAppearance, out weaponColorsConfirmed))
+            {
+                message = Localizer[TextKey.TargetActorUnavailable];
+                return false;
+            }
+            outfitOnly = true;
+        }
         actorRegistry.ClearManagedAppearance(actor);
         appearancePersistence.Restore(actor);
         UnpinActor(actor);
         if (outfitOnly)
         {
-            message = "Original outfit restored.";
+            message = weaponColorsConfirmed ? "Original outfit restored." : Localizer[TextKey.DyeRestoreUnconfirmed];
             restoreStatus = message;
             return true;
         }
@@ -1358,6 +1434,11 @@ public sealed class Plugin : IDalamudPlugin
                 }
                 // An equipment-only difference uses the existing slot operation and its
                 // completion/failure handling, preserving the cutscene's animated model.
+                if (!ApplyMatchingWeaponDyes(representation, rendered, pinnedAppearance, out _))
+                {
+                    failedPinnedAppearanceStates[actor.Key] = rendered;
+                    continue;
+                }
                 current = renderedOutfit;
             }
             else if (actor.Current.Race is null
@@ -1393,6 +1474,28 @@ public sealed class Plugin : IDalamudPlugin
             return true;
         }
         return false;
+    }
+
+    private bool ApplyMatchingWeaponDyes(ActorSnapshot actor, AppearanceData current, AppearanceData desired,
+        out bool confirmed)
+    {
+        confirmed = true;
+        for (var hand = 0; hand < 2; ++hand)
+        {
+            var offhand = hand == 1;
+            var weapon = offhand ? desired.Offhand : desired.Mainhand;
+            var oldWeapon = offhand ? current.Offhand : current.Mainhand;
+            var dyes = offhand ? desired.OffhandDyes : desired.MainhandDyes;
+            var oldDyes = offhand ? current.OffhandDyes : current.MainhandDyes;
+            if (weapon is null || (weapon == oldWeapon && dyes == oldDyes))
+                continue;
+            if (!outfitMemory.TryApplyPinnedWeaponDyes(actor, offhand, weapon.Value, dyes, out var result))
+                return false;
+            confirmed &= result.Applied;
+            appearancePersistence.RecordWeapon(actor, offhand, weapon.Value, dyes);
+            drawObjectInjector.EnablePersistentAppearance(actor);
+        }
+        return true;
     }
 
     private void UnpinActor(LogicalActorKey actor)

@@ -49,6 +49,8 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
         {
             cutsceneActors = new NativeCutsceneActorTracker(interop, diagnostics, CaptureCopySource, continuity.Forget);
             consumerTransaction = new OneShotAppearanceConsumerTransaction(interop);
+            consumerTransaction.GetWeaponDyes = (owner, offhand, weapon)
+                => transitionState.GetWeaponDyes(ResolveActor(owner), offhand, weapon);
             headInputOverride = new HumanHeadInputOverride(interop);
             createHook = interop.HookFromAddress<CreateCharacterBaseDelegate>(
                 (nint)CharacterBase.MemberFunctionPointers.Create,

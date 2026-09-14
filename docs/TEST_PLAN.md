@@ -1,5 +1,17 @@
 # Test Plan
 
+## Equipment picker simplified views (2026-09-11)
+
+The latest User request replaces duty categories with mutually exclusive All/Fashion/Favorites and numeric model ascending order, and fixes the off-center clear icon. Run the focused picker tests for these changed filtering/sorting predicates. Static review covers centered cross geometry, removed duty-data path and unchanged Apply routes. Build the Dev DLL after review corrections; runtime appearance remains User-operated. Older duty-category cases below are superseded.
+
+## Actor details and equipment categories (2026-09-11)
+
+Verify display-only grouping and all Customize fields by source review; run focused equipment category tests because grouped aliases can otherwise be misclassified or show incorrect IL. Rebuild the changed native UI/catalog against the installed SDK and independently review before Dev-only DLL delivery. Existing Apply/restore tests are unchanged; game UI and visual acceptance are UNEXECUTED until User confirmation.
+
+## Equipment picker selected mock (2026-09-11)
+
+Implement the User-selected first mock in the native Dev picker: burgundy title, opaque charcoal body, fixed search/filters/current equipment, flat icon/name rows with subordinate model/variant, independent right-side favorite stars, collapsible manual armor fields and fixed footer. Build the actual Dev assembly to check ImGui bindings. Independently review the actual input hit regions, clipper height, width/height calculations and source/Actor/weapon/facewear routes against the mock. Existing search, favorite persistence and equipment/weapon selection tests remain reusable because those product methods are unchanged; do not add tests mirroring ImGui drawing calls. User-operated visual/interaction acceptance is separate from compilation and remains UNEXECUTED until observed. No release update in this task.
+
 ## Embedded release notes (2026-09-10)
 
 Add a Release Notes tab immediately after Settings, using the same effective UI language and fixed-tab/scrolling-content layout. Embed the v0.0.0.51 release document in the DLL with Japanese, English, German and French sections. Focused managed checks must read the actual embedded resource and verify translated content, title/version, and language changes through the existing Localizer, including Automatic. A source-only check cannot establish resource packaging or locale selection. Failures require fixing the resource or UI wiring before Dev delivery. Independent static review covers placement and scope; visible layout and language switching in FF14 remain User-operated and UNEXECUTED. Build and deploy Dev first; leave the prepared public ZIP unchanged pending User confirmation.

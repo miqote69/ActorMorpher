@@ -234,6 +234,25 @@ public sealed class BulkOutfitService : IDisposable
     public bool StartPersistentApply(LogicalActorKey actor, OutfitData outfit, out string message)
         => Start(BulkOperationType.ApplyOutfit, [actor], outfit, out message);
 
+    internal bool TryApplyDye(ActorSnapshot actor, OutfitSlot slot, int channel, DyeColor? color,
+        bool clearDye, out OutfitData desired, out bool confirmed)
+    {
+        desired = null!;
+        confirmed = false;
+        if (!memory.TryCaptureRendered(actor, out var current))
+            return false;
+        store.TryGet(actor.LogicalKey, out var previous);
+        var original = previous?.Original ?? current;
+        if (previous is null && actor.IsAppearanceManaged && !memory.TryCapture(actor, out original))
+            return false;
+        desired = current with { Equipment = current.Equipment.SetItem((int)slot,
+            current.Equipment[(int)slot].WithDye(channel, color, clearDye)) };
+        if (!memory.TryApplyDye(actor, slot, channel, desired, out confirmed))
+            return false;
+        store.SetDesired(actor.LogicalKey, original, desired);
+        return true;
+    }
+
     public void ForgetOverride(LogicalActorKey actor)
     {
         pendingReapply.Remove(actor);

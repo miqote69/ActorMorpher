@@ -13,6 +13,35 @@ namespace ActorMorpher.Tests;
 public sealed unsafe class ActorAppearancePersistenceTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void WeaponColorsSurviveOutfitChangesAndExplicitRestoreClearsThem(bool managed)
+    {
+        var state = new ActorAppearancePersistence();
+        var actor = Snapshot(ObjectKind.Companion);
+        if (managed) state.RecordModel(actor, Model(7) with { Mainhand = 11, Offhand = 12 });
+        var main = new WeaponDyes(new DyeColor(1, 0, 0) { Metallic = true }, new(0, 1, 0));
+        var off = new WeaponDyes(null, new DyeColor(0, 0, 1) { Metallic = false });
+        state.RecordWeapon(actor, false, 11, main);
+        state.RecordWeapon(actor, true, 12, off);
+        state.RecordOutfit(actor, Outfit(20));
+        var retained = state.GetCreateAppearance(actor.LogicalKey, 0, out _)!;
+        Assert.Equal(main, retained.MainhandDyes);
+        Assert.Equal(off, retained.OffhandDyes);
+        Assert.Equal(main, state.GetWeaponDyes(actor.LogicalKey, false, 11));
+        Assert.Equal(default, state.GetWeaponDyes(actor.LogicalKey, false, 99));
+        state.RecordWeapon(actor, false, 11, main.WithDye(0, null));
+        retained = state.GetCreateAppearance(actor.LogicalKey, 0, out _)!;
+        Assert.Equal(main.Color2, retained.MainhandDyes.Color2);
+        Assert.Null(retained.MainhandDyes.Color1);
+        Assert.Equal(off, retained.OffhandDyes);
+        state.Restore(actor.LogicalKey);
+        Assert.Null(state.GetCreateAppearance(actor.LogicalKey, 0, out _));
+        Assert.Equal(default, state.GetWeaponDyes(actor.LogicalKey, false, 11));
+        Assert.Equal(default, state.GetWeaponDyes(actor.LogicalKey, true, 12));
+    }
+
+    [Theory]
     [InlineData(false, false)]
     [InlineData(true, false)]
     [InlineData(false, true)]

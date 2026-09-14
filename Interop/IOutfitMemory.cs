@@ -5,4 +5,5 @@ public interface IOutfitMemory
     bool TryCapture(ActorSnapshot actor, out OutfitData outfit);
     bool TryCaptureRendered(ActorSnapshot actor, out OutfitData outfit);
     bool TryApply(ActorSnapshot actor, OutfitData outfit);
+    bool TryApplyDye(ActorSnapshot actor, OutfitSlot slot, int channel, OutfitData outfit, out bool confirmed);
 }

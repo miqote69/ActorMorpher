@@ -15,6 +15,53 @@ namespace ActorMorpher.Tests;
 public sealed class ApplyServicesTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void LiveDyeUpdatesKeepLastColorAndOriginalWithoutStartingBulkOperations(bool managed)
+    {
+        var actor = Snapshot(1) with { IsAppearanceManaged = managed };
+        var other = Snapshot(2);
+        var original = Outfit(10);
+        var visible = managed ? Outfit(30) : original;
+        var memory = new FakeOutfitMemory(new() { [actor.LogicalKey] = original, [other.LogicalKey] = Outfit(20) });
+        memory.SetRendered(actor.LogicalKey, visible);
+        var store = new OutfitOverrideStore();
+        using var service = new BulkOutfitService(new FakeResolver(actor, other), memory, new FakeContext(),
+            store, NullDiagnosticLog.Instance);
+        var source = service.SourceOutfit;
+        for (var step = 0; step < 60; ++step)
+        {
+            var color = new DyeColor(step / 59f, 0, 1) { Metallic = step == 59 };
+            Assert.True(service.TryApplyDye(actor, OutfitSlot.Body, 0, color, false, out var changed, out _));
+            Assert.Equal(color, changed.Equipment[1].Color1);
+            Assert.Same(original, store.States[actor.LogicalKey].Original);
+        }
+        Assert.Null(service.CurrentOperation);
+        Assert.Empty(memory.ApplyCalls);
+        Assert.Equal(60, memory.DyeCalls);
+        var last = memory.Rendered[actor.LogicalKey];
+        Assert.True(OutfitDataValueComparer.AreEqual(visible with { Equipment = visible.Equipment.SetItem(1,
+            visible.Equipment[1] with { Color1 = new DyeColor(1, 0, 1) { Metallic = true } }) }, last));
+        // An independent bulk operation must not reject/drop the live edit or be replaced by it.
+        Assert.True(service.StartApply([other.LogicalKey], out _));
+        var pending = service.CurrentOperation;
+        Assert.True(service.TryApplyDye(actor, OutfitSlot.Body, 1, new(0, 1, 0), false, out _, out _));
+        Assert.Same(pending, service.CurrentOperation);
+        Assert.True(service.TryApplyDye(actor, OutfitSlot.Body, 0, null, true, out var cleared, out _));
+        Assert.Null(cleared.Equipment[1].Color1);
+        Assert.Equal(new DyeColor(0, 1, 0), cleared.Equipment[1].Color2);
+        Assert.Same(source, service.SourceOutfit);
+        Assert.True(OutfitDataValueComparer.AreEqual(Outfit(20), memory.Rendered[other.LogicalKey]));
+        service.ProcessNextFrame();
+        service.ProcessNextFrame();
+        service.ProcessNextFrame();
+        Assert.True(service.StartRestore(actor.LogicalKey, out _));
+        service.ProcessNextFrame();
+        service.ProcessNextFrame();
+        Assert.Equal(original, memory.Rendered[actor.LogicalKey]);
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(6072)]
     public void ImportedPlateEquipmentUsesSourceEditingApplyAndRestorePath(ushort head)
@@ -1235,6 +1282,16 @@ public sealed class ApplyServicesTests
         public bool CaptureUnavailable { get; set; }
         public bool ApplySucceeds { get; init; } = true;
         public int CaptureCount { get; private set; }
+        public int DyeCalls { get; private set; }
+
+        public bool TryApplyDye(ActorSnapshot actor, OutfitSlot slot, int channel, OutfitData outfit, out bool confirmed)
+        {
+            ++DyeCalls;
+            confirmed = ApplySucceeds;
+            if (!ApplySucceeds) return false;
+            Rendered[actor.LogicalKey] = outfit;
+            return true;
+        }
 
         public bool TryCapture(ActorSnapshot actor, out OutfitData outfit)
         {

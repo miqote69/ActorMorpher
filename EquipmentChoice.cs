@@ -13,6 +13,24 @@ public readonly record struct EquipmentChoiceKey(int Slot, ushort Model, byte Va
 
 public sealed record EquipmentChoice(EquipmentChoiceKey Key, string Name, uint IconId)
 {
+    public EquipmentItemInfo[] Items { get; init; } = [];
+    public string ItemLevels => Items.Length == 0 ? "—" : string.Join(" / ", Items.Select(item => item.ItemLevel).Distinct().Order());
+
+    public EquipmentChoice? FashionOnly()
+    {
+        var matches = Items.Where(item => item.EquipLevel == 1 && item.ItemLevel == 1).ToArray();
+        return matches.Length == 0 ? null : this with { Items = matches,
+            Name = string.Join(" / ", matches.Select(item => item.Name).Distinct()), IconId = matches[0].IconId };
+    }
+
+    public static EquipmentChoice[] FilterForPicker(IEnumerable<EquipmentChoice> choices,
+        IReadOnlyCollection<EquipmentChoiceKey> favorites, EquipmentPickerFilter filter, string query, ClientLanguage language)
+        => choices.Select(choice => filter == EquipmentPickerFilter.Fashion ? choice.FashionOnly() : choice)
+            .OfType<EquipmentChoice>()
+            .Where(choice => (filter != EquipmentPickerFilter.Favorites || favorites.Contains(choice.Key)) && choice.Matches(query, language))
+            .OrderBy(choice => choice.Key.Model)
+            .ThenBy(choice => choice.Key.IsWeapon ? (ushort)(choice.Key.WeaponModel >> 16) : 0)
+            .ThenBy(choice => choice.DisplayVariant).ThenBy(choice => choice.Key.FacewearId).ToArray();
     public int DisplayVariant => Key.IsWeapon ? (ushort)(Key.WeaponModel >> 32) : Key.Variant;
     public string Number => Key.IsWeapon ? $"w{Key.Model:D4} / b{(ushort)(Key.WeaponModel >> 16):D4}"
         : Key.Slot == 10 ? Key.Model.ToString(CultureInfo.InvariantCulture)
@@ -47,3 +65,7 @@ public sealed record EquipmentChoice(EquipmentChoiceKey Key, string Name, uint I
             : outfit with { Equipment = outfit.Equipment.SetItem(choice.Slot,
                 outfit.Equipment[choice.Slot] with { Set = choice.Model, Variant = choice.Variant }) };
 }
+
+public sealed record EquipmentItemInfo(uint ItemId, string Name, uint IconId, uint ItemLevel, byte EquipLevel);
+
+public enum EquipmentPickerFilter { All, Fashion, Favorites }

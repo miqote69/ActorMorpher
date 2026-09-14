@@ -29,6 +29,8 @@ internal static class WeaponSelection
         var model = choice.WeaponModel & ModelMask;
         // Native LoadWeapon uses the whole packed value: removal must not retain stain-only bits.
         var weapon = model == 0 ? 0 : model | ((previous ?? 0) & ~ModelMask);
-        return choice.Slot == 11 ? current with { Mainhand = weapon } : current with { Offhand = weapon };
+        return choice.Slot == 11
+            ? current with { Mainhand = weapon, MainhandDyes = model == 0 ? default : current.MainhandDyes }
+            : current with { Offhand = weapon, OffhandDyes = model == 0 ? default : current.OffhandDyes };
     }
 }

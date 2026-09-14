@@ -5,6 +5,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using ActorMorpher.Actors;
 using ActorMorpher.Appearance;
+using ActorMorpher.BulkOutfit;
 using ActorMorpher.Interop;
 using Dalamud.Game.ClientState.Objects.Enums;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
@@ -623,7 +624,19 @@ public sealed unsafe class NativeDrawObjectInjectorTests
             representation,
             representation.ObjectIndex,
             targetAddress,
-            DiagnosticHuman());
+            DiagnosticHuman() with
+            {
+                MainhandDyes = new(new DyeColor(1, 0, 0) { Metallic = true }, null),
+                OffhandDyes = new(null, new DyeColor(0, 0, 1) { Metallic = false }),
+            });
+        Assert.Equal(transaction.Appearance.MainhandDyes,
+            component.ResolveWeaponDyes(targetAddress, representation.ObjectIndex, 0, 102));
+        Assert.Equal(transaction.Appearance.OffhandDyes,
+            component.ResolveWeaponDyes(targetAddress, representation.ObjectIndex, 1, 102));
+        Assert.Equal(default, component.ResolveWeaponDyes(wrongAddress, representation.ObjectIndex, 0, 102));
+        Assert.Equal(default, component.ResolveWeaponDyes(targetAddress,
+            checked((ushort)(representation.ObjectIndex + 1)), 0, 102));
+        Assert.Equal(default, component.ResolveWeaponDyes(targetAddress, representation.ObjectIndex, 2, 102));
         Assert.True(transaction.TryBeginCreate());
         transaction.CompleteCreate((nint)0x16000);
 

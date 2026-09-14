@@ -77,6 +77,7 @@ public sealed unsafe class ActorRegistry : IDisposable
     }
 
     internal Func<LogicalActorKey, OutfitData?>? GetColorOutfit { get; set; }
+    internal Func<LogicalActorKey, bool, ulong?, WeaponDyes>? GetWeaponDyes { get; set; }
     internal Func<ushort, byte, FacewearAppearance>? ResolveFacewear { get; set; }
 
     internal AppearanceData? CaptureCurrentAppearance(ActorSnapshot expected)
@@ -433,6 +434,12 @@ public sealed unsafe class ActorRegistry : IDisposable
             currentAppearance = currentAppearance with
             {
                 ColoredEquipment = NativeOutfitMemory.WithColors(renderedOutfit, colors).Equipment,
+            };
+        if (category == ModelCategory.Human && GetWeaponDyes is { } getWeaponDyes)
+            currentAppearance = currentAppearance with
+            {
+                MainhandDyes = getWeaponDyes(snapshot.LogicalKey, false, mainhand),
+                OffhandDyes = getWeaponDyes(snapshot.LogicalKey, true, offhand),
             };
         snapshot = snapshot with { CurrentAppearance = currentAppearance };
         if (category != ModelCategory.Human)

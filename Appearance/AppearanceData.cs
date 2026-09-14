@@ -17,6 +17,8 @@ public sealed record AppearanceData(
     bool? HatVisible = null)
 {
     public ImmutableArray<ArmorAppearance> ColoredEquipment { get; init; } = [];
+    public WeaponDyes MainhandDyes { get; init; }
+    public WeaponDyes OffhandDyes { get; init; }
 
     public static AppearanceData Create(
         uint modelCharaId,

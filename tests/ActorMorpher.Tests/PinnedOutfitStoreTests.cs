@@ -11,6 +11,24 @@ namespace ActorMorpher.Tests;
 public sealed class PinnedOutfitStoreTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void WeaponDyeUpdatesOnlyTheChosenPinnedHand(bool offhand)
+    {
+        var store = new PinnedOutfitStore(new Configuration(), () => { });
+        var actor = Actor("Pinned", true, 1, 10);
+        var original = Appearance(ModelCategory.Human) with
+        { MainhandDyes = new(new(1, 0, 0), null), OffhandDyes = new(null, new(0, 1, 0)) };
+        store.PinCurrent([actor], _ => original);
+        var dyes = new WeaponDyes(new DyeColor(0, 0, 1) { Metallic = true }, null);
+        store.UpdateSelectedWeapon(actor, offhand, 123, dyes);
+        Assert.True(store.TryGetAppearance(actor, out var changed));
+        Assert.Equal(offhand ? original with { Offhand = 123, OffhandDyes = dyes }
+            : original with { Mainhand = 123, MainhandDyes = dyes }, changed);
+        Assert.False(PinnedOutfitStore.CanMaintainWithOutfit(original, changed));
+    }
+
+    [Theory]
     [InlineData(false, 9005UL)]
     [InlineData(true, 9005UL)]
     [InlineData(false, 0UL)]
@@ -41,6 +59,10 @@ public sealed class PinnedOutfitStoreTests
             pinned with { HatVisible = true },
             pinned with { VisorToggled = true },
             pinned with { FacewearModelId = 18 },
+            pinned with { MainhandDyes = new(new DyeColor(1, 0, 0) { Metallic = true }, null) },
+            pinned with { OffhandDyes = new(null, new DyeColor(0, 0, 1) { Metallic = false }) },
+            pinned with { Mainhand = pinned.Mainhand | (7UL << 48) },
+            pinned with { Offhand = pinned.Offhand | (8UL << 56) },
             pinned with { ColoredEquipment = EquipmentDisplayFormatting.CreateHumanOutfit(pinned)!.Equipment
                 .SetItem(1, new ArmorAppearance(0, 0, 1, 0) { Color1 = new(0.1f, 0.2f, 0.3f) }) },
         };

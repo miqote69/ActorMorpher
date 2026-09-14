@@ -92,7 +92,7 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
             ((CharacterBase*)human)->VisorToggled);
     }
 
-    internal bool TryApplyWeapon(ActorSnapshot actor, bool offhand, ulong weapon)
+    internal bool TryApplyWeapon(ActorSnapshot actor, bool offhand, ulong weapon, WeaponDyes dyes = default)
     {
         if (!TryResolve(actor, out var character))
             return false;
@@ -101,6 +101,77 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
             new WeaponModelId { Value = weapon }, 1, 0, 1, 0, false);
         // Refresh resident weapon motions from both rendered hands without recreating the body or restarting its timeline.
         updateWeaponAnimation(&character->Timeline);
+        ApplyWeaponColors(character->DrawData.Weapon(offhand ? DrawDataContainer.WeaponSlot.OffHand
+            : DrawDataContainer.WeaponSlot.MainHand).Weapon, weapon, dyes);
+        return true;
+    }
+
+    internal bool TryApplyWeaponDyes(ActorSnapshot actor, bool offhand, int channel, DyeColor? color,
+        bool clearDye, WeaponDyes previous, out ulong packed, out WeaponDyes dyes,
+        out NativeEquipmentColors.ColorApplyResult result)
+    {
+        packed = 0;
+        result = default;
+        dyes = previous.WithDye(channel, color);
+        if (!TryResolve(actor, out var character))
+            return false;
+        var slot = offhand ? DrawDataContainer.WeaponSlot.OffHand : DrawDataContainer.WeaponSlot.MainHand;
+        var weapon = character->DrawData.Weapon(slot).Weapon;
+        if (weapon is null)
+            return false;
+        if (clearDye)
+        {
+            if (channel == 0) weapon->Stain0 = 0;
+            else weapon->Stain1 = 0;
+        }
+        packed = NativeAppearanceMemory.CaptureRenderedWeapon(character, slot);
+        result = ApplyWeaponColors(weapon, packed, dyes, true, channel);
+        return true;
+    }
+
+    internal bool TryApplyPinnedWeaponDyes(ActorSnapshot actor, bool offhand, ulong packed, WeaponDyes dyes,
+        out NativeEquipmentColors.ColorApplyResult result)
+    {
+        result = default;
+        if (!TryResolve(actor, out var character))
+            return false;
+        var slot = offhand ? DrawDataContainer.WeaponSlot.OffHand : DrawDataContainer.WeaponSlot.MainHand;
+        var weapon = character->DrawData.Weapon(slot).Weapon;
+        if (weapon is null)
+            return false;
+        weapon->Stain0 = (byte)(packed >> 48);
+        weapon->Stain1 = (byte)(packed >> 56);
+        result = ApplyWeaponColors(weapon, packed, dyes, true);
+        return true;
+    }
+
+    internal static NativeEquipmentColors.ColorApplyResult ApplyWeaponColors(Weapon* weapon, ulong packed,
+        WeaponDyes dyes, bool clear = false, int? reportChannel = null)
+    {
+        var result = new NativeEquipmentColors.ColorApplyResult();
+        if (weapon is null)
+            return result;
+        var model = (CharacterBase*)weapon;
+        for (var slot = 0; slot < model->SlotCount; ++slot)
+            result += NativeEquipmentColors.ApplySlot(model, slot, dyes.AsArmor(packed), clear, reportChannel);
+        return result;
+    }
+
+    public bool TryApplyDye(ActorSnapshot actor, OutfitSlot slot, int channel, OutfitData outfit, out bool confirmed)
+    {
+        confirmed = false;
+        if (!TryResolve(actor, out var character))
+            return false;
+        var model = ((GameObject*)character)->GetCharacterBase();
+        if (model is null || model->GetModelType() != CharacterBase.ModelType.Human)
+            return false;
+        var human = (Human*)model;
+        var armor = outfit.Equipment[(int)slot];
+        // Change only the rendered stain bytes and this slot's textures, leaving model loading and motion alone.
+        human->EquipmentModels[(int)slot].Stain0 = armor.Stain1;
+        human->EquipmentModels[(int)slot].Stain1 = armor.Stain2;
+        SetColorOutfit?.Invoke(actor.LogicalKey, outfit);
+        confirmed = NativeEquipmentColors.ApplySlot(model, (int)slot, armor, true, channel).Applied;
         return true;
     }
 

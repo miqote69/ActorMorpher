@@ -7,7 +7,7 @@ using ActorMorpher.Preview;
 
 namespace ActorMorpher;
 
-public sealed class MainWindow : Window, IDisposable
+public sealed partial class MainWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
     private readonly SoftwareModelPreviewProjector previewProjector = new();
@@ -56,10 +56,15 @@ public sealed class MainWindow : Window, IDisposable
     private int equipmentPickerSlot;
     private LogicalActorKey? equipmentPickerActor;
     private EquipmentChoiceKey equipmentPickerCurrent;
+    private EquipmentChoice? equipmentPickerCurrentDisplay;
+    private bool equipmentManualExpanded;
+    private EquipmentPickerFilter equipmentFilter;
+    private Vector3 actorDyeDraft;
+    private int actorMetallicDraft;
+    private bool actorOriginalColorDraft;
     private string equipmentSearch = string.Empty;
     private string equipmentNumber = string.Empty;
     private int equipmentVariant = 1;
-    private bool equipmentFavoritesOnly;
     private EquipmentChoice[] equipmentResults = [];
     private string equipmentPickerStatus = string.Empty;
     private bool equipmentPickerOpen;
@@ -711,8 +716,8 @@ public sealed class MainWindow : Window, IDisposable
             ImGui.TableHeadersRow();
             if (showWeapons)
             {
-                DrawWeaponRow(id, TextKey.Mainhand, appearance?.Mainhand, editActor);
-                DrawWeaponRow(id, TextKey.Offhand, appearance?.Offhand, editActor);
+                DrawWeaponRow(id, TextKey.Mainhand, appearance?.Mainhand, appearance?.MainhandDyes ?? default, editActor);
+                DrawWeaponRow(id, TextKey.Offhand, appearance?.Offhand, appearance?.OffhandDyes ?? default, editActor);
             }
             foreach (var slot in Enum.GetValues<OutfitSlot>())
             {
@@ -730,8 +735,8 @@ public sealed class MainWindow : Window, IDisposable
                 }
                 ImGui.TableNextColumn(); ImGui.TextUnformatted(outfit is null ? "-" : EquipmentDisplayFormatting.FormatSet(slot, armor.Set));
                 ImGui.TableNextColumn(); ImGui.TextUnformatted(outfit is null ? "-" : EquipmentDisplayFormatting.FormatVariant(armor.Variant));
-                ImGui.TableNextColumn(); DrawOutfitColor($"{id}-{slot}-1", outfit, slot, 0, allowSourceEditing);
-                ImGui.TableNextColumn(); DrawOutfitColor($"{id}-{slot}-2", outfit, slot, 1, allowSourceEditing);
+                ImGui.TableNextColumn(); DrawOutfitColor($"{id}-{slot}-1", outfit, slot, 0, allowSourceEditing, editActor);
+                ImGui.TableNextColumn(); DrawOutfitColor($"{id}-{slot}-2", outfit, slot, 1, allowSourceEditing, editActor);
             }
             DrawFacewearRow(outfit, id, allowSourceEditing, editActor);
             ImGui.EndTable();
@@ -744,7 +749,7 @@ public sealed class MainWindow : Window, IDisposable
         ImGui.TextUnformatted($"{T(TextKey.Visor)}: {(outfit.VisorToggled ? T(TextKey.Toggled) : T(TextKey.Normal))}");
     }
 
-    private void DrawWeaponRow(string id, TextKey slot, ulong? packed, LogicalActorKey? actor)
+    private void DrawWeaponRow(string id, TextKey slot, ulong? packed, WeaponDyes dyes, LogicalActorKey? actor)
     {
         var weapon = EquipmentDisplayFormatting.DecodeWeapon(packed ?? 0);
         var empty = packed.HasValue && weapon.Model == 0;
@@ -786,8 +791,11 @@ public sealed class MainWindow : Window, IDisposable
         ImGui.TableNextColumn();
         ImGui.TextUnformatted(packed.HasValue ? $"w{weapon.Model:D4}\nb{weapon.Type:D4}" : "-");
         ImGui.TableNextColumn(); ImGui.TextUnformatted(packed.HasValue ? weapon.Variant.ToString() : "-");
-        ImGui.TableNextColumn(); DrawStainSwatch($"{id}-{slot}-1", packed.HasValue, weapon.Stain1);
-        ImGui.TableNextColumn(); DrawStainSwatch($"{id}-{slot}-2", packed.HasValue, weapon.Stain2);
+        var dyeSlot = slot == TextKey.Mainhand ? 11 : 12;
+        ImGui.TableNextColumn(); DrawEquipmentColor($"{id}-{slot}-1", T(slot),
+            packed.HasValue ? dyes.AsArmor(packed.Value) : null, dyeSlot, 0, false, actor);
+        ImGui.TableNextColumn(); DrawEquipmentColor($"{id}-{slot}-2", T(slot),
+            packed.HasValue ? dyes.AsArmor(packed.Value) : null, dyeSlot, 1, false, actor);
     }
 
     private void DrawFacewearRow(OutfitData? outfit, string id, bool sourceEditing, LogicalActorKey? editActor)
@@ -895,127 +903,9 @@ public sealed class MainWindow : Window, IDisposable
     {
         equipmentPickerJob = plugin.CurrentWeaponJob;
         equipmentPickerLanguage = plugin.GameLanguage;
-        equipmentResults = plugin.SearchEquipment(equipmentPickerSlot, equipmentSearch, equipmentFavoritesOnly);
-    }
-
-    internal void DrawEquipmentPicker()
-    {
-        if (!IsOpen || !equipmentPickerOpen)
-            return;
-        var weaponPicker = equipmentPickerSlot is 11 or 12;
-        if (weaponPicker && (equipmentPickerJob != plugin.CurrentWeaponJob || equipmentPickerLanguage != plugin.GameLanguage))
-            RefreshEquipmentResults();
-        if (equipmentPickerFocusRequested)
-        {
-            ImGui.SetNextWindowFocus();
-            equipmentPickerFocusRequested = false;
-        }
-        var availableHeight = ImGui.GetMainViewport().WorkSize.Y - 32;
-        ImGui.SetNextWindowSize(new Vector2(540, Math.Min(800, availableHeight)), ImGuiCond.FirstUseEver);
-        var slotName = equipmentPickerSlot switch { 11 => T(TextKey.Mainhand), 12 => T(TextKey.Offhand),
-            10 => T(TextKey.Facewear), _ => ((OutfitSlot)equipmentPickerSlot).ToString() };
-        var title = $"{T(TextKey.ChooseEquipment)} · {slotName}###ActorMorpherEquipmentPicker";
-        if (!ImGui.Begin(title, ref equipmentPickerOpen, ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoSavedSettings))
-        {
-            ImGui.End();
-            return;
-        }
-        ImGui.TextWrapped(T(equipmentPickerActor is null ? TextKey.PickerSourceHint : TextKey.PickerActorHint));
-        if (weaponPicker) ImGui.TextWrapped(T(TextKey.WeaponPickerJobHint));
-        var sourceImportPending = equipmentPickerActor is null && plugin.IsPlateImportPending;
-        ImGui.SetNextItemWidth(-1);
-        var changed = ImGui.InputTextWithHint("##equipment-search", T(weaponPicker ? TextKey.WeaponSearchHint : TextKey.EquipmentSearchHint), ref equipmentSearch, 128);
-        changed |= ImGui.Checkbox(T(TextKey.FavoritesOnly), ref equipmentFavoritesOnly);
-        if (changed) RefreshEquipmentResults();
-        ImGui.SameLine(); ImGui.TextDisabled($"({equipmentResults.Length})");
-        if (!weaponPicker)
-        {
-            ImGui.BeginDisabled(sourceImportPending);
-            if (ImGui.Button(T(TextKey.NoEquipment)))
-                SelectPickerEquipment(new EquipmentChoiceKey(equipmentPickerSlot, 0, 0));
-            ImGui.EndDisabled();
-            ImGui.SameLine();
-        }
-        if (ImGui.Button(T(plugin.Configuration.FavoriteEquipment.Contains(equipmentPickerCurrent)
-                ? TextKey.RemoveCurrentFavorite : TextKey.FavoriteCurrentEquipment)))
-        {
-            plugin.ToggleEquipmentFavorite(equipmentPickerCurrent);
-            RefreshEquipmentResults();
-        }
-        if (equipmentPickerSlot < 10)
-        {
-            ImGui.Separator();
-            ImGui.SetNextItemWidth(140);
-            ImGui.InputTextWithHint($"{T(TextKey.Set)}##direct-model", "e9005", ref equipmentNumber, 16);
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(85);
-            ImGui.InputInt($"{T(TextKey.Variant)}##direct-variant", ref equipmentVariant, 0, 0);
-            var valid = EquipmentChoice.TryParseModel(equipmentNumber, equipmentPickerSlot, out var model)
-                && equipmentVariant is >= 0 and <= byte.MaxValue;
-            ImGui.BeginDisabled(!valid);
-            ImGui.BeginDisabled(sourceImportPending);
-            if (ImGui.Button(T(TextKey.UseEquipmentNumber)))
-                SelectPickerEquipment(new EquipmentChoiceKey(equipmentPickerSlot, model, (byte)equipmentVariant));
-            ImGui.EndDisabled();
-            ImGui.SameLine();
-            var direct = new EquipmentChoiceKey(equipmentPickerSlot, model, valid ? (byte)equipmentVariant : (byte)0);
-            if (ImGui.Button(T(plugin.Configuration.FavoriteEquipment.Contains(direct)
-                    ? TextKey.RemoveFavorite : TextKey.AddFavorite)))
-            {
-                plugin.ToggleEquipmentFavorite(direct);
-                RefreshEquipmentResults();
-            }
-            ImGui.EndDisabled();
-        }
-        ImGui.Separator();
-        if (ImGui.BeginChild("##equipment-results", new Vector2(0, Math.Max(100, ImGui.GetContentRegionAvail().Y - 48)), true))
-        {
-            if (equipmentResults.Length == 0)
-                ImGui.TextWrapped(T(TextKey.EquipmentNoResults));
-            var clipper = ImGui.ImGuiListClipper();
-            var rowHeight = Math.Max(32, ImGui.GetTextLineHeight()) + ImGui.GetStyle().ItemSpacing.Y;
-            try
-            {
-                clipper.Begin(equipmentResults.Length, rowHeight);
-                while (clipper.Step())
-                for (var i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
-                {
-                    var choice = equipmentResults[i];
-                    ImGui.PushID(i);
-                    var favorite = plugin.Configuration.FavoriteEquipment.Contains(choice.Key);
-                    if (ImGui.Button(favorite ? "*##favorite" : "+##favorite", new Vector2(26, 32)))
-                    {
-                        plugin.ToggleEquipmentFavorite(choice.Key);
-                        changed = true;
-                    }
-                    if (ImGui.IsItemHovered()) ImGui.SetTooltip(T(favorite ? TextKey.RemoveFavorite : TextKey.AddFavorite));
-                    ImGui.SameLine();
-                    var choicePosition = ImGui.GetCursorScreenPos();
-                    var choiceWidth = ImGui.GetContentRegionAvail().X;
-                    var label = $"{choice.Name}  ({choice.Number} / {choice.DisplayVariant})";
-                    ImGui.BeginDisabled(sourceImportPending);
-                    if (ImGui.Selectable("##choice", choice.Key == equipmentPickerCurrent,
-                            ImGuiSelectableFlags.DontClosePopups, new Vector2(0, 32)))
-                        SelectPickerEquipment(choice.Key);
-                    if (ImGui.IsItemHovered()) ImGui.SetTooltip(label);
-                    var drawList = ImGui.GetWindowDrawList();
-                    if (choice.IconId != 0 && plugin.TryGetIconTexture(choice.IconId, out var icon))
-                        drawList.AddImage(icon!.Handle, choicePosition, choicePosition + new Vector2(32, 32));
-                    drawList.PushClipRect(choicePosition, choicePosition + new Vector2(choiceWidth, 32), true);
-                    drawList.AddText(choicePosition + new Vector2(32 + ImGui.GetStyle().ItemSpacing.X, 0),
-                        ImGui.GetColorU32(ImGuiCol.Text), label);
-                    drawList.PopClipRect();
-                    ImGui.EndDisabled();
-                    ImGui.PopID();
-                }
-            }
-            finally { clipper.Destroy(); }
-        }
-        ImGui.EndChild();
-        if (changed) RefreshEquipmentResults();
-        if (!string.IsNullOrEmpty(equipmentPickerStatus)) ImGui.TextWrapped(equipmentPickerStatus);
-        if (ImGui.Button(T(TextKey.CloseEquipmentPicker))) equipmentPickerOpen = false;
-        ImGui.End();
+        equipmentResults = plugin.SearchEquipment(equipmentPickerSlot, equipmentSearch, equipmentFilter);
+        equipmentPickerCurrentDisplay = plugin.GetEquipmentChoices(equipmentPickerSlot)
+            .FirstOrDefault(choice => choice.Key == equipmentPickerCurrent);
     }
 
     private void SelectPickerEquipment(EquipmentChoiceKey key)
@@ -1027,44 +917,95 @@ public sealed class MainWindow : Window, IDisposable
         }
     }
 
-    private void DrawOutfitColor(string id, OutfitData? outfit, OutfitSlot slot, int channel, bool editable)
+    private void DrawOutfitColor(string id, OutfitData? outfit, OutfitSlot slot, int channel,
+        bool sourceEditing, LogicalActorKey? actor)
+        => DrawEquipmentColor(id, slot.ToString(), outfit?.Equipment[(int)slot], (int)slot,
+            channel, sourceEditing, actor);
+
+    private bool SetEquipmentDye(int slot, int channel, DyeColor? color, bool clearDye, LogicalActorKey? actor)
     {
-        if (outfit is null)
+        if (actor is { } key)
+        {
+            applySucceeded = slot >= 11
+                ? plugin.SetActorWeaponDye(key, slot == 12, channel, color, clearDye, out applyStatus)
+                : plugin.SetActorDye(key, (OutfitSlot)slot, channel, color, clearDye, out applyStatus);
+            return applySucceeded == true;
+        }
+        if (clearDye) plugin.ClearSourceDye((OutfitSlot)slot, channel);
+        else plugin.SetSourceColor((OutfitSlot)slot, channel, color);
+        return true;
+    }
+
+    private void DrawEquipmentColor(string id, string slotLabel, ArmorAppearance? value, int slot,
+        int channel, bool sourceEditing, LogicalActorKey? actor)
+    {
+        if (value is not { } armor)
         {
             ImGui.TextUnformatted("-");
             return;
         }
-        var armor = outfit.Equipment[(int)slot];
+        var editable = sourceEditing || actor is not null;
         var custom = channel == 0 ? armor.Color1 : armor.Color2;
         var stainId = channel == 0 ? armor.Stain1 : armor.Stain2;
-        var undyed = custom is null && stainId == 0;
+        var originalColor = custom is null || custom.Value.UseOriginalColor;
+        var undyed = originalColor && stainId == 0;
         var stain = plugin.GetStainDisplay(stainId);
-        var rgb = custom is { } color ? new Vector3(color.R, color.G, color.B)
+        var rgb = custom is { UseOriginalColor: false } color ? new Vector3(color.R, color.G, color.B)
             : stain is { HasColor: true } ? new Vector3(stain.R, stain.G, stain.B) / 255f : Vector3.One;
-        var label = $"{slot} / {T(channel == 0 ? TextKey.Stain1 : TextKey.Stain2)}";
+        var label = $"{slotLabel} / {T(channel == 0 ? TextKey.Stain1 : TextKey.Stain2)}";
         var clicked = undyed
             ? ImGui.Button($"##color-{id}", new Vector2(24, 24))
             : ImGui.ColorButton($"##color-{id}", new Vector4(rgb, 1), ImGuiColorEditFlags.NoTooltip,
                 new Vector2(24, 24));
         if (clicked && editable)
+        {
+            actorDyeDraft = rgb;
+            actorOriginalColorDraft = originalColor;
+            actorMetallicDraft = custom?.Metallic is { } metallic ? metallic ? 2 : 1 : 0;
             ImGui.OpenPopup($"color-picker-{id}");
+        }
         if (ImGui.IsItemHovered())
         {
-            ImGui.SetTooltip($"{label}\n{(undyed ? T(TextKey.NoDye) : custom is not null ? T(TextKey.FreeColor) : stain?.Name ?? T(TextKey.Unavailable))}"
+            ImGui.SetTooltip($"{label}\n{(undyed ? T(TextKey.NoDye) : !originalColor ? T(TextKey.FreeColor) : stain?.Name ?? T(TextKey.Unavailable))}"
                 + (editable ? $"\n{T(TextKey.FreeColorHint)}" : string.Empty));
             if (editable && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
-                plugin.ClearSourceDye(slot, channel);
+                SetEquipmentDye(slot, channel, null, true, actor);
         }
         if (!editable || !ImGui.BeginPopup($"color-picker-{id}"))
             return;
         ImGui.TextUnformatted(label);
+        if (actor is not null)
+        {
+            rgb = actorDyeDraft;
+            originalColor = actorOriginalColorDraft;
+        }
+        var metallicMode = actor is not null ? actorMetallicDraft
+            : custom?.Metallic is { } metal ? metal ? 2 : 1 : 0;
         ImGui.SetNextItemWidth(250);
-        if (ImGui.ColorPicker3($"##picker-{id}", ref rgb,
-                ImGuiColorEditFlags.DisplayHex | ImGuiColorEditFlags.PickerHueBar))
-            plugin.SetSourceColor(slot, channel, new DyeColor(rgb.X, rgb.Y, rgb.Z));
+        var changed = ImGui.ColorPicker3($"##picker-{id}", ref rgb,
+            ImGuiColorEditFlags.DisplayHex | ImGuiColorEditFlags.PickerHueBar);
+        if (changed) originalColor = false;
+        ImGui.SetNextItemWidth(250);
+        changed |= ImGui.Combo(T(TextKey.Metallic), ref metallicMode,
+            new[] { T(TextKey.MaterialOriginal), "OFF", "ON" }, 3);
+        ImGui.TextWrapped(T(TextKey.MetallicHint));
+        DyeColor? selectedColor = originalColor && metallicMode == 0 ? null
+            : new DyeColor(rgb.X, rgb.Y, rgb.Z)
+                { Metallic = metallicMode == 0 ? null : metallicMode == 2, UseOriginalColor = originalColor };
+        if (actor is not null)
+        {
+            actorDyeDraft = rgb;
+            actorMetallicDraft = metallicMode;
+            actorOriginalColorDraft = originalColor;
+        }
+        if (changed)
+            SetEquipmentDye(slot, channel, selectedColor, false, actor);
         if (ImGui.Button($"{T(TextKey.ClearFreeColor)}##{id}"))
-            plugin.SetSourceColor(slot, channel, null);
-        ImGui.TextWrapped(T(TextKey.FreeColorApplyHint));
+        {
+            if (SetEquipmentDye(slot, channel, null, false, actor) && actor is not null)
+                ImGui.CloseCurrentPopup();
+        }
+        ImGui.TextWrapped(T(actor is null ? TextKey.FreeColorApplyHint : TextKey.ActorDyeApplyHint));
         ImGui.EndPopup();
     }
 
@@ -1235,7 +1176,9 @@ public sealed class MainWindow : Window, IDisposable
                 ImGui.TextColored(new Vector4(1.0f, 0.74f, 0.25f, 1.0f), T(TextKey.PinnedOutfit));
             }
             ImGui.Separator();
-            if (ImGui.BeginTable("##actor-detail-fields", 2, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
+            DrawActorAppearanceInfo(current);
+            if (ImGui.CollapsingHeader($"{T(TextKey.OtherCharacterInfo)}###actor-other-info")
+                && ImGui.BeginTable("##actor-detail-fields", 2, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
             {
                 ImGui.TableSetupColumn(T(TextKey.Field), ImGuiTableColumnFlags.WidthFixed, 150.0f);
                 ImGui.TableSetupColumn(T(TextKey.Value), ImGuiTableColumnFlags.WidthStretch);
@@ -1249,21 +1192,27 @@ public sealed class MainWindow : Window, IDisposable
                 DrawDetailRow(T(TextKey.BaseId), current.BaseId.ToString());
                 DrawDetailRow(T(TextKey.ModelCharaId), current.ModelCharaId.ToString());
                 DrawDetailRow(T(TextKey.Category), appearance?.Category.ToString() ?? T(TextKey.Unavailable));
+                ImGui.EndTable();
+            }
+            if (ImGui.CollapsingHeader($"{T(TextKey.RawAppearanceInfo)}###actor-raw-info")
+                && ImGui.BeginTable("##actor-raw-fields", 2, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
+            {
+                ImGui.TableSetupColumn(T(TextKey.Field), ImGuiTableColumnFlags.WidthFixed, 150);
+                ImGui.TableSetupColumn(T(TextKey.Value), ImGuiTableColumnFlags.WidthStretch);
                 DrawDetailRow(
                     T(TextKey.Customize),
                     appearance is { Customize.IsEmpty: false }
                         ? Convert.ToHexString(appearance.Customize.AsSpan())
                         : T(TextKey.Unavailable));
-                DrawDetailRow(T(TextKey.Race), current.Race is { } race ? plugin.GetRaceName(race) : T(TextKey.NonHumanUnknown));
-                DrawDetailRow(T(TextKey.Gender), current.Gender is { } gender ? GetGenderName(gender) : T(TextKey.NonHumanUnknown));
-                DrawDetailRow(T(TextKey.BodyType), current.BodyType?.ToString() ?? T(TextKey.NonHumanUnknown));
                 DrawDetailRow(T(TextKey.Mainhand), appearance?.Mainhand is { } mainhand ? $"0x{mainhand:X16}" : T(TextKey.Unavailable));
                 DrawDetailRow(T(TextKey.Offhand), appearance?.Offhand is { } offhand ? $"0x{offhand:X16}" : T(TextKey.Unavailable));
-                DrawDetailRow(
-                    T(TextKey.ModelScale),
-                    appearance?.ModelScale?.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
-                    ?? T(TextKey.Unavailable));
-                DrawDetailRow(T(TextKey.ClassJob), current.ClassJob.ToString());
+                ImGui.EndTable();
+            }
+            if (ImGui.CollapsingHeader($"{T(TextKey.ActorStateInfo)}###actor-state-info")
+                && ImGui.BeginTable("##actor-state-fields", 2, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
+            {
+                ImGui.TableSetupColumn(T(TextKey.Field), ImGuiTableColumnFlags.WidthFixed, 150);
+                ImGui.TableSetupColumn(T(TextKey.Value), ImGuiTableColumnFlags.WidthStretch);
                 DrawDetailRow(T(TextKey.Level), current.Level.ToString());
                 DrawDetailRow(T(TextKey.IsLocalPlayer), current.IsLocalPlayer ? T(TextKey.Yes) : T(TextKey.No));
                 DrawDetailRow(

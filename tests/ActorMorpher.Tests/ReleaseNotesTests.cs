@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using System.Reflection;
 using ActorMorpher.Localization;
 using Dalamud.Game;
@@ -30,8 +29,9 @@ public sealed class ReleaseNotesTests
         var text = ReleaseNotesContent.GetText(localizer.EffectiveLanguage);
         Assert.Contains(label, text);
         Assert.DoesNotContain(pendingHeading, text);
-        Assert.Equal(8, text.Split('\n').Count(line => line.StartsWith("- ")));
-        Assert.Contains("w9005", text);
+        Assert.Contains("BNpcBase", text);
+        Assert.Contains("ON", text);
+        Assert.Contains("OFF", text);
         Assert.DoesNotContain("CMC", text);
         Assert.DoesNotContain("##", text);
         Assert.DoesNotContain("`", text);

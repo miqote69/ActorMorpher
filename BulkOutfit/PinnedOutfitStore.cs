@@ -61,6 +61,7 @@ public sealed class PinnedOutfitStore
             && left.Equipment.AsSpan().SequenceEqual(right.Equipment.AsSpan())
             && left.ModelScale == right.ModelScale && left.Mainhand == right.Mainhand
             && left.Offhand == right.Offhand && left.VisorToggled == right.VisorToggled
+            && left.MainhandDyes == right.MainhandDyes && left.OffhandDyes == right.OffhandDyes
             && left.FacewearModelId == right.FacewearModelId && left.HatVisible == right.HatVisible
             && OutfitDataValueComparer.AreEqual(EquipmentDisplayFormatting.CreateHumanOutfit(left),
                 EquipmentDisplayFormatting.CreateHumanOutfit(right));
@@ -70,7 +71,8 @@ public sealed class PinnedOutfitStore
             && current.ModelCharaId == pinned.ModelCharaId
             && current.Customize.AsSpan().SequenceEqual(pinned.Customize.AsSpan())
             && current.ModelScale == pinned.ModelScale
-            && current.Mainhand == pinned.Mainhand && current.Offhand == pinned.Offhand;
+            && (current.Mainhand & WeaponSelection.ModelMask) == (pinned.Mainhand & WeaponSelection.ModelMask)
+            && (current.Offhand & WeaponSelection.ModelMask) == (pinned.Offhand & WeaponSelection.ModelMask);
 
     public bool TryGet(ActorEntry actor, out OutfitData outfit)
     {
@@ -124,12 +126,14 @@ public sealed class PinnedOutfitStore
         save();
     }
 
-    internal void UpdateSelectedWeapon(ActorEntry actor, bool offhand, ulong weapon)
+    internal void UpdateSelectedWeapon(ActorEntry actor, bool offhand, ulong weapon, WeaponDyes? dyes = null)
     {
         var pin = configuration.PinnedOutfits.LastOrDefault(entry => entry.Matches(actor));
         if (pin?.Appearance is not { } appearance)
             return;
-        pin.Appearance = offhand ? appearance with { Offhand = weapon } : appearance with { Mainhand = weapon };
+        pin.Appearance = offhand
+            ? appearance with { Offhand = weapon, OffhandDyes = dyes ?? appearance.OffhandDyes }
+            : appearance with { Mainhand = weapon, MainhandDyes = dyes ?? appearance.MainhandDyes };
         save();
     }
 
