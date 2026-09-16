@@ -21,6 +21,7 @@ public sealed record ActorSnapshot(
     bool IsAppearanceManaged = false)
 {
     public ActorContinuityKey? ContinuityKey { get; init; }
+    public NpcAttachmentKey? NpcAttachment { get; init; }
 
     public ActorSnapshot WithVisibleHumanCustomize(byte race, byte gender, byte bodyType)
         => this with { Race = race, Gender = gender, BodyType = bodyType };

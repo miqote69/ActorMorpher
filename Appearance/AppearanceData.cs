@@ -19,6 +19,11 @@ public sealed record AppearanceData(
     public ImmutableArray<ArmorAppearance> ColoredEquipment { get; init; } = [];
     public WeaponDyes MainhandDyes { get; init; }
     public WeaponDyes OffhandDyes { get; init; }
+    public bool? VieraEarsHidden { get; init; }
+
+    internal AppearanceData WithCurrentEarVisibility(AppearanceData current)
+        => VieraEarsHidden is null && current.VieraEarsHidden is { } hidden
+            ? this with { VieraEarsHidden = hidden } : this;
 
     public static AppearanceData Create(
         uint modelCharaId,

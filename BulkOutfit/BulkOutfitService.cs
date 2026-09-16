@@ -100,7 +100,7 @@ public sealed class BulkOutfitService : IDisposable
     {
         SourceOutfit = OutfitData.Create(equipment,
             SourceOutfit?.Facewear ?? new FacewearAppearance(true, 0),
-            true, SourceOutfit?.VisorToggled ?? false);
+            true, SourceOutfit?.VisorToggled ?? false) with { VieraEarsHidden = SourceOutfit?.VieraEarsHidden };
     }
 
     public bool TryUnequipSourceSlot(OutfitSlot slot, out string message)
@@ -161,6 +161,27 @@ public sealed class BulkOutfitService : IDisposable
             return false;
         }
         SourceOutfit = EquipmentChoice.Replace(SourceOutfit, choice);
+        message = "Source outfit updated.";
+        return true;
+    }
+
+    public bool SelectHeadgearSetting(HeadgearSetting setting, bool value, LogicalActorKey? actor, out string message)
+    {
+        if (actor is { } key)
+        {
+            if (!TryCaptureOutfit(key, out var current))
+            {
+                message = "Actor outfit is unavailable.";
+                return false;
+            }
+            return StartPersistentApply(key, HeadgearSettings.Change(current, setting, value), out message);
+        }
+        if (SourceOutfit is null)
+        {
+            message = "Source outfit is unavailable.";
+            return false;
+        }
+        SourceOutfit = HeadgearSettings.Change(SourceOutfit, setting, value);
         message = "Source outfit updated.";
         return true;
     }
@@ -494,6 +515,7 @@ public sealed class BulkOutfitService : IDisposable
             return;
         }
         store.TryGet(key, out var previous);
+        desired = desired.WithCurrentEarVisibility(current);
         store.SetDesired(key, original, desired);
         if (memory.TryApply(actor, desired))
         {

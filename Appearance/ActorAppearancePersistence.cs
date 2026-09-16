@@ -133,5 +133,9 @@ public sealed class ActorAppearancePersistence
     private static AppearanceData WithOutfit(AppearanceData model, OutfitData outfit)
         => model.WithOutfit(outfit.Equipment.Select(ActorRegistry.ToEquipmentModelValue),
             outfit.VisorToggled, outfit.Facewear.IsAvailable ? outfit.Facewear.ModelId : model.FacewearModelId,
-            outfit.HatVisible) with { ColoredEquipment = outfit.Equipment };
+            outfit.HatVisible) with
+        {
+            ColoredEquipment = outfit.Equipment,
+            VieraEarsHidden = outfit.VieraEarsHidden ?? model.VieraEarsHidden,
+        };
 }

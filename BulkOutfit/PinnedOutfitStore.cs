@@ -63,6 +63,7 @@ public sealed class PinnedOutfitStore
             && left.Offhand == right.Offhand && left.VisorToggled == right.VisorToggled
             && left.MainhandDyes == right.MainhandDyes && left.OffhandDyes == right.OffhandDyes
             && left.FacewearModelId == right.FacewearModelId && left.HatVisible == right.HatVisible
+            && left.VieraEarsHidden == right.VieraEarsHidden
             && OutfitDataValueComparer.AreEqual(EquipmentDisplayFormatting.CreateHumanOutfit(left),
                 EquipmentDisplayFormatting.CreateHumanOutfit(right));
 
@@ -108,7 +109,7 @@ public sealed class PinnedOutfitStore
         if (pin.Appearance is { } appearance)
             pin.Appearance = appearance.WithOutfit(updated.Equipment.Select(ActorRegistry.ToEquipmentModelValue),
                 updated.VisorToggled, updated.Facewear.IsAvailable ? updated.Facewear.ModelId : null,
-                updated.HatVisible) with { ColoredEquipment = updated.Equipment };
+                updated.HatVisible) with { ColoredEquipment = updated.Equipment, VieraEarsHidden = updated.VieraEarsHidden };
         else if (choice.Slot == 10)
         {
             pin.FacewearAvailable = updated.Facewear.IsAvailable;
@@ -134,6 +135,22 @@ public sealed class PinnedOutfitStore
         pin.Appearance = offhand
             ? appearance with { Offhand = weapon, OffhandDyes = dyes ?? appearance.OffhandDyes }
             : appearance with { Mainhand = weapon, MainhandDyes = dyes ?? appearance.MainhandDyes };
+        save();
+    }
+
+    internal void UpdateHeadgearSettings(ActorEntry actor, OutfitData applied)
+    {
+        var pin = configuration.PinnedOutfits.LastOrDefault(entry => entry.Matches(actor));
+        if (pin is null) return;
+        if (pin.Appearance is { } appearance)
+            pin.Appearance = appearance with { HatVisible = applied.HatVisible,
+                VisorToggled = applied.VisorToggled, VieraEarsHidden = applied.VieraEarsHidden };
+        else
+        {
+            pin.HatVisible = applied.HatVisible;
+            pin.VisorToggled = applied.VisorToggled;
+            pin.VieraEarsHidden = applied.VieraEarsHidden;
+        }
         save();
     }
 

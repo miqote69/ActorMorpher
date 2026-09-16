@@ -255,6 +255,7 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
         var originalFacewear = character->DrawData.GlassesIds[0];
         var originalHatHidden = character->DrawData.IsHatHidden;
         var originalVisor = character->DrawData.IsVisorToggled;
+        var originalEarsHidden = character->DrawData.VieraEarsHidden;
         var originalScale = character->ModelScale;
         var transaction = context.OperationId is { } operationId
             ? consumerTransaction.Begin(
@@ -301,6 +302,7 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
             character->DrawData.GlassesIds[0] = originalFacewear;
             character->DrawData.IsHatHidden = originalHatHidden;
             character->DrawData.IsVisorToggled = originalVisor;
+            character->DrawData.VieraEarsHidden = originalEarsHidden;
             character->ModelScale = originalScale;
             TryWritePostRestoreObservation(context, character);
         }
@@ -338,6 +340,8 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
                 character->DrawData.IsHatHidden = !hatVisible;
             if (appearance.VisorToggled is { } visor)
                 character->DrawData.IsVisorToggled = visor;
+            if (appearance.VieraEarsHidden is { } hideEars)
+                character->DrawData.VieraEarsHidden = hideEars;
         }
 
         if (appearance.ModelScale is { } scale)

@@ -671,6 +671,10 @@ public sealed partial class MainWindow : Window, IDisposable
                 plugin.CancelGlamourPlateImport();
         }
         ImGui.TextWrapped(T(bulkSourceKind == 2 ? TextKey.BulkPlateSourceHint : TextKey.BulkActorSourceHint));
+        if (bulkSourceKind == 2)
+            ImGui.TextWrapped(plugin.PlateAcquiredAt is { } acquired
+                ? T(TextKey.PlateSourceAcquiredAt, acquired.ToLocalTime().ToString("g"))
+                : T(TextKey.PlateSourceNotCached));
         if (!string.IsNullOrEmpty(bulkSourceStatus))
             ImGui.TextWrapped(bulkSourceStatus);
         ImGui.Spacing();
@@ -725,6 +729,8 @@ public sealed partial class MainWindow : Window, IDisposable
                 equipment.TryGetValue(slot, out var item);
                 ImGui.TableNextRow();
                 ImGui.TableNextColumn(); ImGui.TextUnformatted(slot.ToString());
+                if (slot == OutfitSlot.Head && outfit is not null && (allowSourceEditing || editActor is not null))
+                    DrawHeadgearSettings(id, outfit, editActor);
                 ImGui.TableNextColumn();
                 if (DrawEquipmentItem(outfit is not null, item, allowSourceEditing, id, slot, outfit, editActor))
                 {
@@ -903,7 +909,7 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         equipmentPickerJob = plugin.CurrentWeaponJob;
         equipmentPickerLanguage = plugin.GameLanguage;
-        equipmentResults = plugin.SearchEquipment(equipmentPickerSlot, equipmentSearch, equipmentFilter);
+        equipmentResults = plugin.SearchEquipment(equipmentPickerSlot, equipmentSearch, ActiveEquipmentFilter);
         equipmentPickerCurrentDisplay = plugin.GetEquipmentChoices(equipmentPickerSlot)
             .FirstOrDefault(choice => choice.Key == equipmentPickerCurrent);
     }

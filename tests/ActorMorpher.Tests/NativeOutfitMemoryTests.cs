@@ -11,6 +11,122 @@ namespace ActorMorpher.Tests;
 
 public sealed unsafe class NativeOutfitMemoryTests
 {
+    [Fact]
+    public void HiddenHeadKeepsEquipmentAndDyesThroughCaptureEditAndShow()
+    {
+        Character character = default;
+        Human human = default;
+        var table = stackalloc nint[72];
+        new Span<nint>(table, 72).Clear();
+        table[69] = (nint)(delegate* unmanaged<CharacterBase*, uint, EquipmentModelId*, byte>)&QueueEquipment;
+        *(nint**)&human = table;
+        var pending = stackalloc byte[10 * 32];
+        new Span<byte>(pending, 10 * 32).Clear();
+        human.ChangedEquipData = pending;
+        character.DrawData.EquipmentModelIds[0] = new EquipmentModelId { Id = 123, Variant = 4, Stain0 = 5, Stain1 = 6 };
+        human.EquipmentModels[0] = character.DrawData.EquipmentModelIds[0];
+        human.EquipmentModels[1] = new EquipmentModelId { Id = 789, Variant = 3 };
+        var original = NativeOutfitMemory.CaptureEquipped(&character, &human);
+        var head = new ArmorAppearance(456, 2, 7, 8) { Color1 = new DyeColor(.1f, .2f, .3f),
+            Color2 = new DyeColor(.7f, .8f, .9f) };
+        var selected = original with { Equipment = original.Equipment.SetItem(0, head) };
+        var hidden = HeadgearSettings.Change(selected, HeadgearSetting.Visible, false);
+        character.DrawData.IsHatHidden = true;
+        NativeOutfitMemory.ApplyRenderedEquipment(&human, hidden, true);
+        Assert.Equal(0ul, *(ulong*)pending);
+        // TEST_ONLY consumption of native queue: the game keeps a zero draw slot while hidden.
+        human.EquipmentModels[0] = default;
+        var captured = NativeOutfitMemory.CaptureEquipped(&character, &human, retained: hidden);
+        Assert.Equal(head, captured.Equipment[0]);
+        Assert.Equal(selected.Equipment[1], captured.Equipment[1]);
+        Assert.True(OutfitDataValueComparer.AreEqual(hidden, captured)); // pin does not see an unequip
+        Assert.Equal((ushort)0, NativeOutfitMemory.CaptureRendered(&character, &human).Equipment[0].Set);
+        var unmanaged = NativeOutfitMemory.CaptureEquipped(&character, &human);
+        Assert.Equal(original.Equipment[0], unmanaged.Equipment[0]);
+        var shown = HeadgearSettings.Change(captured, HeadgearSetting.Visible, true);
+        *(ulong*)pending = character.DrawData.EquipmentModelIds[0].Value; // native Show queues backing
+        character.DrawData.IsHatHidden = false;
+        NativeOutfitMemory.ApplyRenderedEquipment(&human, shown, true);
+        Assert.Equal(Model(head).Value, *(ulong*)pending);
+        var waiting = NativeOutfitMemory.CaptureEquipped(&character, &human, retained: shown);
+        Assert.Equal(head, waiting.Equipment[0]);
+        var editedBody = EquipmentChoice.Replace(waiting, new EquipmentChoiceKey(1, 999, 1));
+        NativeOutfitMemory.ApplyRenderedEquipment(&human, editedBody);
+        Assert.Equal(Model(head).Value, *(ulong*)pending);
+        Assert.Equal(head, editedBody.Equipment[0]);
+        // A different native head request must not be mistaken for our retained selection.
+        *(ulong*)pending = character.DrawData.EquipmentModelIds[0].Value;
+        Assert.Equal((ushort)0, NativeOutfitMemory.CaptureEquipped(&character, &human,
+            retained: shown).Equipment[0].Set);
+        human.EquipmentModels[0] = Model(head);
+        human.SlotNeedsUpdateBitfield &= ~1u;
+        var visible = NativeOutfitMemory.WithColors(NativeOutfitMemory.CaptureEquipped(&character, &human), shown);
+        Assert.Equal(head, visible.Equipment[0]);
+        Assert.Equal((ushort)123, character.DrawData.EquipmentModelIds[0].Id);
+    }
+
+    [Fact]
+    public void UnequippingWhileHiddenStaysEmptyWhenNativeShowQueuesBacking()
+    {
+        Character character = default;
+        Human human = default;
+        var table = stackalloc nint[72];
+        new Span<nint>(table, 72).Clear();
+        table[69] = (nint)(delegate* unmanaged<CharacterBase*, uint, EquipmentModelId*, byte>)&QueueEquipment;
+        *(nint**)&human = table;
+        var pending = stackalloc byte[10 * 32];
+        new Span<byte>(pending, 10 * 32).Clear();
+        human.ChangedEquipData = pending;
+        character.DrawData.EquipmentModelIds[0] = new EquipmentModelId { Id = 123, Variant = 4 };
+        character.DrawData.IsHatHidden = true;
+        var hidden = NativeOutfitMemory.CaptureEquipped(&character, &human);
+        var removed = EquipmentChoice.Replace(hidden, new EquipmentChoiceKey(0, 0, 0));
+        var captured = NativeOutfitMemory.CaptureEquipped(&character, &human, retained: removed);
+        Assert.Equal((ushort)0, captured.Equipment[0].Set);
+        var shown = HeadgearSettings.Change(captured, HeadgearSetting.Visible, true);
+        character.DrawData.IsHatHidden = false;
+        *(ulong*)pending = character.DrawData.EquipmentModelIds[0].Value;
+        NativeOutfitMemory.ApplyRenderedEquipment(&human, shown, true);
+        Assert.Equal(0ul, *(ulong*)pending);
+        Assert.Equal(1, *(int*)(pending + 8));
+        Assert.Equal((ushort)0, NativeOutfitMemory.CaptureEquipped(&character, &human,
+            retained: shown).Equipment[0].Set);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void EarToggleUsesTheGameRenderFlagsAndPreservesOtherFlags(bool hidden)
+    {
+        CharacterBase model = default;
+        model.VisorToggled = true;
+        model.HideVieraEars = !hidden;
+        var original = model.StateFlags;
+        NativeOutfitMemory.ApplyEarVisibility(&model, null);
+        Assert.Equal(original, model.StateFlags);
+        NativeOutfitMemory.ApplyEarVisibility(&model, hidden);
+        Assert.Equal(hidden, model.HideVieraEars);
+        Assert.True(model.VieraEarsChanging);
+        Assert.True(model.VisorToggled);
+        model.VieraEarsChanging = false;
+        NativeOutfitMemory.ApplyEarVisibility(&model, hidden);
+        Assert.False(model.VieraEarsChanging);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void EarCaptureUsesTheRenderedStateInsteadOfRestoredBacking(bool hidden)
+    {
+        Character character = default;
+        Human human = default;
+        character.DrawData.VieraEarsHidden = !hidden;
+        ((CharacterBase*)&human)->HideVieraEars = hidden;
+        var captured = NativeOutfitMemory.CaptureRendered(&character, &human);
+        Assert.Equal(hidden, captured.VieraEarsHidden);
+        Assert.Equal(!hidden, character.DrawData.VieraEarsHidden);
+    }
+
     [Theory]
     [InlineData(900, 3, true, 17)]
     [InlineData(900, 4, true, 18)]

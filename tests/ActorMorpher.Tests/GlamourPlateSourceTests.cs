@@ -1,4 +1,6 @@
 using System.Linq;
+using System;
+using FFXIVClientStructs.FFXIV.Client.Game;
 using ActorMorpher.BulkOutfit;
 using Xunit;
 
@@ -6,6 +8,69 @@ namespace ActorMorpher.Tests;
 
 public class GlamourPlateSourceTests
 {
+    [Fact]
+    public void ObservationFailureDoesNotChangeRequestPendingOrCompletion()
+    {
+        var operation = new GlamourPlateImportOperation();
+        var requests = 0;
+        void FailedObservation() => Plugin.ObserveGlamourPlateImport(
+            () => throw new InvalidOperationException("Observation-only failure."));
+        bool Request()
+        {
+            requests++;
+            FailedObservation();
+            return true;
+        }
+        Assert.True(operation.Start(2, 42, 956, Request));
+        Assert.True(operation.IsPending);
+        Assert.False(operation.Start(2, 42, 956, Request));
+        Assert.Equal(1, requests);
+        FailedObservation();
+        Assert.Equal(PlateImportProgress.Waiting, operation.Poll(42, 956, false, out _));
+        FailedObservation();
+        Assert.Equal(PlateImportProgress.Ready, operation.Poll(42, 956, true, out var plate));
+        Assert.Equal(2, plate);
+        Assert.False(operation.IsPending);
+        Assert.True(operation.Start(3, 42, 956, Request));
+        operation.Cancel();
+        FailedObservation();
+        Assert.Equal(PlateImportProgress.Idle, operation.Poll(42, 956, true, out _));
+        Assert.True(operation.Start(3, 42, 956, Request));
+        FailedObservation();
+        Assert.Equal(PlateImportProgress.ContextChanged, operation.Poll(42, 957, false, out _));
+        Assert.False(operation.IsPending);
+        Assert.Equal(3, requests);
+    }
+
+    [Fact]
+    public unsafe void NativeObservationReadsFlagsAndAllPlatesWithoutChangingThem()
+    {
+        var manager = new MirageManager();
+        Assert.Equal(default, GlamourPlateSource.Observe(null));
+        var empty = GlamourPlateSource.Observe(&manager);
+        Assert.False(empty.Requested);
+        Assert.False(empty.Loaded);
+        Assert.Equal(0, empty.NonEmptyItems);
+        manager.GlamourPlatesRequested = true;
+        manager.GlamourPlates[19].ItemIds[11] = 54321;
+        var before = new ReadOnlySpan<byte>(&manager, sizeof(MirageManager)).ToArray();
+        var requested = GlamourPlateSource.Observe(&manager);
+        Assert.True(requested.Requested);
+        Assert.False(requested.Loaded);
+        Assert.Equal(1, requested.NonEmptyItems);
+        Assert.Equal(1, requested.NonEmptyPlates);
+        Assert.NotEqual(empty.DataHash, requested.DataHash);
+        Assert.Equal(before, new ReadOnlySpan<byte>(&manager, sizeof(MirageManager)).ToArray());
+        manager.GlamourPlates[19].Stain1Ids[11] = 7;
+        var recolored = GlamourPlateSource.Observe(&manager);
+        Assert.NotEqual(requested.DataHash, recolored.DataHash);
+        manager.GlamourPlatesLoaded = true;
+        var received = GlamourPlateSource.Observe(&manager);
+        Assert.True(received.Loaded);
+        Assert.Equal(recolored.DataHash, received.DataHash);
+        Assert.Equal((nint)(&manager), received.ManagerAddress);
+    }
+
     [Fact]
     public void MapsTenPlateSlotsAndBothDyesWithoutWeapons()
     {

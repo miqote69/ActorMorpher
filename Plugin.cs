@@ -40,7 +40,12 @@ public sealed partial class Plugin : IDalamudPlugin
 
     private readonly MainWindow mainWindow;
     private readonly GlamourPlateImportOperation plateImport = new();
+    private readonly GlamourPlateCache plateCache;
+    private ulong PlateOwner => ClientState.IsLoggedIn ? PlayerState.ContentId : 0;
+    public DateTimeOffset? PlateAcquiredAt => plateCache.Get(PlateOwner)?.AcquiredAt;
     private string? completedPlateImportMessage;
+    private GlamourPlateSource.Observation? lastPlateObservation;
+    private string? lastPlateObservationPhase;
     public bool IsPlateImportPending => plateImport.IsPending;
     private readonly WindowSystem windowSystem = new("ActorMorpher");
     private readonly DiagnosticLogRouter diagnosticRouter;
@@ -83,11 +88,13 @@ public sealed partial class Plugin : IDalamudPlugin
     public string WeaponSelectionStatus { get; private set; } = string.Empty;
     public LogicalActorKey? WeaponSelectionActor { get; private set; }
     private (LogicalActorKey Actor, EquipmentChoiceKey Choice)? pendingEquipmentSelection;
+    private LogicalActorKey? pendingHeadgearSetting;
     private readonly Dictionary<ClientLanguage, IReadOnlyDictionary<byte, StainDisplayEntry>> stainDisplayCaches = new();
     private readonly Dictionary<(uint RowId, ModelCategory Category, ModelSource Source, uint SourceId), ModelPreviewAssetReport> previewAssetCaches = new();
     private readonly Dictionary<(uint RowId, ModelCategory Category, ModelSource Source, uint SourceId), ModelPreviewSupport> previewSupportCaches = new();
     private readonly Dictionary<(uint RowId, ModelCategory Category, ModelSource Source, uint SourceId), ModelPreviewGeometryReport> previewGeometryCaches = new();
     private long nextPinnedOutfitScanTick;
+    private readonly PinnedActorDiscovery pinnedActorDiscovery = new();
     private uint pinnedOutfitTerritory;
     private LogicalActorKey? pinnedOutfitOperationActor;
     private OutfitData? pinnedOutfitOperationObservedState;
@@ -119,6 +126,9 @@ public sealed partial class Plugin : IDalamudPlugin
         var isDev = PluginInterface.IsDev;
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? Configuration.Create(isDev);
         Configuration.MigrateAndValidate(isDev);
+        Configuration.GlamourPlates ??= [];
+        plateCache = new GlamourPlateCache(Configuration.GlamourPlates,
+            () => PluginInterface.SavePluginConfig(Configuration));
         PluginInterface.SavePluginConfig(Configuration);
         pinnedOutfitStore = new PinnedOutfitStore(
             Configuration,
@@ -231,11 +241,13 @@ public sealed partial class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.Draw += DrawUi;
         PluginInterface.UiBuilder.OpenConfigUi += ToggleMainUi;
         Framework.Update += OnPluginFrameworkUpdate;
+        ClientState.Logout += OnPlateLogout;
     }
 
     public void Dispose()
     {
         plateImport.Cancel();
+        ClientState.Logout -= OnPlateLogout;
         Framework.Update -= OnPluginFrameworkUpdate;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleMainUi;
         PluginInterface.UiBuilder.Draw -= DrawUi;
@@ -335,10 +347,17 @@ public sealed partial class Plugin : IDalamudPlugin
             message = Localizer.Get(TextKey.PlateSourceRequestFailed);
             return false;
         }
-        if (GlamourPlateSource.IsLoaded)
+        ObserveGlamourPlateImport("import-click", index + 1);
+        UpdateGlamourPlateCache();
+        if (plateCache.Get(PlateOwner) != null)
             return CompleteGlamourPlateImport(index, out message);
+        if (!plateCache.IsWaiting)
+        {
+            message = Localizer.Get(TextKey.PlateSourceNotCached);
+            return false;
+        }
         if (!plateImport.Start(index, PlayerState.ContentId, ClientState.TerritoryType,
-            () => GlamourPlateSource.Request(SigScanner)))
+            () => plateCache.IsWaiting))
         {
             message = Localizer.Get(TextKey.PlateSourceRequestFailed);
             return false;
@@ -350,6 +369,7 @@ public sealed partial class Plugin : IDalamudPlugin
     public void CancelGlamourPlateImport()
     {
         plateImport.Cancel();
+        ObserveGlamourPlateImport("cancelled");
         completedPlateImportMessage = Localizer.Get(TextKey.PlateSourceCancelled);
     }
 
@@ -364,18 +384,117 @@ public sealed partial class Plugin : IDalamudPlugin
     {
         if (!plateImport.IsPending)
             return;
+        ObserveGlamourPlateImport("pending-poll");
         var result = plateImport.Poll(ClientState.IsLoggedIn ? PlayerState.ContentId : 0,
-            ClientState.TerritoryType, ClientState.IsLoggedIn && GlamourPlateSource.IsLoaded, out var index);
+            ClientState.TerritoryType, plateCache.Get(PlateOwner) != null, out var index);
         if (result == PlateImportProgress.Ready)
             CompleteGlamourPlateImport(index, out completedPlateImportMessage);
         else if (result == PlateImportProgress.ContextChanged)
+        {
             completedPlateImportMessage = Localizer.Get(TextKey.PlateSourceContextChanged);
+            ObserveGlamourPlateImport("context-changed");
+        }
+        else if (result == PlateImportProgress.Waiting && !plateCache.IsWaiting)
+        {
+            plateImport.Cancel();
+            completedPlateImportMessage = Localizer.Get(TextKey.PlateSourceUnavailable);
+        }
+    }
+
+    private void OnPlateLogout(int type, int code)
+    {
+        plateCache.EndSession();
+        if (plateImport.IsPending)
+        {
+            plateImport.Cancel();
+            completedPlateImportMessage = Localizer.Get(TextKey.PlateSourceContextChanged);
+        }
+    }
+
+    private void UpdateGlamourPlateCache()
+    {
+        try
+        {
+            var owner = PlateOwner;
+            plateCache.Update(owner, ClientState.TerritoryType,
+                owner != 0 && GlamourPlateSource.CanRequest,
+                owner != 0 && GlamourPlateSource.IsLoaded,
+                owner != 0 && GlamourPlateSource.IsRequested,
+                () =>
+                {
+                    var invoked = GlamourPlateSource.Request(SigScanner);
+                    ObserveGlamourPlateImport("automatic-request-returned", nativeFunctionInvoked: invoked);
+                    return invoked;
+                }, GlamourPlateSource.Capture);
+        }
+        catch (Exception exception)
+        {
+            Log.Warning(exception, "Could not update saved glamour plates.");
+        }
+    }
+
+    private void ObserveGlamourPlateImport(string phase, int? plateNumber = null, bool? nativeFunctionInvoked = null)
+        => ObserveGlamourPlateImport(() => RecordGlamourPlateObservation(phase, plateNumber, nativeFunctionInvoked));
+
+    internal static void ObserveGlamourPlateImport(System.Action observation)
+    {
+        try
+        {
+            observation();
+        }
+        catch (Exception exception)
+        {
+            Log?.Warning(exception, "Actor Morpher could not record the glamour plate observation.");
+        }
+    }
+
+    private void RecordGlamourPlateObservation(string phase, int? plateNumber, bool? nativeFunctionInvoked)
+    {
+        if (!diagnosticRouter.IsEnabled)
+            return;
+        var state = GlamourPlateSource.Observe();
+        if (phase == "pending-poll" && lastPlateObservationPhase == phase && lastPlateObservation == state)
+            return;
+        lastPlateObservation = state;
+        lastPlateObservationPhase = phase;
+        diagnosticRouter.Write(new DiagnosticLogEntry
+        {
+            EventId = DiagnosticEventIds.DiagnosticMarker,
+            EventName = "GlamourPlateImportObserved",
+            Category = DiagnosticCategory.BulkOutfit,
+            Phase = phase,
+            Message = "Glamour plate native state observed.",
+            Properties = new Dictionary<string, object?>
+            {
+                ["territoryId"] = ClientState.TerritoryType,
+                ["loggedIn"] = ClientState.IsLoggedIn,
+                ["pending"] = plateImport.IsPending,
+                ["plateNumber"] = plateNumber,
+                ["nativeFunctionInvoked"] = nativeFunctionInvoked,
+                ["managerAvailable"] = state.ManagerAddress != 0,
+                ["managerAddress"] = Configuration.IncludeRawAddressesInDiagnostics ? $"0x{state.ManagerAddress:X}" : null,
+                ["requestAddress"] = Configuration.IncludeRawAddressesInDiagnostics ? $"0x{GlamourPlateSource.RequestAddress:X}" : null,
+                ["requested"] = state.Requested,
+                ["loaded"] = state.Loaded,
+                ["nonEmptyPlates"] = state.NonEmptyPlates,
+                ["nonEmptyItems"] = state.NonEmptyItems,
+                ["plateDataHash"] = state.DataHash,
+            },
+        });
     }
 
     private bool CompleteGlamourPlateImport(int index, out string message)
     {
+        ObserveGlamourPlateImport("read-plate", index + 1);
         uint missingItem = 0;
-        if (!ClientState.IsLoggedIn || !GlamourPlateSource.TryRead(index,
+        var saved = plateCache.Get(PlateOwner);
+        if (saved == null || (uint)index >= (uint)saved.Plates.Length)
+        {
+            message = Localizer.Get(TextKey.PlateSourceNotCached);
+            return false;
+        }
+        var plate = saved.Plates[index];
+        if (!GlamourPlateSource.TryConvert(plate.Items, plate.Stain1, plate.Stain2,
             itemId => DataManager.GetExcelSheet<Item>().TryGetRow(
                 Dalamud.Utility.ItemUtil.GetBaseId(itemId).ItemId, out var item) ? item.ModelMain : null,
             out var equipment, out missingItem))
@@ -434,6 +553,16 @@ public sealed partial class Plugin : IDalamudPlugin
         => bulkOutfitService.Cancel();
 
     public OutfitData? SourceOutfit => bulkOutfitService.SourceOutfit;
+    public bool SelectHeadgearSetting(HeadgearSetting setting, bool value, LogicalActorKey? actor, out string message)
+    {
+        if (actor is not null && !CanStartBulkOutfitInCurrentContext(out message))
+            return false;
+        var started = bulkOutfitService.SelectHeadgearSetting(setting, value, actor, out message);
+        if (started && actor is { } selectedActor)
+            pendingHeadgearSetting = selectedActor;
+        return started;
+    }
+
     public bool SelectEquipment(EquipmentChoiceKey choice, LogicalActorKey? actor, out string message)
     {
         if (actor is not null && !CanStartBulkOutfitInCurrentContext(out message))
@@ -1293,6 +1422,13 @@ public sealed partial class Plugin : IDalamudPlugin
         OutfitData? desired,
         bool succeeded)
     {
+        if (pendingHeadgearSetting == actor)
+        {
+            pendingHeadgearSetting = null;
+            if (type == BulkOperationType.ApplyOutfit && succeeded && desired is not null
+                && actorRegistry.TryGet(actor, out var selectedActor))
+                pinnedOutfitStore.UpdateHeadgearSettings(selectedActor, desired);
+        }
         if (pendingEquipmentSelection is { } selection && selection.Actor == actor)
         {
             pendingEquipmentSelection = null;
@@ -1361,6 +1497,7 @@ public sealed partial class Plugin : IDalamudPlugin
     private void OnPluginFrameworkUpdate(IFramework framework)
     {
         ProcessWeaponSelections();
+        UpdateGlamourPlateCache();
         ProcessGlamourPlateImport();
         EnsureCommandsRegistered();
         var now = Environment.TickCount64;
@@ -1400,14 +1537,14 @@ public sealed partial class Plugin : IDalamudPlugin
 
     private bool TryReapplyPinnedOutfit(long now)
     {
-        if (now < nextPinnedOutfitScanTick
-            || pinnedOutfitOperationActor is not null
+        if (pinnedOutfitStore.Count == 0 || pinnedOutfitOperationActor is not null
             || pinnedAppearanceOperationActor is not null
             || bulkOutfitService.CurrentOperation is not null)
             return false;
 
-        nextPinnedOutfitScanTick = now + 500;
-        foreach (var actor in actorRegistry.Entries)
+        var actors = actorRegistry.Entries;
+        foreach (var actor in pinnedActorDiscovery.GetCandidates(actors, pinnedOutfitStore.IsPinned,
+                     now, ref nextPinnedOutfitScanTick))
         {
             OutfitData desired;
             OutfitData current;
@@ -1417,6 +1554,7 @@ public sealed partial class Plugin : IDalamudPlugin
                     || actorRegistry.CaptureCurrentAppearance(representation) is not { } rendered
                     || appearanceApplyService.IsPending(actor.Key))
                     continue;
+                pinnedAppearance = pinnedAppearance.WithCurrentEarVisibility(rendered);
                 if (PinnedOutfitStore.AppearanceEquals(rendered, pinnedAppearance))
                     continue;
                 if (failedPinnedAppearanceStates.TryGetValue(actor.Key, out var failed)
@@ -1446,6 +1584,7 @@ public sealed partial class Plugin : IDalamudPlugin
                 || !bulkOutfitService.TryCaptureOutfit(actor.Key, out current))
                 continue;
 
+            desired = desired.WithCurrentEarVisibility(current);
             if (failedPinnedOutfitReapplyStates.TryGetValue(actor.Key, out var failedState))
             {
                 if (OutfitDataValueComparer.AreEqual(current, failedState))
@@ -1471,6 +1610,9 @@ public sealed partial class Plugin : IDalamudPlugin
                     ["isLocalPlayer"] = actor.IsLocalPlayer,
                 },
             });
+            // Tracking is set above before the normal service can synchronously report completion.
+            // This is only the operation just queued here, never an unrelated user batch.
+            bulkOutfitService.ProcessNextFrame();
             return true;
         }
         return false;

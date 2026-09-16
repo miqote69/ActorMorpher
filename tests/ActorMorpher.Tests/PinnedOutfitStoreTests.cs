@@ -13,6 +13,215 @@ public sealed class PinnedOutfitStoreTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public void AttachmentPinFollowsOwnerAndAnchorAcrossTerritoryAndSlot(bool buddy)
+    {
+        var attachment = new NpcAttachmentKey(123456, 386, ObjectKind.EventNpc, 1003782, "79");
+        if (buddy) attachment = attachment with { MountId = 0, ParentKind = ObjectKind.BattleNpc, ParentBaseId = 952 };
+        var first = WithAttachment(SlotNpc(ObjectKind.EventNpc, 201, 1003782, 1, true), attachment);
+        var next = SlotNpc(ObjectKind.EventNpc, 200, 1003782, 2, true);
+        var movedKey = next.Key with { TerritoryId = 999 };
+        next = WithAttachment(next with { Key = movedKey, Representations = [next.Current with
+        { LogicalKey = movedKey, RepresentationKey = next.Current.RepresentationKey with { TerritoryId = 999 } }] }, attachment);
+        var config = new Configuration();
+        var store = new PinnedOutfitStore(config, () => { });
+        var appearance = Appearance(ModelCategory.Human);
+        store.PinCurrent([first], _ => appearance);
+        var loaded = Newtonsoft.Json.JsonConvert.DeserializeObject<Configuration>(
+            Newtonsoft.Json.JsonConvert.SerializeObject(config))!;
+        PinnedOutfitStore.Normalize(loaded);
+        store = new PinnedOutfitStore(loaded, () => { });
+        Assert.True(store.IsPinned(next));
+        Assert.True(store.TryGetAppearance(next, out var saved));
+        Assert.True(PinnedOutfitStore.AppearanceEquals(appearance, saved));
+        Assert.Equal(config.PinnedOutfits[0].IdentityKey(), PinnedOutfitConfiguration.Create(next, appearance).IdentityKey());
+        Assert.Null(ActorRegistry.DescribeRenderedAppearance(first.Current, next.Current with { CurrentAppearance = appearance }));
+        Assert.True(store.Unpin(next));
+        Assert.False(store.IsPinned(first));
+    }
+
+    [Fact]
+    public void ParentKindsDoNotAliasAndExistingMountJsonKeepsItsMeaning()
+    {
+        var mount = new NpcAttachmentKey(123456, 386, ObjectKind.EventNpc, 1059561, "79");
+        var actor = WithAttachment(SlotNpc(ObjectKind.EventNpc, 200, 1059561, 1, true), mount);
+        var pin = PinnedOutfitConfiguration.Create(actor, Appearance(ModelCategory.Human));
+        var json = Newtonsoft.Json.Linq.JObject.FromObject(pin);
+        ((Newtonsoft.Json.Linq.JObject)json["NpcAttachment"]!).Remove("ParentKind");
+        ((Newtonsoft.Json.Linq.JObject)json["NpcAttachment"]!).Remove("ParentBaseId");
+        var loaded = json.ToObject<PinnedOutfitConfiguration>()!;
+        Assert.True(loaded.Matches(actor));
+        Assert.Equal(pin.IdentityKey(), loaded.IdentityKey());
+        var buddy = mount with { MountId = 0, ParentKind = ObjectKind.BattleNpc, ParentBaseId = 952 };
+        Assert.False(loaded.Matches(WithAttachment(actor, buddy)));
+        var buddyPin = PinnedOutfitConfiguration.Create(WithAttachment(actor, buddy), Appearance(ModelCategory.Human));
+        Assert.False(buddyPin.Matches(WithAttachment(actor, buddy with { ParentBaseId = 953 })));
+        Assert.False(buddyPin.Matches(WithAttachment(actor, buddy with { ParentKind = ObjectKind.EventNpc })));
+    }
+
+    [Fact]
+    public void AttachmentPinDoesNotBecomeANumberOrSlotPinWhenRelationshipDiffersOrDisappears()
+    {
+        var key = new NpcAttachmentKey(123456, 386, ObjectKind.EventNpc, 1003782, "79");
+        var actor = WithAttachment(SlotNpc(ObjectKind.EventNpc, 201, 1003782, 1, true), key);
+        var pin = PinnedOutfitConfiguration.Create(actor, Appearance(ModelCategory.Human));
+        foreach (var other in new[] { key with { OwnerContentId = 999 }, key with { MountId = 1 },
+            key with { AttachmentIds = "80" }, key with { BaseId = 1003783 }, key with { Kind = ObjectKind.BattleNpc } })
+            Assert.False(pin.Matches(WithAttachment(actor, other)));
+        Assert.False(pin.Matches(WithAttachment(actor, null)));
+        Assert.True(pin.Matches(actor));
+        pin.Session = Guid.NewGuid();
+        Assert.False(pin.Matches(actor));
+    }
+
+    private static ActorEntry WithAttachment(ActorEntry actor, NpcAttachmentKey? attachment)
+        => actor with { Representations = [actor.Current with { NpcAttachment = attachment }] };
+
+    [Theory]
+    [InlineData((byte)3)]
+    [InlineData((byte)4)]
+    public void StrongNpcIdentityRemainsAuthoritativeWhenAttachmentChanges(byte source)
+    {
+        var attachment = new NpcAttachmentKey(123456, 386, ObjectKind.EventNpc, 1003782, "79");
+        var actor = SlotNpc(ObjectKind.EventNpc, 201, 1003782, 1, true);
+        var identity = new ActorContinuityKey(ObjectKind.EventNpc, source, 222, 1003782, 1187);
+        actor = actor with { Key = actor.Key with { Continuity = identity }, Representations = [actor.Current with
+        { ContinuityKey = identity, NpcAttachment = attachment }] };
+        var pin = PinnedOutfitConfiguration.Create(actor, Appearance(ModelCategory.Human));
+        Assert.Null(pin.NpcAttachment);
+        var identityKey = pin.IdentityKey();
+        Assert.True(pin.Matches(WithAttachment(actor, null)));
+        Assert.True(pin.Matches(WithAttachment(actor, attachment with { AttachmentIds = "80" })));
+        var otherIdentity = identity with { Id = 333 };
+        var other = actor with { Key = actor.Key with { Continuity = otherIdentity }, Representations = [actor.Current with
+        { ContinuityKey = otherIdentity }] };
+        Assert.False(pin.Matches(other));
+        // Even a configuration containing both fields must not change strong-key semantics.
+        pin.NpcAttachment = attachment;
+        Assert.Equal(identityKey, pin.IdentityKey());
+        Assert.False(pin.Matches(other));
+        Assert.True(pin.Matches(WithAttachment(actor, null)));
+        // A newly observed strong identity can precede replacement of the logical key.
+        actor = actor with { Key = actor.Key with { Continuity = new(ObjectKind.EventNpc, 5, 1, 1003782, 1187) } };
+        Assert.Null(PinnedOutfitConfiguration.Create(actor, Appearance(ModelCategory.Human)).NpcAttachment);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void HeadgearSettingsRoundTripPinsWithoutChangingEquipmentOrWeapons(bool legacy)
+    {
+        var actor = Actor("Head", false, 1, 10);
+        var config = new Configuration();
+        var store = new PinnedOutfitStore(config, () => { });
+        var original = Appearance(ModelCategory.Human);
+        var outfit = EquipmentDisplayFormatting.CreateHumanOutfit(original)!;
+        if (legacy) store.Pin(actor, outfit); else store.PinCurrent([actor], _ => original);
+        var changed = outfit with { HatVisible = !outfit.HatVisible, VisorToggled = !outfit.VisorToggled, VieraEarsHidden = true };
+        store.UpdateHeadgearSettings(actor, changed);
+        var loaded = Newtonsoft.Json.JsonConvert.DeserializeObject<Configuration>(Newtonsoft.Json.JsonConvert.SerializeObject(config))!;
+        store = new PinnedOutfitStore(loaded, () => { });
+        Assert.True(store.TryGet(actor, out var retained));
+        Assert.True(OutfitDataValueComparer.AreEqual(changed, retained));
+        if (!legacy)
+        {
+            Assert.True(store.TryGetAppearance(actor, out var appearance));
+            Assert.True(PinnedOutfitStore.AppearanceEquals(original with
+                { HatVisible = changed.HatVisible, VisorToggled = changed.VisorToggled, VieraEarsHidden = true }, appearance));
+            Assert.True(PinnedOutfitStore.CanMaintainWithOutfit(original, appearance));
+        }
+    }
+
+    [Fact]
+    public void LegacyPinsDoNotForceEarVisibilityOrStayUnequal()
+    {
+        var saved = Appearance(ModelCategory.Human);
+        var rendered = saved with { VieraEarsHidden = true };
+        Assert.True(PinnedOutfitStore.AppearanceEquals(rendered, saved.WithCurrentEarVisibility(rendered)));
+        var outfit = EquipmentDisplayFormatting.CreateHumanOutfit(saved)!;
+        var actual = EquipmentDisplayFormatting.CreateHumanOutfit(rendered)!;
+        Assert.True(OutfitDataValueComparer.AreEqual(actual, outfit.WithCurrentEarVisibility(actual)));
+        var explicitVisible = saved with { VieraEarsHidden = false };
+        Assert.False(PinnedOutfitStore.AppearanceEquals(rendered, explicitVisible.WithCurrentEarVisibility(rendered)));
+    }
+
+    [Theory]
+    [InlineData(ObjectKind.EventNpc, true)]
+    [InlineData(ObjectKind.BattleNpc, true)]
+    [InlineData(ObjectKind.EventNpc, false)]
+    [InlineData(ObjectKind.BattleNpc, false)]
+    public void NpcPinFollowsSameNumberAndSlotWithoutWeakeningLiveCapture(ObjectKind kind, bool continuity)
+    {
+        var first = SlotNpc(kind, 201, 1003782, 1, continuity);
+        var recreated = SlotNpc(kind, 201, 1003782, 2, continuity);
+        var configuration = new Configuration();
+        var store = new PinnedOutfitStore(configuration, () => { });
+        var selected = Appearance(ModelCategory.Human) with
+        {
+            Equipment = Appearance(ModelCategory.Human).Equipment.SetItem(0, 9005),
+            ColoredEquipment = Outfit(42).Equipment.SetItem(1,
+                new ArmorAppearance(43, 1, 2, 3) { Color1 = new DyeColor(0.1f, 0.2f, 0.3f) { Metallic = true } }),
+            Mainhand = 0x0706000200030004UL, Offhand = 0,
+            MainhandDyes = new(new DyeColor(0.2f, 0.3f, 0.4f) { Metallic = true }, new(0.5f, 0.6f, 0.7f)),
+            OffhandDyes = new(null, new DyeColor(1, 0, 0)),
+            FacewearModelId = 18, HatVisible = true, VisorToggled = true,
+        };
+        store.PinCurrent([first], _ => selected);
+        var loaded = Newtonsoft.Json.JsonConvert.DeserializeObject<Configuration>(
+            Newtonsoft.Json.JsonConvert.SerializeObject(configuration))!;
+        PinnedOutfitStore.Normalize(loaded);
+        store = new PinnedOutfitStore(loaded, () => { });
+        Assert.True(store.IsPinned(recreated));
+        Assert.True(store.TryGetAppearance(recreated, out var retained));
+        Assert.True(PinnedOutfitStore.AppearanceEquals(selected, retained));
+        Assert.Equal(configuration.PinnedOutfits[0].IdentityKey(),
+            PinnedOutfitConfiguration.Create(recreated, selected).IdentityKey());
+        // Pin target continuity must not let an operation on the old instance capture its replacement.
+        Assert.Null(ActorRegistry.DescribeRenderedAppearance(first.Current,
+            recreated.Current with { CurrentAppearance = selected }));
+        var updated = selected with { Mainhand = 123 };
+        store.PinCurrent([recreated], _ => updated);
+        Assert.Equal(1, store.Count);
+        Assert.True(store.Unpin(recreated));
+        Assert.False(store.IsPinned(first));
+        Assert.False(store.IsPinned(SlotNpc(kind, 201, 1003782, 3, continuity)));
+    }
+
+    [Theory]
+    [InlineData(ObjectKind.EventNpc)]
+    [InlineData(ObjectKind.BattleNpc)]
+    public void NpcSlotPinDoesNotMatchOtherNumberSlotKindTerritoryOrSession(ObjectKind kind)
+    {
+        var first = SlotNpc(kind, 201, 1003782, 1, true);
+        var pin = PinnedOutfitConfiguration.Create(first, Appearance(ModelCategory.Human));
+        Assert.False(pin.Matches(SlotNpc(kind, 202, 1003782, 2, true)));
+        Assert.False(pin.Matches(SlotNpc(kind, 201, 1003783, 2, true)));
+        Assert.False(pin.Matches(SlotNpc(kind == ObjectKind.EventNpc ? ObjectKind.BattleNpc : ObjectKind.EventNpc,
+            201, 1003782, 2, true)));
+        var recreated = SlotNpc(kind, 201, 1003782, 2, true);
+        Assert.False(pin.Matches(recreated with { Key = recreated.Key with { TerritoryId = 999 } }));
+        pin.Session = Guid.NewGuid();
+        Assert.False(pin.Matches(recreated));
+    }
+
+    private static ActorEntry SlotNpc(ObjectKind kind, ushort index, uint baseId, ulong lifetime, bool continuity)
+    {
+        var actor = Actor("Same NPC", false, index, 1187);
+        var key = actor.Key with
+        {
+            ObjectKind = kind, BaseId = baseId, Lifetime = lifetime,
+            GameObjectId = lifetime + 1000, EntityId = 0xE0000000,
+            Continuity = continuity ? new ActorContinuityKey(kind, 5, lifetime + 1000, baseId, 1187) : null,
+        };
+        return actor with { Key = key, Kind = kind, Representations = [actor.Current with
+        {
+            LogicalKey = key, ObjectKind = kind, BaseId = baseId, ContinuityKey = key.Continuity,
+            RepresentationKey = new(index, key.GameObjectId, key.EntityId, false, 1187),
+        }] };
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public void WeaponDyeUpdatesOnlyTheChosenPinnedHand(bool offhand)
     {
         var store = new PinnedOutfitStore(new Configuration(), () => { });

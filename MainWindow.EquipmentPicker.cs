@@ -7,6 +7,10 @@ namespace ActorMorpher;
 
 public sealed partial class MainWindow
 {
+    private EquipmentPickerFilter ActiveEquipmentFilter
+        => equipmentPickerSlot == 10 && equipmentFilter == EquipmentPickerFilter.Fashion
+            ? EquipmentPickerFilter.All : equipmentFilter;
+
     internal void DrawEquipmentPicker()
     {
         if (!IsOpen || !equipmentPickerOpen)
@@ -81,20 +85,25 @@ public sealed partial class MainWindow
         if (ImGui.IsItemHovered()) ImGui.SetTooltip(T(TextKey.PickerClearSearch));
 
         var count = T(TextKey.PickerResultCount, equipmentResults.Length);
-        var filterWidth = Math.Min(170 * scale, (ImGui.GetContentRegionAvail().X - ImGui.CalcTextSize(count).X - spacing.X * 4) / 3);
-        if (DrawEquipmentFilter(T(TextKey.All), equipmentFilter == EquipmentPickerFilter.All, filterWidth))
+        var facewearPicker = equipmentPickerSlot == 10;
+        var filterCount = facewearPicker ? 2 : 3;
+        var filterWidth = Math.Min(170 * scale, (ImGui.GetContentRegionAvail().X - ImGui.CalcTextSize(count).X - spacing.X * (filterCount + 1)) / filterCount);
+        if (DrawEquipmentFilter(T(TextKey.All), ActiveEquipmentFilter == EquipmentPickerFilter.All, filterWidth))
         {
             equipmentFilter = EquipmentPickerFilter.All;
             changed = true;
         }
-        ImGui.SameLine();
-        if (DrawEquipmentFilter(T(TextKey.FashionEquipment), equipmentFilter == EquipmentPickerFilter.Fashion, filterWidth))
+        if (!facewearPicker)
         {
-            equipmentFilter = EquipmentPickerFilter.Fashion;
-            changed = true;
+            ImGui.SameLine();
+            if (DrawEquipmentFilter(T(TextKey.FashionEquipment), ActiveEquipmentFilter == EquipmentPickerFilter.Fashion, filterWidth))
+            {
+                equipmentFilter = EquipmentPickerFilter.Fashion;
+                changed = true;
+            }
         }
         ImGui.SameLine();
-        if (DrawEquipmentFilter(T(TextKey.PickerFavorites), equipmentFilter == EquipmentPickerFilter.Favorites, filterWidth))
+        if (DrawEquipmentFilter(T(TextKey.PickerFavorites), ActiveEquipmentFilter == EquipmentPickerFilter.Favorites, filterWidth))
         {
             equipmentFilter = EquipmentPickerFilter.Favorites;
             changed = true;

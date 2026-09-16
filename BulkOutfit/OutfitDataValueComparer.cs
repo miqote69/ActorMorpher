@@ -10,6 +10,7 @@ public static class OutfitDataValueComparer
             || left.Facewear != right.Facewear
             || left.HatVisible != right.HatVisible
             || left.VisorToggled != right.VisorToggled
+            || left.VieraEarsHidden != right.VieraEarsHidden
             || left.Equipment.Length != right.Equipment.Length)
             return false;
 

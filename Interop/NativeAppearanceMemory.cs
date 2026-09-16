@@ -69,7 +69,8 @@ public sealed unsafe class NativeAppearanceMemory : IAppearanceMemory
             category == ModelCategory.Human
                 ? character->DrawData.Weapon(DrawDataContainer.WeaponSlot.OffHand).ModelId.Value
                 : null,
-            category == ModelCategory.Human ? character->DrawData.IsVisorToggled : null);
+            category == ModelCategory.Human ? character->DrawData.IsVisorToggled : null) with
+        { VieraEarsHidden = category == ModelCategory.Human ? character->DrawData.VieraEarsHidden : null };
         WriteScaleSnapshot(actor, character, appearance, "BeforeOperation");
         return true;
     }

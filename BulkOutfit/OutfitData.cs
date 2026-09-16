@@ -8,6 +8,13 @@ public sealed record OutfitData(
     bool HatVisible,
     bool VisorToggled)
 {
+    // Older outfits and NPC sheet data do not specify an ear-visibility override.
+    public bool? VieraEarsHidden { get; init; }
+
+    internal OutfitData WithCurrentEarVisibility(OutfitData current)
+        => VieraEarsHidden is null && current.VieraEarsHidden is { } hidden
+            ? this with { VieraEarsHidden = hidden } : this;
+
     public static OutfitData Create(
         IEnumerable<ArmorAppearance> equipment,
         FacewearAppearance facewear,

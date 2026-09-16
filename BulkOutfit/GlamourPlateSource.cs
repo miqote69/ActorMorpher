@@ -1,5 +1,7 @@
 using FFXIVClientStructs.FFXIV.Client.Game;
 using Dalamud.Plugin.Services;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 
 namespace ActorMorpher.BulkOutfit;
 
@@ -9,6 +11,64 @@ internal static class GlamourPlateSource
 
     private const string RequestSignature = "40 53 48 83 EC 30 80 B9 68 18 00 00 00 48 8B D9 75 21 45 33 C9 C7 44 24 20 00 00 00 00 45 33 C0 33 D2 B9 34 09 00 00";
     private static nint requestAddress;
+    internal static nint RequestAddress => requestAddress;
+
+    internal static unsafe bool CanRequest => MirageManager.Instance() != null
+        && FFXIVClientStructs.FFXIV.Client.UI.UIGlobals.CanApplyGlamourPlates();
+
+    internal static unsafe bool IsRequested => MirageManager.Instance() != null
+        && MirageManager.Instance()->GlamourPlatesRequested;
+
+    internal static unsafe SavedGlamourPlates Capture(SavedGlamourPlates? previous)
+        => Capture(MirageManager.Instance(), previous);
+
+    internal static unsafe SavedGlamourPlates Capture(MirageManager* manager, SavedGlamourPlates? previous)
+    {
+        var equal = previous?.Plates.Length == PlateCount;
+        for (var i = 0; equal && i < PlateCount; i++)
+        {
+            ref var plate = ref manager->GlamourPlates[i];
+            var saved = previous!.Plates[i];
+            equal = plate.ItemIds.SequenceEqual(saved.Items)
+                && plate.Stain0Ids.SequenceEqual(saved.Stain1)
+                && plate.Stain1Ids.SequenceEqual(saved.Stain2);
+        }
+        if (equal)
+            return previous!;
+        var result = new SavedGlamourPlates { AcquiredAt = DateTimeOffset.UtcNow,
+            Plates = new SavedGlamourPlate[PlateCount] };
+        for (var i = 0; i < PlateCount; i++)
+        {
+            ref var plate = ref manager->GlamourPlates[i];
+            result.Plates[i] = new SavedGlamourPlate { Items = plate.ItemIds.ToArray(),
+                Stain1 = plate.Stain0Ids.ToArray(), Stain2 = plate.Stain1Ids.ToArray() };
+        }
+        return result;
+    }
+
+    internal readonly record struct Observation(nint ManagerAddress, bool Requested, bool Loaded,
+        int NonEmptyPlates, int NonEmptyItems, string DataHash);
+
+    internal static unsafe Observation Observe() => Observe(MirageManager.Instance());
+
+    internal static unsafe Observation Observe(MirageManager* manager)
+    {
+        if (manager == null)
+            return default;
+        var nonEmptyPlates = 0;
+        var nonEmptyItems = 0;
+        foreach (ref var plate in manager->GlamourPlates)
+        {
+            var populated = 0;
+            foreach (var item in plate.ItemIds)
+                if (item != 0) populated++;
+            if (populated != 0) nonEmptyPlates++;
+            nonEmptyItems += populated;
+        }
+        var hash = Convert.ToHexString(SHA256.HashData(MemoryMarshal.AsBytes(manager->GlamourPlates)));
+        return new((nint)manager, manager->GlamourPlatesRequested, manager->GlamourPlatesLoaded,
+            nonEmptyPlates, nonEmptyItems, hash);
+    }
 
     internal static unsafe bool IsLoaded
     {

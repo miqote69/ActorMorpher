@@ -44,7 +44,7 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
             equipment,
             new FacewearAppearance(true, character->DrawData.GlassesIds[0]),
             !character->DrawData.IsHatHidden,
-            character->DrawData.IsVisorToggled);
+            character->DrawData.IsVisorToggled) with { VieraEarsHidden = character->DrawData.VieraEarsHidden };
         return true;
     }
 
@@ -64,8 +64,9 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
         }
 
         var human = (Human*)characterBase;
-        outfit = CaptureRendered(character, human, ResolveFacewear);
-        if (GetColorOutfit?.Invoke(actor.LogicalKey) is { } colors)
+        var colors = GetColorOutfit?.Invoke(actor.LogicalKey);
+        outfit = CaptureEquipped(character, human, ResolveFacewear, colors);
+        if (colors is not null)
             outfit = WithColors(outfit, colors);
         return true;
     }
@@ -89,7 +90,33 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
                 : resolveFacewear?.Invoke(human->Glasses0.Id, human->Glasses0.Variant)
                     ?? FacewearAppearance.Unavailable,
             !character->DrawData.IsHatHidden,
-            ((CharacterBase*)human)->VisorToggled);
+            ((CharacterBase*)human)->VisorToggled) with { VieraEarsHidden = ((CharacterBase*)human)->HideVieraEars };
+    }
+
+    internal static OutfitData CaptureEquipped(Character* character, Human* human,
+        Func<ushort, byte, FacewearAppearance>? resolveFacewear = null, OutfitData? retained = null)
+    {
+        var outfit = CaptureRendered(character, human, resolveFacewear);
+        var selectedHeadPending = false;
+        if (retained is not null && (human->SlotNeedsUpdateBitfield & 1u) != 0
+            && human->ChangedEquipData != null)
+        {
+            var selected = retained.Equipment[0];
+            var model = new EquipmentModelId { Id = selected.Set, Variant = selected.Variant,
+                Stain0 = selected.Stain1, Stain1 = selected.Stain2 };
+            selectedHeadPending = ((EquipmentModelId*)human->ChangedEquipData)->Value == model.Value;
+        }
+        if (!outfit.HatVisible || selectedHeadPending)
+        {
+            // HideHeadgear clears the draw slot, not the selected equipment.
+            // Managed selections deliberately leave the game's backing untouched.
+            // Showing is queued: retain the matching selected head until consumed.
+            var backing = character->DrawData.EquipmentModelIds[0];
+            var head = retained is not null ? retained.Equipment[0]
+                : new ArmorAppearance(backing.Id, backing.Variant, backing.Stain0, backing.Stain1);
+            outfit = outfit with { Equipment = outfit.Equipment.SetItem(0, head) };
+        }
+        return outfit;
     }
 
     internal bool TryApplyWeapon(ActorSnapshot actor, bool offhand, ulong weapon, WeaponDyes dyes = default)
@@ -189,7 +216,12 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
         ObserveAnimation(diagnostics, characterBase, "BeforeOutfitQueue");
         var previousColors = GetColorOutfit?.Invoke(actor.LogicalKey);
         SetColorOutfit?.Invoke(actor.LogicalKey, outfit);
-        ApplyRenderedEquipment(human, outfit);
+        var visibilityChanged = character->DrawData.IsHatHidden == outfit.HatVisible;
+        if (visibilityChanged)
+            character->DrawData.HideHeadgear(0, !outfit.HatVisible);
+        // Visibility can queue the original game head. Queue our selected head
+        // afterwards so showing an override (or explicit unequip) keeps it.
+        ApplyRenderedEquipment(human, outfit, visibilityChanged);
         ObserveAnimation(diagnostics, characterBase, "AfterOutfitQueue");
         for (var slot = 0; slot < outfit.Equipment.Length; ++slot)
             NativeEquipmentColors.ApplySlot(characterBase, slot, outfit.Equipment[slot],
@@ -197,12 +229,20 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
                 && (previousColors.Equipment[slot].Color1 is not null || previousColors.Equipment[slot].Color2 is not null));
         if (outfit.Facewear.IsAvailable && character->DrawData.GlassesIds[0] != outfit.Facewear.ModelId)
             character->DrawData.SetGlasses(0, outfit.Facewear.ModelId);
-        if (character->DrawData.IsHatHidden == outfit.HatVisible)
-            character->DrawData.HideHeadgear(0, !outfit.HatVisible);
         if (character->DrawData.IsVisorToggled != outfit.VisorToggled)
             character->DrawData.SetVisor(outfit.VisorToggled);
+        ApplyEarVisibility(characterBase, outfit.VieraEarsHidden);
         ObserveAnimation(diagnostics, characterBase, "AfterOutfitMetadata");
         return true;
+    }
+
+    internal static void ApplyEarVisibility(CharacterBase* model, bool? hidden)
+    {
+        if (hidden is not { } hide || model->HideVieraEars == hide) return;
+        // Request the game's ear visibility update on this rendered model only.
+        // Keep game-owned DrawData intact for explicit Restore and later source copies.
+        model->HideVieraEars = hide;
+        model->VieraEarsChanging = true;
     }
 
     // Observation only: neither availability nor logging failure affects the outfit operation.
@@ -274,11 +314,11 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
         => address == 0 ? null : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
             System.Text.Encoding.UTF8.GetBytes($"{session}:{address:X}")).AsSpan(0, 8));
 
-    internal static void ApplyRenderedEquipment(Human* human, OutfitData outfit)
+    internal static void ApplyRenderedEquipment(Human* human, OutfitData outfit, bool visibilityChanged = false)
     {
         for (var index = 0; index < outfit.Equipment.Length; ++index)
         {
-            var source = outfit.Equipment[index];
+            var source = index == 0 && !outfit.HatVisible ? default : outfit.Equipment[index];
             var model = new EquipmentModelId
             {
                 Id = source.Set,
@@ -286,7 +326,7 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
                 Stain0 = source.Stain1,
                 Stain1 = source.Stain2,
             };
-            if (human->EquipmentModels[index].Value != model.Value)
+            if (human->EquipmentModels[index].Value != model.Value || (index == 0 && visibilityChanged))
             {
                 var requested = model.Value;
                 ((CharacterBase*)human)->SetEquipmentSlotModel((uint)index, &model);

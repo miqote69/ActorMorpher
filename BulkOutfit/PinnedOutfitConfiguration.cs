@@ -6,6 +6,7 @@ public sealed class PinnedOutfitConfiguration
 {
     private static readonly Guid CurrentSession = Guid.NewGuid();
     public LogicalActorKey? ActorKey { get; set; }
+    public NpcAttachmentKey? NpcAttachment { get; set; }
     public Guid? Session { get; set; }
     public string ActorName { get; set; } = string.Empty;
     public int ObjectKind { get; set; }
@@ -17,6 +18,7 @@ public sealed class PinnedOutfitConfiguration
     public ushort FacewearModelId { get; set; }
     public bool HatVisible { get; set; }
     public bool VisorToggled { get; set; }
+    public bool? VieraEarsHidden { get; set; }
 
     public bool TryCreateOutfit(out OutfitData outfit)
     {
@@ -37,7 +39,7 @@ public sealed class PinnedOutfitConfiguration
                 armor.Stain2) { Color1 = armor.Color1, Color2 = armor.Color2 }),
             new FacewearAppearance(FacewearAvailable, FacewearModelId),
             HatVisible,
-            VisorToggled);
+            VisorToggled) with { VieraEarsHidden = VieraEarsHidden };
         return true;
     }
 
@@ -61,6 +63,7 @@ public sealed class PinnedOutfitConfiguration
             FacewearModelId = outfit.Facewear.ModelId,
             HatVisible = outfit.HatVisible,
             VisorToggled = outfit.VisorToggled,
+            VieraEarsHidden = outfit.VieraEarsHidden,
         };
 
     public static PinnedOutfitConfiguration Create(ActorEntry actor, AppearanceData appearance)
@@ -70,6 +73,9 @@ public sealed class PinnedOutfitConfiguration
                 ? actor.Key with { Continuity = identity }
                 : actor.Key,
             Session = CurrentSession,
+            NpcAttachment = UsesNpcSlotIdentity(actor.Key)
+                && actor.Current.ContinuityKey is null or { Source: 5 }
+                    ? actor.Current.NpcAttachment : null,
             ActorName = actor.Name.Trim(),
             ObjectKind = (int)actor.Kind,
             BaseId = actor.BaseId,
@@ -79,8 +85,16 @@ public sealed class PinnedOutfitConfiguration
 
     public bool Matches(ActorEntry actor)
     {
+        if (UsesAttachmentIdentity && NpcAttachment is { } attachment)
+            return Session == CurrentSession && actor.Current.NpcAttachment == attachment;
         if (ActorKey is { } key)
         {
+            if (UsesNpcSlotIdentity(key))
+                return Session == CurrentSession
+                    && actor.Key.ObjectKind == key.ObjectKind
+                    && actor.Key.BaseId == key.BaseId
+                    && actor.Key.OriginalObjectIndex == key.OriginalObjectIndex
+                    && actor.Key.TerritoryId == key.TerritoryId;
             if (key.Continuity is { Source: not 5 } identity)
                 return (identity.Source is 1 or 3 || Session == CurrentSession)
                     && (actor.Key.Continuity == identity
@@ -97,13 +111,27 @@ public sealed class PinnedOutfitConfiguration
     }
 
     public string IdentityKey()
-        => ActorKey is { } key
-            ? key.Continuity is { Source: not 5 } identity
+        => UsesAttachmentIdentity && NpcAttachment is { } attachment
+            ? $"Appearance:Attachment:{Session}:{attachment}"
+            : ActorKey is { } key
+            ? UsesNpcSlotIdentity(key)
+                ? $"Appearance:NpcSlot:{Session}:{key.ObjectKind}:{key.BaseId}:{key.OriginalObjectIndex}:{key.TerritoryId}"
+                : key.Continuity is { Source: not 5 } identity
                 ? identity.Source is 1 or 3
                     ? $"Appearance:{identity}"
                     : $"Appearance:{Session}:{identity}"
                 : $"Appearance:{Session}:{key}"
             : $"{ObjectKind}:{(IsLocalPlayer ? 1 : 0)}:{BaseId}:{ActorName.Trim().ToUpperInvariant()}";
+
+    private bool UsesAttachmentIdentity
+        => ActorKey is { } key && UsesNpcSlotIdentity(key) && NpcAttachment is not null;
+
+    // A pin targets the NPC number in this slot across recreation. This does not
+    // merge live Actor keys or weaken the lifetime check used by queued operations.
+    private static bool UsesNpcSlotIdentity(LogicalActorKey key)
+        => key.ObjectKind is Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventNpc
+                or Dalamud.Game.ClientState.Objects.Enums.ObjectKind.BattleNpc
+            && key.Continuity is null or { Source: 5 };
 }
 
 public sealed class PinnedArmorConfiguration

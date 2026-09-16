@@ -57,6 +57,7 @@ public static class EquipmentDisplayFormatting
             hatVisible,
             visor) with
         {
+            VieraEarsHidden = appearance.VieraEarsHidden,
             Equipment = appearance.ColoredEquipment.Length == 10
                 ? appearance.ColoredEquipment
                 : appearance.Equipment.Select(static packed => new ArmorAppearance(

@@ -14,6 +14,156 @@ namespace ActorMorpher.Tests;
 
 public sealed class ApplyServicesTests
 {
+    [Fact]
+    public void PinDiscoveryExpeditesRecreationAndLateAttachmentButNotUnchangedActors()
+    {
+        var discovery = new PinnedActorDiscovery();
+        var snapshot = Snapshot(1);
+        ActorEntry Entry(ActorSnapshot s) => new(s.LogicalKey, s.Name, s.ObjectKind, false, [s]);
+        var checks = 0;
+        bool Pinned(ActorEntry actor) { checks++; return actor.Current.NpcAttachment is not null; }
+        Assert.Null(discovery.FindNext([Entry(snapshot)], Pinned));
+        snapshot = snapshot with { CurrentAppearance = Appearance(0, 1) };
+        Assert.Null(discovery.FindNext([Entry(snapshot)], Pinned));
+        Assert.Equal(1, checks);
+        snapshot = snapshot with { NpcAttachment = new(777, 386, ObjectKind.EventNpc, 1003782, "79") };
+        Assert.NotNull(discovery.FindNext([Entry(snapshot)], Pinned));
+        for (var i = 0; i < 100; i++) Assert.Null(discovery.FindNext([Entry(snapshot)], Pinned));
+        Assert.Equal(2, checks); // No repeated pin lookup or native capture for unchanged arrivals.
+        var next = snapshot with { LogicalKey = snapshot.LogicalKey with { Lifetime = 2, TerritoryId = 999 } };
+        Assert.NotNull(discovery.FindNext([Entry(next)], Pinned));
+        next = next with { RepresentationKey = next.RepresentationKey with { ObjectIndex = 200 } };
+        Assert.NotNull(discovery.FindNext([Entry(next)], Pinned));
+        Assert.Null(discovery.FindNext([], Pinned));
+        Assert.NotNull(discovery.FindNext([Entry(next)], Pinned));
+        var unrelated = Snapshot(3) with { CurrentAppearance = Appearance(0, 1) };
+        Assert.Null(discovery.FindNext([Entry(next), Entry(unrelated)], Pinned));
+    }
+
+    [Fact]
+    public void PinArrivalsBypassWaitWithoutAcceleratingSuccessfulButUnsettledActor()
+    {
+        var a = Snapshot(1) with { CurrentAppearance = Appearance(0, 1) };
+        var b = Snapshot(2) with { CurrentAppearance = Appearance(0, 1) };
+        var c = Snapshot(3) with { CurrentAppearance = Appearance(0, 1) };
+        ActorEntry Entry(ActorSnapshot s) => new(s.LogicalKey, s.Name, s.ObjectKind, false, [s]);
+        var entryA = Entry(a);
+        var entryB = Entry(b);
+        var entryC = Entry(c);
+        var discovery = new PinnedActorDiscovery();
+        long nextScan = 500;
+        Assert.Same(entryA, Assert.Single(discovery.GetCandidates([entryA], _ => true, 10, ref nextScan)));
+
+        var original = Outfit(10);
+        var desired = Outfit(20);
+        var memory = new FakeOutfitMemory(new() { [a.LogicalKey] = original });
+        using var service = new BulkOutfitService(new FakeResolver(a), memory, new FakeContext(),
+            new OutfitOverrideStore(), NullDiagnosticLog.Instance);
+        service.ProcessNextFrame();
+        Assert.True(service.StartPersistentApply(a.LogicalKey, desired, out _));
+        service.ProcessNextFrame();
+        memory.SetRendered(a.LogicalKey, original); // Successful write, but capture still shows the old outfit.
+        Assert.True(service.TryCaptureOutfit(a.LogicalKey, out var captured));
+        Assert.Same(original, captured);
+        nextScan = 510; // Existing completion cooldown, retained by Plugin.
+
+        ActorEntry[] actors = [entryA, entryB, entryC];
+        Assert.Same(entryB, Assert.Single(discovery.GetCandidates(actors, _ => true, 20, ref nextScan)));
+        Assert.Same(entryC, Assert.Single(discovery.GetCandidates(actors, _ => true, 30, ref nextScan)));
+        for (var now = 40; now < 510; now += 10)
+            Assert.Empty(discovery.GetCandidates(actors, _ => true, now, ref nextScan));
+        Assert.Equal(510, nextScan);
+        Assert.Equal(actors, discovery.GetCandidates(actors, _ => true, 510, ref nextScan));
+        Assert.Equal(1010, nextScan);
+        Assert.Single(memory.ApplyCalls);
+    }
+
+    [Fact]
+    public void NewlyQueuedPinCanApplyWithinDiscoveryFrameWithOriginalAndOneCompletion()
+    {
+        var actor = Snapshot(1);
+        var original = Outfit(10);
+        var desired = Outfit(20);
+        var memory = new FakeOutfitMemory(new() { [actor.LogicalKey] = original });
+        var store = new OutfitOverrideStore();
+        using var service = new BulkOutfitService(new FakeResolver(actor), memory, new FakeContext(), store, NullDiagnosticLog.Instance);
+        service.ProcessNextFrame(); // Existing service Framework callback runs before Plugin's discovery.
+        LogicalActorKey? pending = null;
+        var completions = 0;
+        service.ActorOperationCompleted += (key, _, applied, succeeded) =>
+        {
+            Assert.Equal(pending, key);
+            Assert.True(succeeded);
+            Assert.Same(desired, applied);
+            pending = null;
+            completions++;
+        };
+        Assert.True(service.StartPersistentApply(actor.LogicalKey, desired, out _));
+        pending = actor.LogicalKey;
+        service.ProcessNextFrame(); // Same Plugin callback, not a second queue or bypass writer.
+        Assert.Equal(1, completions);
+        Assert.Single(memory.ApplyCalls);
+        Assert.True(store.TryGet(actor.LogicalKey, out var saved));
+        Assert.Same(original, saved.Original);
+        service.ProcessNextFrame();
+        Assert.Null(service.CurrentOperation);
+        Assert.Single(memory.ApplyCalls);
+        Assert.Equal(1, completions);
+    }
+
+    [Theory]
+    [InlineData(HeadgearSetting.Visible)]
+    [InlineData(HeadgearSetting.VisorToggled)]
+    [InlineData(HeadgearSetting.VieraEarsVisible)]
+    public void HeadgearControlsEditSourceOrApplyOneSettingAndRestore(HeadgearSetting setting)
+    {
+        var actor = Snapshot(1);
+        var other = Snapshot(2);
+        var original = Outfit(10) with { HatVisible = true, VisorToggled = true, VieraEarsHidden = false };
+        var memory = new FakeOutfitMemory(new() { [actor.LogicalKey] = original, [other.LogicalKey] = Outfit(20) });
+        var store = new OutfitOverrideStore();
+        using var service = new BulkOutfitService(new FakeResolver(actor, other), memory, new FakeContext(),
+            store, NullDiagnosticLog.Instance);
+        Assert.True(service.RefreshSource(actor.LogicalKey, out _));
+        Assert.True(service.SelectHeadgearSetting(setting, false, null, out _));
+        Assert.Empty(memory.ApplyCalls);
+        Assert.Null(service.CurrentOperation);
+        var expected = setting switch
+        {
+            HeadgearSetting.Visible => original with { HatVisible = false },
+            HeadgearSetting.VisorToggled => original with { VisorToggled = false },
+            _ => original with { VieraEarsHidden = true },
+        };
+        Assert.True(OutfitDataValueComparer.AreEqual(expected, service.SourceOutfit));
+        Assert.True(service.SelectHeadgearSetting(setting, false, actor.LogicalKey, out _));
+        service.ProcessNextFrame(); service.ProcessNextFrame(); service.ProcessNextFrame();
+        Assert.Equal(actor.LogicalKey, Assert.Single(memory.ApplyCalls).Actor);
+        Assert.True(OutfitDataValueComparer.AreEqual(expected, memory.Rendered[actor.LogicalKey]));
+        Assert.True(OutfitDataValueComparer.AreEqual(Outfit(20), memory.Rendered[other.LogicalKey]));
+        Assert.Equal(original, store.States[actor.LogicalKey].Original);
+        Assert.True(service.StartRestore(actor.LogicalKey, out _));
+        service.ProcessNextFrame(); service.ProcessNextFrame();
+        Assert.True(OutfitDataValueComparer.AreEqual(original, memory.Rendered[actor.LogicalKey]));
+    }
+
+    [Fact]
+    public void OutfitsWithoutEarSettingKeepTheTargetsCurrentEars()
+    {
+        var actor = Snapshot(1);
+        var current = Outfit(10) with { VieraEarsHidden = true };
+        var memory = new FakeOutfitMemory(new() { [actor.LogicalKey] = current });
+        var store = new OutfitOverrideStore();
+        using var service = new BulkOutfitService(new FakeResolver(actor), memory, new FakeContext(), store, NullDiagnosticLog.Instance);
+        Assert.Null(service.SourceOutfit!.VieraEarsHidden);
+        Assert.True(service.StartApply([actor.LogicalKey], out _));
+        service.ProcessNextFrame(); service.ProcessNextFrame(); service.ProcessNextFrame();
+        Assert.True(memory.Rendered[actor.LogicalKey].VieraEarsHidden);
+        Assert.True(store.States[actor.LogicalKey].Desired.VieraEarsHidden);
+        Assert.True(service.SelectHeadgearSetting(HeadgearSetting.VieraEarsVisible, true, actor.LogicalKey, out _));
+        service.ProcessNextFrame(); service.ProcessNextFrame();
+        Assert.False(memory.Rendered[actor.LogicalKey].VieraEarsHidden);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

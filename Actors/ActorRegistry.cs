@@ -254,12 +254,18 @@ public sealed unsafe class ActorRegistry : IDisposable
         var localPlayerChildObjectAddress = localPlayer is null || localPlayer.Address == nint.Zero
             ? nint.Zero
             : (nint)(((Character*)localPlayer.Address)->ChildObject);
+        var npcAttachments = NativeNpcAttachment.Read(objectTable);
         var snapshots = objectTable
             .Where(static obj => obj is not null
                 && obj.Address != nint.Zero
                 && obj.IsValid()
                 && IsSupportedObjectKind(obj.ObjectKind))
-            .Select(obj => CreateSnapshot(obj, territoryId, localPlayerId, localPlayerChildObjectAddress))
+            .Select(obj =>
+            {
+                var snapshot = CreateSnapshot(obj, territoryId, localPlayerId, localPlayerChildObjectAddress);
+                return snapshot is not null && npcAttachments.TryGetValue(obj.Address, out var attachment)
+                    ? snapshot with { NpcAttachment = attachment } : snapshot;
+            })
             .Where(static snapshot => snapshot is not null)
             .Select(static snapshot => snapshot!)
             .ToArray();
@@ -398,7 +404,8 @@ public sealed unsafe class ActorRegistry : IDisposable
         {
             var human = (Human*)characterBase;
             customize = human->Customize.Data.ToArray();
-            var outfit = NativeOutfitMemory.CaptureRendered(native, human, ResolveFacewear);
+            var outfit = NativeOutfitMemory.CaptureEquipped(native, human, ResolveFacewear,
+                GetColorOutfit?.Invoke(snapshot.LogicalKey));
             equipment = outfit.Equipment.Select(ToEquipmentModelValue).ToArray();
             mainhand = NativeAppearanceMemory.CaptureRenderedWeapon(native, DrawDataContainer.WeaponSlot.MainHand);
             offhand = NativeAppearanceMemory.CaptureRenderedWeapon(native, DrawDataContainer.WeaponSlot.OffHand);
@@ -428,7 +435,7 @@ public sealed unsafe class ActorRegistry : IDisposable
             offhand,
             visorToggled,
             facewearModelId,
-            hatVisible));
+            hatVisible) with { VieraEarsHidden = category == ModelCategory.Human ? characterBase->HideVieraEars : null });
         if (category == ModelCategory.Human && GetColorOutfit?.Invoke(snapshot.LogicalKey) is { } colors
             && EquipmentDisplayFormatting.CreateHumanOutfit(currentAppearance) is { } renderedOutfit)
             currentAppearance = currentAppearance with

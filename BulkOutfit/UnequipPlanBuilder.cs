@@ -26,7 +26,8 @@ public sealed class UnequipPlanBuilder
             return false;
         }
 
-        desired = OutfitData.Create(equipment, facewear, current.HatVisible, current.VisorToggled);
+        desired = OutfitData.Create(equipment, facewear, current.HatVisible, current.VisorToggled)
+            with { VieraEarsHidden = current.VieraEarsHidden };
         reason = string.Empty;
         return true;
     }
