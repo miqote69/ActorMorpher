@@ -27,6 +27,8 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
     private readonly Dictionary<nint, Hook<EnableDrawDelegate>> enableDrawHooks = new();
     private bool disposed;
     internal Func<ushort, byte, FacewearAppearance>? ResolveFacewear { get; set; }
+    internal long GetEquipmentLoadRevision(nint owner, ushort index)
+        => consumerTransaction.GetEquipmentLoadRevision(owner, index);
 
     [ThreadStatic]
     private static InjectionContext? active;

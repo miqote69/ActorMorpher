@@ -1,4 +1,5 @@
 using Dalamud.Hooking;
+using System.Collections.Concurrent;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
@@ -17,6 +18,10 @@ internal sealed unsafe class OneShotAppearanceConsumerTransaction : IDisposable
     private readonly Hook<HatConsumerDelegate>? hatHook;
     private readonly Hook<VisorConsumerDelegate>? visorHook;
     private Transaction? active;
+    private readonly ConcurrentDictionary<ushort, (nint Owner, long Revision)> equipmentLoads = new();
+    private long equipmentLoadRevision;
+    internal long GetEquipmentLoadRevision(nint owner, ushort index)
+        => equipmentLoads.TryGetValue(index, out var loaded) && loaded.Owner == owner ? loaded.Revision : 0;
     internal Func<nint, bool, ulong, WeaponDyes>? GetWeaponDyes { get; set; }
 
     public OneShotAppearanceConsumerTransaction(IGameInteropProvider interop)
@@ -125,11 +130,17 @@ internal sealed unsafe class OneShotAppearanceConsumerTransaction : IDisposable
     {
         var replacement = data == nint.Zero ? default : *(ulong*)data;
         var forwarded = data;
+        var ownTransaction = active is { } transaction
+            && transaction.TargetAddress == ownerAddress && transaction.RuntimeObjectIndex == ownerObjectIndex;
         active?.ObserveArmorCall(ownerAddress, ownerObjectIndex);
         if (data != nint.Zero
             && active?.TrySubstituteArmor(ownerAddress, ownerObjectIndex, slot, ref replacement) is true)
             forwarded = (nint)(&replacement);
         original(drawData, slot, forwarded, force);
+        // Observe normal equipment initialization, including equal-value forced loads.
+        // Our synchronous full-appearance transaction is not an external initialization.
+        if (!ownTransaction && ownerAddress != nint.Zero && slot < 10)
+            equipmentLoads[ownerObjectIndex] = (ownerAddress, Interlocked.Increment(ref equipmentLoadRevision));
     }
 
     private void WeaponConsumerDetour(

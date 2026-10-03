@@ -79,6 +79,111 @@ public sealed class ApplyServicesTests
     }
 
     [Fact]
+    public unsafe void ReturningMinionEquipmentFinalizationBypassesScanAndConverges()
+    {
+        var snapshot = Snapshot(1) with { ObjectKind = ObjectKind.Companion, MinionOwnerContentId = 777 };
+        snapshot = snapshot with { LogicalKey = snapshot.LogicalKey with { ObjectKind = ObjectKind.Companion } };
+        var original = Outfit(10);
+        var desired = Outfit(20);
+        using var consumer = new OneShotAppearanceConsumerTransaction();
+        const nint owner = 123;
+        ActorEntry Entry(OutfitData? outfit) => new(snapshot.LogicalKey, snapshot.Name, snapshot.ObjectKind,
+            false, [snapshot with { CurrentAppearance = outfit is null ? null : HumanAppearance(1, 1)
+                .WithOutfit(outfit.Equipment.Select(ActorRegistry.ToEquipmentModelValue), outfit.VisorToggled),
+                EquipmentLoadRevision = consumer.GetEquipmentLoadRevision(owner, 1) }]);
+        var pins = new PinnedOutfitStore(new Configuration(), () => { });
+        pins.Pin(Entry(desired), desired);
+        var memory = new FakeOutfitMemory(new() { [snapshot.LogicalKey] = original });
+        using var service = new BulkOutfitService(new FakeResolver(snapshot), memory, new FakeContext(),
+            new OutfitOverrideStore(), NullDiagnosticLog.Instance);
+        service.ProcessNextFrame(); // Normal service callback before Plugin starts pin work.
+        var discovery = new PinnedActorDiscovery();
+        long nextScan = 500;
+        Assert.Single(discovery.GetCandidates([Entry(desired)], pins.IsPinned, 0, ref nextScan));
+        Assert.Empty(discovery.GetCandidates([Entry(null)], pins.IsPinned, 10, ref nextScan)); // Mounted.
+        var returning = Entry(original);
+        Assert.Single(discovery.GetCandidates([returning], pins.IsPinned, 20, ref nextScan));
+        Assert.True(pins.TryGet(returning, out var saved));
+        Assert.True(service.StartPersistentApply(snapshot.LogicalKey, saved, out _));
+        service.ProcessNextFrame();
+        Assert.True(OutfitDataValueComparer.AreEqual(memory.Rendered[snapshot.LogicalKey], saved));
+        // The published readback still shows the old outfit; this alone must not trigger a write.
+        Assert.Empty(discovery.GetCandidates([Entry(original)], pins.IsPinned, 30, ref nextScan));
+        service.ProcessNextFrame(); // Finish the single-actor operation before the next arrival.
+
+        // Actual LoadEquipment dispatch overwrites it before desired was ever published.
+        ulong loaded = ActorRegistry.ToEquipmentModelValue(original.Equipment[1]);
+        var expectedLoad = loaded;
+        consumer.DispatchArmor(456, owner, 1, 1, (nint)(&loaded), 1, (_, slot, data, force) =>
+        {
+            Assert.Equal(1u, slot);
+            Assert.Equal(expectedLoad, *(ulong*)data);
+            Assert.Equal((byte)1, force);
+            memory.SetRendered(snapshot.LogicalKey, original);
+        });
+        Assert.Single(discovery.GetCandidates([Entry(original)], pins.IsPinned, 40, ref nextScan));
+        Assert.True(service.StartPersistentApply(snapshot.LogicalKey, saved, out _));
+        service.ProcessNextFrame();
+        Assert.Single(discovery.GetCandidates([Entry(desired)], pins.IsPinned, 50, ref nextScan));
+        Assert.True(OutfitDataValueComparer.AreEqual(memory.Rendered[snapshot.LogicalKey], saved));
+        for (var now = 60; now < 500; now += 10)
+            Assert.Empty(discovery.GetCandidates([Entry(desired)], pins.IsPinned, now, ref nextScan));
+        Assert.Equal(2, memory.ApplyCalls.Count);
+        Assert.Equal(500, nextScan);
+
+        service.ProcessNextFrame();
+        // A further native load returns before its queued equipment has reached the renderer.
+        consumer.DispatchArmor(456, owner, 1, 1, (nint)(&loaded), 1, (_, _, _, _) => { });
+        Assert.Single(discovery.GetCandidates([Entry(desired)], pins.IsPinned, 490, ref nextScan));
+        Assert.True(OutfitDataValueComparer.AreEqual(memory.Rendered[snapshot.LogicalKey], saved));
+        Assert.Equal(2, memory.ApplyCalls.Count); // Plugin's desired-equality path performs no write.
+        memory.SetRendered(snapshot.LogicalKey, original); // Queued render update arrives later.
+        Assert.Single(discovery.GetCandidates([Entry(original)], pins.IsPinned, 491, ref nextScan));
+        Assert.True(service.StartPersistentApply(snapshot.LogicalKey, saved, out _));
+        service.ProcessNextFrame();
+        Assert.True(OutfitDataValueComparer.AreEqual(memory.Rendered[snapshot.LogicalKey], saved));
+        Assert.Single(discovery.GetCandidates([Entry(desired)], pins.IsPinned, 492, ref nextScan));
+        Assert.Empty(discovery.GetCandidates([Entry(desired)], pins.IsPinned, 493, ref nextScan));
+        Assert.True(pins.Unpin(Entry(desired)));
+        Assert.Empty(discovery.GetCandidates([Entry(original)], pins.IsPinned, 494, ref nextScan));
+        Assert.Equal(3, memory.ApplyCalls.Count);
+    }
+
+    [Fact]
+    public void LateMinionOwnerExpeditesPinLookupButModelOnlyChangesKeepInterval()
+    {
+        var snapshot = Snapshot(1) with { ObjectKind = ObjectKind.Companion, CurrentAppearance = HumanAppearance(1, 1) };
+        ActorEntry Entry(ActorSnapshot s) => new(s.LogicalKey, s.Name, s.ObjectKind, false, [s]);
+        var discovery = new PinnedActorDiscovery();
+        long nextScan = 500;
+        bool Pinned(ActorEntry actor) => actor.Current.MinionOwnerContentId == 777;
+        Assert.Empty(discovery.GetCandidates([Entry(snapshot)], Pinned, 0, ref nextScan));
+        snapshot = snapshot with { MinionOwnerContentId = 777 };
+        Assert.Single(discovery.GetCandidates([Entry(snapshot)], Pinned, 10, ref nextScan));
+        snapshot = snapshot with { CurrentAppearance = snapshot.CurrentAppearance! with
+            { ModelScale = 2, ModelCharaId = 123, Customize = [2, 3, 4] } };
+        Assert.Empty(discovery.GetCandidates([Entry(snapshot)], Pinned, 20, ref nextScan));
+        Assert.Equal(500, nextScan);
+    }
+
+    [Theory]
+    [InlineData(ObjectKind.Pc)]
+    [InlineData(ObjectKind.EventNpc)]
+    public void EquipmentInitializationDoesNotAccelerateOtherActors(ObjectKind kind)
+    {
+        var snapshot = Snapshot(1) with { ObjectKind = kind, CurrentAppearance = HumanAppearance(1, 1) };
+        ActorEntry Entry(ActorSnapshot s) => new(s.LogicalKey, s.Name, s.ObjectKind, false, [s]);
+        var discovery = new PinnedActorDiscovery();
+        long nextScan = 500;
+        Assert.Single(discovery.GetCandidates([Entry(snapshot)], _ => true, 0, ref nextScan));
+        snapshot = snapshot with { EquipmentLoadRevision = 1, CurrentAppearance = HumanAppearance(2, 1) };
+        Assert.Empty(discovery.GetCandidates([Entry(snapshot)], _ => true, 10, ref nextScan));
+        snapshot = snapshot with { EquipmentLoadRevision = 2, CurrentAppearance = HumanAppearance(3, 2) with { ModelCharaId = 123 } };
+        Assert.Empty(discovery.GetCandidates([Entry(snapshot)], _ => true, 20, ref nextScan));
+        Assert.Equal(500, nextScan);
+    }
+
+    [Fact]
     public void NewlyQueuedPinCanApplyWithinDiscoveryFrameWithOriginalAndOneCompletion()
     {
         var actor = Snapshot(1);
@@ -1206,6 +1311,7 @@ public sealed class ApplyServicesTests
 
         memory.SetRendered(actor.LogicalKey, original);
         Assert.False(service.IsOutfitModified(actor.LogicalKey));
+        Assert.Equal(0, memory.RenderedCaptureCount);
 
         service.Store.SetDesired(actor.LogicalKey, original, changed);
         memory.TryApply(actor, changed);
@@ -1213,6 +1319,7 @@ public sealed class ApplyServicesTests
 
         memory.TryApply(actor, original);
         Assert.False(service.IsOutfitModified(actor.LogicalKey));
+        Assert.Equal(2, memory.RenderedCaptureCount);
     }
 
     [Theory]
@@ -1432,6 +1539,7 @@ public sealed class ApplyServicesTests
         public bool CaptureUnavailable { get; set; }
         public bool ApplySucceeds { get; init; } = true;
         public int CaptureCount { get; private set; }
+        public int RenderedCaptureCount { get; private set; }
         public int DyeCalls { get; private set; }
 
         public bool TryApplyDye(ActorSnapshot actor, OutfitSlot slot, int channel, OutfitData outfit, out bool confirmed)
@@ -1456,6 +1564,7 @@ public sealed class ApplyServicesTests
 
         public bool TryCaptureRendered(ActorSnapshot actor, out OutfitData outfit)
         {
+            ++RenderedCaptureCount;
             LastRenderedCapture = actor.RepresentationKey;
             return Rendered.TryGetValue(actor.LogicalKey, out outfit!);
         }

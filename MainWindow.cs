@@ -17,9 +17,12 @@ public sealed partial class MainWindow : Window, IDisposable
         int Race, uint Tribe, int Gender, bool Adult, bool Young)? modelFilterKey;
     private string actorFilter = string.Empty;
     private int selectedActorType;
+    private int selectedActorSort;
     private int selectedActorRace;
     private int selectedActorGender;
     private int selectedActorOutfitState;
+    private readonly Dictionary<LogicalActorKey, bool> actorModifiedForDraw = new();
+    private readonly Dictionary<LogicalActorKey, bool> actorPinnedForDraw = new();
     private string modelNameFilter = string.Empty;
     private string modelIdFilter = string.Empty;
     private int selectedCategory;
@@ -179,6 +182,7 @@ public sealed partial class MainWindow : Window, IDisposable
         if (!previewActive)
             previewProjector.Clear();
         plugin.SetModelPreviewActive(previewActive);
+        DrawSelectedActorMarker();
     }
 
     private void DrawSettingsTab()
@@ -1040,23 +1044,57 @@ public sealed partial class MainWindow : Window, IDisposable
             ImGui.SetTooltip(stain?.Name ?? T(TextKey.Unavailable));
     }
 
+    private bool IsActorModifiedForDraw(LogicalActorKey actor)
+    {
+        if (!actorModifiedForDraw.TryGetValue(actor, out var modified))
+            actorModifiedForDraw[actor] = modified = plugin.IsActorModified(actor);
+        return modified;
+    }
+
+    private bool IsActorPinnedForDraw(LogicalActorKey actor)
+    {
+        var pinStart = UiTimestamp();
+        if (!actorPinnedForDraw.TryGetValue(actor, out var pinned))
+            actorPinnedForDraw[actor] = pinned = plugin.IsOutfitPinned(actor);
+        AddUiTiming(6, pinStart);
+        return pinned;
+    }
+
     private void DrawActorsTab()
     {
+        var uiStart = UiTimestamp();
+        // Share display-only checks within this draw; never retain them across frames.
+        actorModifiedForDraw.Clear();
+        actorPinnedForDraw.Clear();
+        var pinStart = UiTimestamp();
         DrawActorPinActions();
-        var actors = plugin.GetVisibleActors().Where(MatchesActorFilter).ToArray();
+        AddUiTiming(1, pinStart);
+        var filterStart = UiTimestamp();
+        var visibleActors = plugin.GetVisibleActors();
+        var pinnedActors = plugin.GetPinnedActorKeysForDisplay(visibleActors);
+        foreach (var actor in visibleActors)
+            actorPinnedForDraw[actor.Key] = pinnedActors.Contains(actor.Key);
+        var actors = visibleActors.Where(MatchesActorFilter).ToArray();
         if (selectedActorKey is { } selectedKey && !plugin.TryResolveActor(selectedKey, out _))
             selectedActorKey = null;
-        DrawActors(actors);
+        AddUiTiming(2, filterStart);
+        DrawActors(actors, visibleActors.FirstOrDefault(static actor => actor.IsLocalPlayer)?.Current.Position);
+        AddUiTiming(0, uiStart);
+        ReportUiTiming(actors.Length);
     }
 
     private void DrawActorPinActions()
     {
-        var modifiedCount = plugin.GetModifiedPinActors().Count;
+        var modifiedCount = plugin.GetVisibleActors().Count(actor => IsActorModifiedForDraw(actor.Key));
         var pinLabel = T(TextKey.PinModifiedActors, modifiedCount);
         var clearLabel = T(TextKey.UnpinAllActors, plugin.AppearancePinCount);
         ImGui.BeginDisabled(modifiedCount == 0);
         if (ImGui.Button($"{pinLabel}###pin-modified-actors"))
+        {
             pinActionStatus = plugin.PinModifiedActors();
+            actorModifiedForDraw.Clear();
+            actorPinnedForDraw.Clear();
+        }
         ImGui.EndDisabled();
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             ImGui.SetTooltip(T(TextKey.PinModifiedActorsHint));
@@ -1066,7 +1104,11 @@ public sealed partial class MainWindow : Window, IDisposable
             ImGui.SameLine();
         ImGui.BeginDisabled(plugin.AppearancePinCount == 0);
         if (ImGui.Button($"{clearLabel}###unpin-all-actors"))
+        {
             pinActionStatus = plugin.UnpinAllActors();
+            actorModifiedForDraw.Clear();
+            actorPinnedForDraw.Clear();
+        }
         ImGui.EndDisabled();
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             ImGui.SetTooltip(T(TextKey.UnpinAllActorsHint));
@@ -1090,8 +1132,9 @@ public sealed partial class MainWindow : Window, IDisposable
         DrawModels(filteredModels);
     }
 
-    private void DrawActors(IReadOnlyList<ActorEntry> actors)
+    private void DrawActors(IReadOnlyList<ActorEntry> actors, Vector3? localPlayerPosition)
     {
+        var listStart = UiTimestamp();
         if (ImGui.BeginTable("##actor-results", 2, ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.Resizable, Vector2.Zero))
         {
             ImGui.TableSetupColumn(T(TextKey.Actors), ImGuiTableColumnFlags.WidthFixed, 280.0f);
@@ -1113,44 +1156,56 @@ public sealed partial class MainWindow : Window, IDisposable
             ImGui.SetNextItemWidth(-1);
             DrawActorGenderFilter();
 
+            ImGui.TextUnformatted(T(TextKey.ActorSortOrder));
+            ImGui.SetNextItemWidth(-1);
+            var sortNames = new[] { T(TextKey.ActorSortDefault), T(TextKey.ActorSortNearest) };
+            ImGui.Combo("##actor-sort", ref selectedActorSort, sortNames, sortNames.Length);
+            if (selectedActorSort == 1 && localPlayerPosition is { } origin)
+                actors = ActorRegistry.OrderByDistanceForDisplay(actors, origin);
+
             var listHeight = Math.Max(120.0f, ImGui.GetContentRegionAvail().Y);
             if (ImGui.BeginChild("##actors", new Vector2(0, listHeight), true))
             {
-                foreach (var actor in actors)
+                var targetKey = plugin.GetCurrentTargetActorKey();
+                var clipper = ImGui.ImGuiListClipper();
+                try
                 {
-                    var selected = selectedActorKey == actor.Key;
-                    var modified = plugin.IsActorModified(actor.Key);
-                    var pinned = plugin.IsOutfitPinned(actor.Key);
-                    var localPlayerLabel = actor.IsLocalPlayer ? $" ({T(TextKey.IncludeYourself)})" : string.Empty;
-                    var label = $"{actor.Name}{localPlayerLabel}##actor-{actor.Key.GetHashCode()}";
-                    if (modified || pinned)
-                        ImGui.PushStyleColor(ImGuiCol.Text, pinned
-                            ? new Vector4(1.0f, 0.74f, 0.25f, 1.0f)
-                            : new Vector4(0.35f, 0.86f, 0.55f, 1.0f));
-                    var activated = ImGui.Selectable(label, selected);
-                    var hovered = ImGui.IsItemHovered();
-                    if (modified || pinned)
-                        ImGui.PopStyleColor();
-                    if (hovered && (modified || pinned))
-                        ImGui.SetTooltip(T(pinned ? TextKey.PinnedOutfit : TextKey.ModifiedOutfit));
-                    if (activated)
+                    clipper.Begin(actors.Count, ImGui.GetTextLineHeightWithSpacing());
+                    while (clipper.Step())
+                    for (var i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
                     {
-                        selectedActorKey = actor.Key;
-                        plugin.Diagnostics.Log.Write(new DiagnosticLogEntry
+                        var actor = actors[i];
+                        var selected = selectedActorKey == actor.Key;
+                        var modified = IsActorModifiedForDraw(actor.Key);
+                        var pinned = IsActorPinnedForDraw(actor.Key);
+                        var localPlayerLabel = actor.IsLocalPlayer ? $" ({T(TextKey.IncludeYourself)})" : string.Empty;
+                        var activated = DrawActorIndicatorRow(actor.Key, $"{actor.Name}{localPlayerLabel}",
+                            selected, targetKey == actor.Key, modified, pinned, out var hovered);
+                        if (hovered && (modified || pinned))
+                            ImGui.SetTooltip(T(pinned ? TextKey.PinnedOutfit : TextKey.ModifiedOutfit));
+                        if (activated)
                         {
-                            EventId = DiagnosticEventIds.UserActionRequested,
-                            Category = DiagnosticCategory.UserAction,
-                            Message = "Actor selected.",
-                            ActorKey = plugin.Diagnostics.FormatActorKey(actor.Key, actor.Name),
-                            Properties = new Dictionary<string, object?> { ["objectKind"] = actor.Kind, ["representationCount"] = actor.Representations.Count },
-                        });
+                            selectedActorKey = actor.Key;
+                            plugin.Diagnostics.Log.Write(new DiagnosticLogEntry
+                            {
+                                EventId = DiagnosticEventIds.UserActionRequested,
+                                Category = DiagnosticCategory.UserAction,
+                                Message = "Actor selected.",
+                                ActorKey = plugin.Diagnostics.FormatActorKey(actor.Key, actor.Name),
+                                Properties = new Dictionary<string, object?> { ["objectKind"] = actor.Kind, ["representationCount"] = actor.Representations.Count },
+                            });
+                        }
                     }
                 }
+                finally { clipper.Destroy(); }
             }
 
             ImGui.EndChild();
             ImGui.TableNextColumn();
+            AddUiTiming(3, listStart);
+            var detailsStart = UiTimestamp();
             DrawActorDetails();
+            AddUiTiming(4, detailsStart);
             ImGui.EndTable();
         }
     }
@@ -1233,8 +1288,10 @@ public sealed partial class MainWindow : Window, IDisposable
             ImGui.Spacing();
             ImGui.TextUnformatted(T(TextKey.Equipment));
             var currentOutfit = EquipmentDisplayFormatting.CreateHumanOutfit(appearance);
+            var equipmentStart = UiTimestamp();
             DrawOutfitDisplay($"actor-current-outfit-{actor.Key.GetHashCode()}", currentOutfit,
                 editActor: actor.Key, showWeapons: true, appearance: appearance);
+            AddUiTiming(5, equipmentStart);
             if (plugin.WeaponSelectionActor == actor.Key && !string.IsNullOrEmpty(plugin.WeaponSelectionStatus))
                 ImGui.TextWrapped(plugin.WeaponSelectionStatus);
 
@@ -1830,17 +1887,23 @@ public sealed partial class MainWindow : Window, IDisposable
         if (selectedActorType == 2 && actor.Kind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc)
             return false;
 
-        var pinned = plugin.IsOutfitPinned(actor.Key);
-        var modified = plugin.IsActorModified(actor.Key);
-        if (selectedActorOutfitState == 1 && (modified || pinned))
-            return false;
-        if (selectedActorOutfitState == 2 && (!modified || pinned))
-            return false;
-        if (selectedActorOutfitState == 3 && !pinned)
-            return false;
+        if (selectedActorOutfitState != 0)
+        {
+            var pinned = IsActorPinnedForDraw(actor.Key);
+            var modified = IsActorModifiedForDraw(actor.Key);
+            if (selectedActorOutfitState == 1 && (modified || pinned))
+                return false;
+            if (selectedActorOutfitState == 2 && (!modified || pinned))
+                return false;
+            if (selectedActorOutfitState == 3 && !pinned)
+                return false;
+        }
 
         var race = HumanRaces[selectedActorRace];
-        if (!plugin.TryResolveActorRepresentation(actor.Key, out _, out var representation))
+        var resolveStart = UiTimestamp();
+        var resolved = plugin.TryResolveActorRepresentation(actor.Key, out _, out var representation);
+        AddUiTiming(7, resolveStart);
+        if (!resolved)
             return false;
         if (race != 0 && representation.Race != race)
             return false;

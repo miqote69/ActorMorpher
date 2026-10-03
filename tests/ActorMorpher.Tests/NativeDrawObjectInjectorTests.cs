@@ -18,6 +18,31 @@ namespace ActorMorpher.Tests;
 public sealed unsafe class NativeDrawObjectInjectorTests
 {
     [Fact]
+    public void EquipmentLoadRevisionObservesForcedEqualLoadsButNotOwnTransaction()
+    {
+        using var component = new OneShotAppearanceConsumerTransaction();
+        ulong value = 123;
+        var calls = 0;
+        OneShotAppearanceConsumerTransaction.ArmorForwarder forward = (_, _, _, _) => calls++;
+        component.DispatchArmor(0, 0x1000, 7, 1, (nint)(&value), 1, forward);
+        var first = component.GetEquipmentLoadRevision(0x1000, 7);
+        Assert.True(first > 0);
+        component.DispatchArmor(0, 0x1000, 7, 1, (nint)(&value), 1, forward);
+        var second = component.GetEquipmentLoadRevision(0x1000, 7);
+        Assert.True(second > first);
+        Assert.Equal(0, component.GetEquipmentLoadRevision(0x2000, 7));
+        var operation = Guid.NewGuid();
+        var representation = new ActorRepresentationKey(7, 7, 7, false, 30);
+        var transaction = component.Begin(operation, representation, 7, 0x1000, Human());
+        component.DispatchArmor(0, 0x1000, 7, 1, (nint)(&value), 1, forward);
+        Assert.Equal(second, component.GetEquipmentLoadRevision(0x1000, 7));
+        component.DispatchArmor(0, 0x2000, 8, 1, (nint)(&value), 1, forward);
+        Assert.True(component.GetEquipmentLoadRevision(0x2000, 8) > second);
+        component.End(transaction, operation, representation, 7);
+        Assert.Equal(4, calls);
+    }
+
+    [Fact]
     public void SwitchingNpcEquipmentDoesNotBecomeGameOwnedArmorOrRetainPreviousOutfit()
     {
         var character = (Character*)NativeMemory.AllocZeroed((nuint)sizeof(Character));

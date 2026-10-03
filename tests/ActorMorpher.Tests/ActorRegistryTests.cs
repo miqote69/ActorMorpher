@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using ActorMorpher.Actors;
 using ActorMorpher.Appearance;
 using ActorMorpher.Interop;
@@ -62,6 +63,56 @@ public sealed class ActorRegistryTests
         Assert.Equal(
             new[] { localPlayer, ownMinion, battleNpcAlpha, battleNpcZulu, otherCompanion },
             ordered);
+    }
+
+    [Fact]
+    public void DistanceDisplayOrderUsesPlayerPositionAndAllThreeCoordinates()
+    {
+        var origin = new Vector3(100, 20, 200);
+        var ownMinion = PositionedEntry(1, "Alpha", ObjectKind.Companion,
+            origin + new Vector3(0, 10, 0), isOwnMinion: true);
+        var otherPlayer = PositionedEntry(2, "Beta", ObjectKind.Pc,
+            origin + new Vector3(0, 0, 4));
+        var nearbyNpc = PositionedEntry(3, "Zulu", ObjectKind.BattleNpc,
+            origin + new Vector3(1, 0, 0));
+        var nearWorldOrigin = PositionedEntry(4, "First", ObjectKind.EventNpc, Vector3.Zero);
+
+        var ordered = ActorRegistry.OrderByDistanceForDisplay(
+            [ownMinion, otherPlayer, nearWorldOrigin, nearbyNpc], origin);
+
+        Assert.Equal(new[] { nearbyNpc, otherPlayer, ownMinion, nearWorldOrigin }, ordered);
+    }
+
+    [Fact]
+    public void DistanceDisplayOrderReflectsUpdatedActorAndPlayerPositions()
+    {
+        var first = PositionedEntry(1, "First", ObjectKind.Pc, new Vector3(1, 0, 0));
+        var second = PositionedEntry(2, "Second", ObjectKind.Pc, new Vector3(5, 0, 0));
+        Assert.Equal(new[] { first, second },
+            ActorRegistry.OrderByDistanceForDisplay([first, second], Vector3.Zero));
+
+        var movedFirst = first with
+        {
+            Representations = [first.Current with { Position = new Vector3(10, 0, 0) }],
+        };
+        Assert.Equal(new[] { second, movedFirst },
+            ActorRegistry.OrderByDistanceForDisplay([movedFirst, second], Vector3.Zero));
+        Assert.Equal(new[] { movedFirst, second },
+            ActorRegistry.OrderByDistanceForDisplay([movedFirst, second], new Vector3(11, 0, 0)));
+    }
+
+    [Fact]
+    public void DistanceDisplayOrderPreservesEqualDistanceOrderAndActorInstances()
+    {
+        var first = PositionedEntry(1, "Zulu", ObjectKind.BattleNpc, new Vector3(-3, 0, 0));
+        var second = PositionedEntry(2, "Alpha", ObjectKind.Companion,
+            new Vector3(0, 0, 3), isOwnMinion: true);
+
+        var ordered = ActorRegistry.OrderByDistanceForDisplay([first, second], Vector3.Zero);
+
+        Assert.Equal(2, ordered.Count);
+        Assert.Same(first, ordered[0]);
+        Assert.Same(second, ordered[1]);
     }
 
     [Fact]
@@ -390,6 +441,22 @@ public sealed class ActorRegistryTests
             isLocalPlayer,
             representations ?? Array.Empty<ActorSnapshot>(),
             isOwnMinion);
+
+    private static ActorEntry PositionedEntry(
+        ushort index, string name, ObjectKind kind, Vector3 position, bool isOwnMinion = false)
+    {
+        var entry = Entry(index, name, kind, isOwnMinion: isOwnMinion);
+        var snapshot = Snapshot(Representation(index, false, 30), null) with
+        {
+            LogicalKey = entry.Key,
+            Name = name,
+            ObjectKind = kind,
+            IsLocalPlayer = false,
+            IsOwnMinion = isOwnMinion,
+            Position = position,
+        };
+        return entry with { Representations = [snapshot] };
+    }
 
     private static ActorRepresentationKey Representation(ushort index, bool isGPose, uint territory)
         => new(index, index, index, isGPose, territory);

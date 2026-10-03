@@ -189,14 +189,12 @@ public sealed class BulkOutfitService : IDisposable
     public bool IsOutfitModified(LogicalActorKey actorKey)
     {
         if (disposed
+            || !store.TryGet(actorKey, out var state)
             || !resolver.TryResolve(actorKey, out var actor)
             || !memory.TryCaptureRendered(actor, out var current))
             return false;
 
-        if (store.TryGet(actorKey, out var state))
-            return !OutfitDataValueComparer.AreEqual(current, state.Original);
-
-        return false;
+        return !OutfitDataValueComparer.AreEqual(current, state.Original);
     }
 
     public bool StartApply(IReadOnlyList<LogicalActorKey> targets, out string message)

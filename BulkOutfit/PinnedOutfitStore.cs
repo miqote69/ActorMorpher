@@ -14,6 +14,26 @@ public sealed class PinnedOutfitStore
     public bool IsPinned(ActorEntry actor)
         => configuration.PinnedOutfits.Any(entry => entry.Matches(actor));
 
+    // Rebuilt from current pins for each UI draw; no result survives an identity or pin change.
+    public HashSet<LogicalActorKey> GetPinnedActorKeysForDisplay(IReadOnlyList<ActorEntry> actors)
+    {
+        var candidates = configuration.PinnedOutfits.ToLookup(static pin => pin.DisplayLookupId);
+        var pinned = new HashSet<LogicalActorKey>();
+        foreach (var actor in actors)
+        {
+            bool Matches(ulong? id) => candidates[id].Any(pin => pin.Matches(actor));
+            if (Matches(null)
+                || Matches(actor.Key.GameObjectId)
+                || Matches(actor.Key.BaseId)
+                || Matches(actor.BaseId)
+                || (actor.Current.NpcAttachment is { } attachment && Matches(attachment.OwnerContentId))
+                || (actor.Key.Continuity is { } identity && Matches(identity.Id))
+                || actor.Representations.Any(snapshot => snapshot.ContinuityKey is { } continuity && Matches(continuity.Id)))
+                pinned.Add(actor.Key);
+        }
+        return pinned;
+    }
+
     public int Count => configuration.PinnedOutfits.Count;
 
     public bool TryGetAppearance(ActorEntry actor, out AppearanceData appearance)

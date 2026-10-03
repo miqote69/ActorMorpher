@@ -2,6 +2,7 @@ using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
 using ActorMorpher.Localization;
+using System.Numerics;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using NativeGameObject = FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject;
@@ -21,6 +22,7 @@ public sealed unsafe class ActorRegistry : IDisposable
     private readonly ActorAppearancePersistence? persistence;
     private readonly NativeActorContinuity continuity;
     internal Func<nint, LogicalActorKey?>? ResolveCopyActor { get; set; }
+    internal Func<nint, ushort, long>? GetEquipmentLoadRevision { get; set; }
     private readonly object syncRoot = new();
     private IReadOnlyList<ActorEntry> entries = Array.Empty<ActorEntry>();
     private long publicationVersion;
@@ -255,6 +257,7 @@ public sealed unsafe class ActorRegistry : IDisposable
             ? nint.Zero
             : (nint)(((Character*)localPlayer.Address)->ChildObject);
         var npcAttachments = NativeNpcAttachment.Read(objectTable);
+        var minionOwners = NativeMinionOwner.Read(objectTable);
         var snapshots = objectTable
             .Where(static obj => obj is not null
                 && obj.Address != nint.Zero
@@ -263,6 +266,9 @@ public sealed unsafe class ActorRegistry : IDisposable
             .Select(obj =>
             {
                 var snapshot = CreateSnapshot(obj, territoryId, localPlayerId, localPlayerChildObjectAddress);
+                if (snapshot is { ObjectKind: ObjectKind.Companion }
+                    && minionOwners.TryGetValue(obj.Address, out var ownerContentId))
+                    snapshot = snapshot with { MinionOwnerContentId = ownerContentId };
                 return snapshot is not null && npcAttachments.TryGetValue(obj.Address, out var attachment)
                     ? snapshot with { NpcAttachment = attachment } : snapshot;
             })
@@ -378,7 +384,10 @@ public sealed unsafe class ActorRegistry : IDisposable
             obj.GameObjectId == localPlayerId,
             IsOwnMinion(obj.ObjectKind, obj.Address, localPlayerChildObjectAddress))
         {
+            Position = obj.Position,
             ContinuityKey = copyActor is null ? identity : null,
+            EquipmentLoadRevision = obj.ObjectKind == ObjectKind.Companion
+                ? GetEquipmentLoadRevision?.Invoke(obj.Address, objectIndex) ?? 0 : 0,
         };
 
         var characterBase = ((NativeGameObject*)native)->GetCharacterBase();
@@ -752,6 +761,11 @@ public sealed unsafe class ActorRegistry : IDisposable
             .ThenBy(static actor => actor.Kind)
             .ThenBy(static actor => actor.Name, nameComparer)
             .ToArray();
+
+    public static IReadOnlyList<ActorEntry> OrderByDistanceForDisplay(
+        IEnumerable<ActorEntry> actors,
+        Vector3 localPlayerPosition)
+        => actors.OrderBy(actor => Vector3.DistanceSquared(actor.Current.Position, localPlayerPosition)).ToArray();
 
     public static bool IsSupportedObjectKind(ObjectKind kind)
         => kind is ObjectKind.Pc or ObjectKind.EventNpc or ObjectKind.BattleNpc or ObjectKind.Companion;

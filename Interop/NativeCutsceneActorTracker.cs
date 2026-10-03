@@ -167,6 +167,32 @@ public sealed unsafe class NativeCutsceneActorTracker : IDisposable
             }
         }
 
+        // Observe actual copy inputs without registering an identity or changing copy eligibility.
+        try
+        {
+            if (diagnostics.IsEnabled && targetCharacter is not null && source is not null
+                && source->ObjectKind is ObjectKind.EventNpc or ObjectKind.BattleNpc)
+                diagnostics.Write(new DiagnosticLogEntry
+                {
+                    EventId = DiagnosticEventIds.ActorRegistryChanged,
+                    Category = DiagnosticCategory.ActorRegistry,
+                    Message = "NPC character copy input observed.",
+                    Properties = new Dictionary<string, object?>
+                    {
+                        ["sourceIndex"] = source->ObjectIndex,
+                        ["sourceKind"] = (byte)source->ObjectKind,
+                        ["sourceBaseId"] = source->BaseId,
+                        ["sourceLayoutId"] = source->LayoutId,
+                        ["targetIndex"] = targetCharacter->ObjectIndex,
+                        ["targetBaseIdBeforeCopy"] = targetCharacter->BaseId,
+                        ["targetLayoutIdBeforeCopy"] = targetCharacter->LayoutId,
+                        ["trackedRange"] = IsCutsceneIndex(targetCharacter->ObjectIndex),
+                        ["flags"] = unknown,
+                    },
+                });
+        }
+        catch { } // Observation cannot suppress the game's CopyFromCharacter.
+
         return copyCharacterHook!.Original(target, source, unknown);
     }
 

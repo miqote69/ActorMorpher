@@ -1,9 +1,12 @@
+using Dalamud.Game.ClientState.Objects.Enums;
+using System.Collections.Immutable;
+
 namespace ActorMorpher.BulkOutfit;
 
-// Detect newly available pin targets cheaply; unchanged targets keep the normal scan interval.
+// New arrivals and minion equipment initialization use the existing pin comparison promptly.
 internal sealed class PinnedActorDiscovery
 {
-    private HashSet<Availability> previous = [];
+    private Dictionary<Availability, ImmutableArray<ulong>> previous = [];
 
     internal IReadOnlyList<ActorEntry> GetCandidates(IReadOnlyList<ActorEntry> actors,
         Func<ActorEntry, bool> isPinned, long now, ref long nextScanTick)
@@ -20,26 +23,32 @@ internal sealed class PinnedActorDiscovery
 
     internal ActorEntry? FindNext(IReadOnlyList<ActorEntry> actors, Func<ActorEntry, bool> isPinned)
     {
-        var current = new HashSet<Availability>();
+        var current = new Dictionary<Availability, ImmutableArray<ulong>>();
         ActorEntry? discovered = null;
         foreach (var actor in actors)
         {
             var snapshot = actor.Current;
+            var minion = snapshot.ObjectKind == ObjectKind.Companion;
             var availability = new Availability(actor.Key, snapshot.RepresentationKey,
-                snapshot.NpcAttachment, snapshot.CurrentAppearance is not null);
-            if (availability.Drawable && !previous.Contains(availability) && isPinned(actor))
+                snapshot.NpcAttachment, snapshot.MinionOwnerContentId, snapshot.CurrentAppearance is not null,
+                minion ? snapshot.EquipmentLoadRevision : 0);
+            // LoadEquipment may queue a later render update. Detect that consumption too.
+            var equipment = minion ? snapshot.CurrentAppearance?.Equipment ?? [] : [];
+            var changed = !previous.TryGetValue(availability, out var lastEquipment)
+                || !equipment.AsSpan().SequenceEqual(lastEquipment.AsSpan());
+            if (availability.Drawable && changed && isPinned(actor))
             {
                 // Leave other arrivals unseen until the next free operation slot.
                 if (discovered is not null)
                     continue;
                 discovered = actor;
             }
-            current.Add(availability);
+            current[availability] = equipment;
         }
         previous = current;
         return discovered;
     }
 
     private readonly record struct Availability(LogicalActorKey Actor, ActorRepresentationKey Representation,
-        NpcAttachmentKey? Attachment, bool Drawable);
+        NpcAttachmentKey? Attachment, ulong MinionOwnerContentId, bool Drawable, long EquipmentLoadRevision);
 }

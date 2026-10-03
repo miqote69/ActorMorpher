@@ -7,6 +7,8 @@ public sealed class PinnedOutfitConfiguration
     private static readonly Guid CurrentSession = Guid.NewGuid();
     public LogicalActorKey? ActorKey { get; set; }
     public NpcAttachmentKey? NpcAttachment { get; set; }
+    public bool PersistAttachmentAcrossSessions { get; set; }
+    public ulong? MinionOwnerContentId { get; set; }
     public Guid? Session { get; set; }
     public string ActorName { get; set; } = string.Empty;
     public int ObjectKind { get; set; }
@@ -46,6 +48,7 @@ public sealed class PinnedOutfitConfiguration
     public static PinnedOutfitConfiguration Create(ActorEntry actor, OutfitData outfit)
         => new()
         {
+            MinionOwnerContentId = MinionOwner(actor),
             ActorName = actor.Name.Trim(),
             ObjectKind = (int)actor.Kind,
             BaseId = actor.BaseId,
@@ -69,10 +72,14 @@ public sealed class PinnedOutfitConfiguration
     public static PinnedOutfitConfiguration Create(ActorEntry actor, AppearanceData appearance)
         => new()
         {
+            MinionOwnerContentId = MinionOwner(actor),
             ActorKey = actor.Current.ContinuityKey is { Source: not 5 } identity
                 ? actor.Key with { Continuity = identity }
                 : actor.Key,
             Session = CurrentSession,
+            PersistAttachmentAcrossSessions = UsesNpcSlotIdentity(actor.Key)
+                && actor.Current.ContinuityKey is null or { Source: 5 }
+                && actor.Current.NpcAttachment is not null,
             NpcAttachment = UsesNpcSlotIdentity(actor.Key)
                 && actor.Current.ContinuityKey is null or { Source: 5 }
                     ? actor.Current.NpcAttachment : null,
@@ -85,8 +92,13 @@ public sealed class PinnedOutfitConfiguration
 
     public bool Matches(ActorEntry actor)
     {
+        if (MinionOwnerContentId is { } owner)
+            return ObjectKind == (int)Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Companion
+                && actor.Kind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Companion
+                && owner != 0 && actor.Current.MinionOwnerContentId == owner && actor.BaseId == BaseId;
         if (UsesAttachmentIdentity && NpcAttachment is { } attachment)
-            return Session == CurrentSession && actor.Current.NpcAttachment == attachment;
+            return (PersistAttachmentAcrossSessions || Session == CurrentSession)
+                && actor.Current.NpcAttachment == attachment;
         if (ActorKey is { } key)
         {
             if (UsesNpcSlotIdentity(key))
@@ -110,9 +122,24 @@ public sealed class PinnedOutfitConfiguration
         return BaseId == actor.BaseId;
     }
 
+    // A necessary numeric component of Matches, used only to shortlist UI lookups.
+    // Collisions are allowed: Matches remains the final identity decision.
+    internal ulong? DisplayLookupId
+        => MinionOwnerContentId is not null ? BaseId
+            : UsesAttachmentIdentity && NpcAttachment is { } attachment ? attachment.OwnerContentId
+            : ActorKey is { } key
+                ? UsesNpcSlotIdentity(key) ? key.BaseId
+                    : key.Continuity is { Source: not 5 } identity ? identity.Id
+                    : key.GameObjectId
+                : null;
+
     public string IdentityKey()
-        => UsesAttachmentIdentity && NpcAttachment is { } attachment
-            ? $"Appearance:Attachment:{Session}:{attachment}"
+        => MinionOwnerContentId is { } owner
+            ? $"Minion:{owner}:{BaseId}"
+            : UsesAttachmentIdentity && NpcAttachment is { } attachment
+            ? PersistAttachmentAcrossSessions
+                ? $"Appearance:Attachment:{attachment}"
+                : $"Appearance:Attachment:{Session}:{attachment}"
             : ActorKey is { } key
             ? UsesNpcSlotIdentity(key)
                 ? $"Appearance:NpcSlot:{Session}:{key.ObjectKind}:{key.BaseId}:{key.OriginalObjectIndex}:{key.TerritoryId}"
@@ -125,6 +152,10 @@ public sealed class PinnedOutfitConfiguration
 
     private bool UsesAttachmentIdentity
         => ActorKey is { } key && UsesNpcSlotIdentity(key) && NpcAttachment is not null;
+
+    private static ulong? MinionOwner(ActorEntry actor)
+        => actor.Kind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Companion
+            && actor.Current.MinionOwnerContentId != 0 ? actor.Current.MinionOwnerContentId : null;
 
     // A pin targets the NPC number in this slot across recreation. This does not
     // merge live Actor keys or weaken the lifetime check used by queued operations.

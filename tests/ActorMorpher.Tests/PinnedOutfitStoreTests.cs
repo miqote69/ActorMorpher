@@ -10,6 +10,67 @@ namespace ActorMorpher.Tests;
 
 public sealed class PinnedOutfitStoreTests
 {
+    [Fact]
+    public void DisplayLookupKeepsIndividualPinIdentityAndDoesNotRetainRemovedPins()
+    {
+        var actors = Enumerable.Range(1, 135)
+            .Select(i => Actor($"Player {i}", false, (ushort)i, 1187)).ToArray();
+        var config = new Configuration();
+        var store = new PinnedOutfitStore(config, () => { });
+        var appearance = Appearance(ModelCategory.Human);
+        store.PinCurrent(actors.Where((_, i) => i % 2 == 0), _ => appearance);
+        // Same numeric lookup ID, but different lifetime: it must not become this actor's pin.
+        var other = actors[1] with { Key = actors[1].Key with { Lifetime = 123 } };
+        store.PinCurrent([other], _ => appearance);
+        var expected = actors.Where((_, i) => i % 2 == 0).Select(a => a.Key).ToHashSet();
+        Assert.True(expected.SetEquals(store.GetPinnedActorKeysForDisplay(actors)));
+        Assert.All(actors, a => Assert.Equal(store.IsPinned(a), expected.Contains(a.Key)));
+        store.Unpin(actors[0]);
+        expected.Remove(actors[0].Key);
+        Assert.True(expected.SetEquals(store.GetPinnedActorKeysForDisplay(actors)));
+        store.UnpinAll();
+        Assert.Empty(store.GetPinnedActorKeysForDisplay(actors));
+    }
+
+    [Fact]
+    public void DisplayLookupPreservesAttachmentContinuityMinionAndLegacyMatches()
+    {
+        var appearance = Appearance(ModelCategory.Human);
+        var npc = SlotNpc(ObjectKind.EventNpc, 201, 1003782, 1, true);
+        var attachment = new NpcAttachmentKey(1234, 386, ObjectKind.EventNpc, 1003782, "79");
+        var attached = WithAttachment(npc, attachment);
+        var identity = new ActorContinuityKey(ObjectKind.EventNpc, 3, 5678, 1003782, 1187);
+        var strong = npc with { Key = npc.Key with { Continuity = identity },
+            Representations = [npc.Current with { ContinuityKey = identity }] };
+        var minion = npc with { Kind = ObjectKind.Companion,
+            Representations = [npc.Current with { MinionOwnerContentId = 999 }] };
+        var legacy = Actor("Legacy", true, 1, 10);
+        var cases = new[]
+        {
+            (PinnedOutfitConfiguration.Create(npc, appearance),
+                SlotNpc(ObjectKind.EventNpc, 201, 1003782, 2, true),
+                SlotNpc(ObjectKind.EventNpc, 202, 1003782, 2, true)),
+            (PinnedOutfitConfiguration.Create(attached, appearance),
+                WithAttachment(SlotNpc(ObjectKind.EventNpc, 203, 777, 2, true), attachment),
+                WithAttachment(attached, attachment with { AttachmentIds = "80" })),
+            (PinnedOutfitConfiguration.Create(strong, appearance),
+                npc with { Representations = [npc.Current with { ContinuityKey = identity }] },
+                npc with { Representations = [npc.Current with { ContinuityKey = identity with { Source = 4 } }] }),
+            (PinnedOutfitConfiguration.Create(minion, appearance), minion,
+                minion with { Representations = [minion.Current with { MinionOwnerContentId = 998 }] }),
+            (PinnedOutfitConfiguration.Create(legacy, Outfit(12)), Actor("Legacy", true, 99, 20),
+                Actor("Other", true, 99, 20)),
+        };
+        foreach (var (pin, matching, different) in cases)
+        {
+            var store = new PinnedOutfitStore(new Configuration { PinnedOutfits = [pin] }, () => { });
+            Assert.True(store.IsPinned(matching));
+            Assert.False(store.IsPinned(different));
+            Assert.Equal(matching.Key, Assert.Single(store.GetPinnedActorKeysForDisplay([matching])));
+            Assert.Empty(store.GetPinnedActorKeysForDisplay([different]));
+        }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -28,6 +89,7 @@ public sealed class PinnedOutfitStoreTests
         store.PinCurrent([first], _ => appearance);
         var loaded = Newtonsoft.Json.JsonConvert.DeserializeObject<Configuration>(
             Newtonsoft.Json.JsonConvert.SerializeObject(config))!;
+        loaded.PinnedOutfits[0].Session = Guid.NewGuid(); // A new game/plugin session.
         PinnedOutfitStore.Normalize(loaded);
         store = new PinnedOutfitStore(loaded, () => { });
         Assert.True(store.IsPinned(next));
@@ -70,11 +132,48 @@ public sealed class PinnedOutfitStoreTests
         Assert.False(pin.Matches(WithAttachment(actor, null)));
         Assert.True(pin.Matches(actor));
         pin.Session = Guid.NewGuid();
-        Assert.False(pin.Matches(actor));
+        Assert.True(pin.Matches(actor));
     }
 
     private static ActorEntry WithAttachment(ActorEntry actor, NpcAttachmentKey? attachment)
         => actor with { Representations = [actor.Current with { NpcAttachment = attachment }] };
+
+    [Fact]
+    public void LegacyAttachmentUnpinDoesNotResurrectWhenPersistentPinsAreAdded()
+    {
+        var attachment = new NpcAttachmentKey(123456, 0, ObjectKind.EventNpc, 1059561, "79")
+            { ParentKind = ObjectKind.BattleNpc, ParentBaseId = 952 };
+        var actor = WithAttachment(SlotNpc(ObjectKind.EventNpc, 201, 1059561, 1, true), attachment);
+        var appearance = Appearance(ModelCategory.Human);
+        // v54 saved Session A, then Session B repinned and explicitly unpinned.
+        var oldJson = Newtonsoft.Json.Linq.JObject.FromObject(PinnedOutfitConfiguration.Create(actor, appearance));
+        oldJson.Remove("PersistAttachmentAcrossSessions");
+        var sessionA = oldJson.ToObject<PinnedOutfitConfiguration>()!;
+        sessionA.Session = Guid.NewGuid();
+        var sessionB = oldJson.ToObject<PinnedOutfitConfiguration>()!;
+        var config = new Configuration { PinnedOutfits = [sessionA, sessionB] };
+        var store = new PinnedOutfitStore(config, () => { });
+        Assert.True(store.Unpin(actor));
+        Assert.Same(sessionA, Assert.Single(config.PinnedOutfits));
+
+        var loaded = Newtonsoft.Json.JsonConvert.DeserializeObject<Configuration>(
+            Newtonsoft.Json.JsonConvert.SerializeObject(config))!;
+        PinnedOutfitStore.Normalize(loaded);
+        store = new PinnedOutfitStore(loaded, () => { });
+        Assert.False(store.IsPinned(actor));
+        Assert.False(store.TryGetAppearance(actor, out _));
+
+        Assert.Equal((1, 0), store.PinCurrent([actor], _ => appearance));
+        var persistent = loaded.PinnedOutfits.Last();
+        Assert.True(persistent.PersistAttachmentAcrossSessions);
+        persistent.Session = Guid.NewGuid();
+        Assert.True(store.IsPinned(actor));
+        Assert.True(store.Unpin(actor));
+        PinnedOutfitStore.Normalize(loaded);
+        Assert.False(store.IsPinned(actor));
+        Assert.False(store.TryGetAppearance(actor, out _));
+        Assert.Single(loaded.PinnedOutfits); // No inferred deletion/conversion of the old row.
+    }
 
     [Theory]
     [InlineData((byte)3)]

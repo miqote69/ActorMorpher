@@ -29,6 +29,7 @@ public sealed partial class Plugin : IDalamudPlugin
     [PluginService] private static ICommandManager CommandManager { get; set; } = null!;
     [PluginService] private static IObjectTable ObjectTable { get; set; } = null!;
     [PluginService] private static ITargetManager TargetManager { get; set; } = null!;
+    [PluginService] private static IGameGui GameGui { get; set; } = null!;
     [PluginService] private static IDataManager DataManager { get; set; } = null!;
     [PluginService] private static IPluginLog Log { get; set; } = null!;
     [PluginService] private static IClientState ClientState { get; set; } = null!;
@@ -105,6 +106,7 @@ public sealed partial class Plugin : IDalamudPlugin
     private readonly HashSet<LogicalActorKey> pendingActorRestoreRedraws = new();
     private string restoreStatus = string.Empty;
     private ModelPreviewSelectionKey? previewTextureSelection;
+    private (int Count, bool LoggedIn, ulong Owner)? lastPinObservation;
 
     public Configuration Configuration { get; }
     public Localizer Localizer { get; }
@@ -124,15 +126,20 @@ public sealed partial class Plugin : IDalamudPlugin
     public Plugin()
     {
         var isDev = PluginInterface.IsDev;
-        Configuration = PluginInterface.GetPluginConfig() as Configuration ?? Configuration.Create(isDev);
+        var loadedConfiguration = PluginInterface.GetPluginConfig();
+        Configuration = loadedConfiguration as Configuration ?? Configuration.Create(isDev);
+        var loadedPinCount = Configuration.PinnedOutfits?.Count ?? 0;
         Configuration.MigrateAndValidate(isDev);
+        Log.Information("[PinPersistence] Loaded Type={Type} BeforeMigration={Before} AfterMigration={After} IsDev={IsDev} ConfigFile={ConfigFile}",
+            loadedConfiguration?.GetType().FullName ?? "null", loadedPinCount, Configuration.PinnedOutfits!.Count,
+            isDev, PluginInterface.ConfigFile.FullName);
         Configuration.GlamourPlates ??= [];
         plateCache = new GlamourPlateCache(Configuration.GlamourPlates,
-            () => PluginInterface.SavePluginConfig(Configuration));
-        PluginInterface.SavePluginConfig(Configuration);
+            () => SaveConfiguration("PlateCache"));
+        SaveConfiguration("Startup");
         pinnedOutfitStore = new PinnedOutfitStore(
             Configuration,
-            () => PluginInterface.SavePluginConfig(Configuration));
+            () => SaveConfiguration("PinChange"));
         Localizer = new Localizer(Configuration, ClientState);
         diagnosticRouter = new DiagnosticLogRouter(
             PluginInterface.ConfigDirectory.FullName,
@@ -141,7 +148,7 @@ public sealed partial class Plugin : IDalamudPlugin
         diagnosticController = new DiagnosticController(
             diagnosticRouter,
             Configuration,
-            () => PluginInterface.SavePluginConfig(Configuration),
+            () => SaveConfiguration("Diagnostics"),
             Log,
             ClientState,
             isDev);
@@ -221,6 +228,7 @@ public sealed partial class Plugin : IDalamudPlugin
             drawObjectInjector.ResolveActor, appearancePersistence, diagnosticRouter, DataManager);
         actorRegistry.GetColorOutfit = outfitMemory.GetColorOutfit;
         actorRegistry.GetWeaponDyes = appearancePersistence.GetWeaponDyes;
+        actorRegistry.GetEquipmentLoadRevision = drawObjectInjector.GetEquipmentLoadRevision;
         bulkOutfitService = new BulkOutfitService(
             Framework,
             actorResolver,
@@ -246,6 +254,7 @@ public sealed partial class Plugin : IDalamudPlugin
 
     public void Dispose()
     {
+        ObservePinState("Dispose");
         plateImport.Cancel();
         ClientState.Logout -= OnPlateLogout;
         Framework.Update -= OnPluginFrameworkUpdate;
@@ -280,7 +289,7 @@ public sealed partial class Plugin : IDalamudPlugin
     public void Save()
     {
         Configuration.MigrateAndValidate(PluginInterface.IsDev);
-        PluginInterface.SavePluginConfig(Configuration);
+        SaveConfiguration("Settings");
         diagnosticRouter.Write(new DiagnosticLogEntry
         {
             EventId = DiagnosticEventIds.ConfigurationSaved,
@@ -320,6 +329,85 @@ public sealed partial class Plugin : IDalamudPlugin
         representation = null!;
         return TryResolveActor(key, out actor)
             && actorResolver.TryResolve(actor.Key, out representation);
+    }
+
+    public LogicalActorKey? GetCurrentTargetActorKey()
+    {
+        var target = ClientState.IsGPosing ? TargetManager.GPoseTarget : TargetManager.Target;
+        return target is null ? null : RegistryActorResolver.FindTarget(actorRegistry.Entries,
+            target.ObjectIndex, target.GameObjectId, target.EntityId, ClientState.TerritoryType)?.LogicalKey;
+    }
+
+    public unsafe bool TryGetActorHeadScreenPosition(LogicalActorKey key, out ActorEntry actor,
+        out System.Numerics.Vector2 screen)
+    {
+        screen = default;
+        // Disappearance is normal for a display marker; do not generate an action warning each draw.
+        if (!actorRegistry.TryGet(key, out actor))
+            return false;
+
+        ActorSnapshot? directGPose = null;
+        if (ClientState.IsGPosing && actor.IsLocalPlayer
+            && actorRegistry.TryGetGPoseLocalPlayer(key, out var resolvedGPose))
+            directGPose = resolvedGPose;
+        return ActorMarkerProjection.TryGetScreenPosition(actor, ClientState.IsGPosing,
+            TryProjectMarkerRepresentation, out screen, directGPose);
+    }
+
+    private static unsafe bool TryProjectMarkerRepresentation(ActorSnapshot representation,
+        out System.Numerics.Vector2 screen)
+    {
+        screen = default;
+        var draw = GetVisibleMarkerDraw(representation);
+        if (draw == null)
+            return false;
+
+        // The displayed model can differ from the game actor's height (which can be zero).
+        // These bounds are already in world space, including the draw transform and scale.
+        FFXIVClientStructs.FFXIV.Common.Math.AxisAlignedBounds bounds;
+        draw->ComputeAxisAlignedBounds(&bounds);
+        // Control.ViewProjectionMatrix used by GameGui can retain the field camera in cutscenes.
+        // Read the camera that is rendering the current scene; do not retain a screen position.
+        var cameraManager = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CameraManager.Instance();
+        var camera = cameraManager == null ? null : cameraManager->CurrentCamera;
+        var device = FFXIVClientStructs.FFXIV.Client.Graphics.Kernel.Device.Instance();
+        if (camera == null || camera->RenderCamera == null || device == null)
+            return false;
+        return ActorMarkerProjection.TryProjectModelTop(bounds.Min, bounds.Max,
+            camera->ViewMatrix * camera->RenderCamera->ProjectionMatrix,
+            Dalamud.Interface.Utility.ImGuiHelpers.MainViewport.Pos,
+            new System.Numerics.Vector2(device->Width, device->Height), out screen);
+    }
+
+    private static unsafe FFXIVClientStructs.FFXIV.Client.Graphics.Scene.DrawObject* GetVisibleMarkerDraw(
+        ActorSnapshot representation)
+    {
+        var identity = representation.RepresentationKey;
+        if (identity.TerritoryId != ClientState.TerritoryType)
+            return null;
+        var current = ObjectTable[identity.ObjectIndex];
+        if (current is null || current.Address == nint.Zero
+            || current.GameObjectId != identity.GameObjectId || current.EntityId != identity.EntityId)
+            return null;
+        var draw = ((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)current.Address)->DrawObject;
+        return draw != null && draw->IsVisible ? draw : null;
+    }
+
+    private void SaveConfiguration(string reason)
+    {
+        PluginInterface.SavePluginConfig(Configuration);
+        Log.Information("[PinPersistence] Saved Reason={Reason} PinCount={PinCount} IsDev={IsDev}",
+            reason, Configuration.PinnedOutfits.Count, PluginInterface.IsDev);
+    }
+
+    private void ObservePinState(string phase)
+    {
+        var state = (Count: pinnedOutfitStore.Count, LoggedIn: ClientState.IsLoggedIn, Owner: PlateOwner);
+        if (phase == "Framework" && lastPinObservation == state)
+            return;
+        lastPinObservation = state;
+        Log.Information("[PinPersistence] State Phase={Phase} PinCount={PinCount} LoggedIn={LoggedIn} IsDev={IsDev}",
+            phase, state.Count, state.LoggedIn, PluginInterface.IsDev);
     }
 
     public BulkOutfitPreview GetBulkOutfitPreview(BulkOutfitSettings settings)
@@ -403,6 +491,7 @@ public sealed partial class Plugin : IDalamudPlugin
 
     private void OnPlateLogout(int type, int code)
     {
+        ObservePinState("Logout");
         plateCache.EndSession();
         if (plateImport.IsPending)
         {
@@ -1228,6 +1317,9 @@ public sealed partial class Plugin : IDalamudPlugin
     public bool IsOutfitPinned(LogicalActorKey actor)
         => actorRegistry.TryGet(actor, out var entry) && pinnedOutfitStore.IsPinned(entry);
 
+    public HashSet<LogicalActorKey> GetPinnedActorKeysForDisplay(IReadOnlyList<ActorEntry> actors)
+        => pinnedOutfitStore.GetPinnedActorKeysForDisplay(actors);
+
     public bool TryGetPinnedOutfit(LogicalActorKey actor, out OutfitData outfit)
     {
         if (actorRegistry.TryGet(actor, out var entry)
@@ -1270,6 +1362,7 @@ public sealed partial class Plugin : IDalamudPlugin
 
     public string UnpinAllActors()
     {
+        Log.Information("[PinPersistence] UnpinAllRequested PinCount={PinCount}", pinnedOutfitStore.Count);
         var removed = pinnedOutfitStore.UnpinAll();
         failedPinnedOutfitReapplyStates.Clear();
         failedPinnedAppearanceStates.Clear();
@@ -1496,6 +1589,7 @@ public sealed partial class Plugin : IDalamudPlugin
 
     private void OnPluginFrameworkUpdate(IFramework framework)
     {
+        ObservePinState("Framework");
         ProcessWeaponSelections();
         UpdateGlamourPlateCache();
         ProcessGlamourPlateImport();

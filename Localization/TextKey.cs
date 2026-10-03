@@ -326,4 +326,9 @@ public enum TextKey
     ShowVieraEars,
     HeadgearSettingsHint,
     KeepEarVisibility,
+    ActorSortOrder,
+    ActorSortDefault,
+    ActorSortNearest,
+    ActorTargeted,
+    ActorSelected,
 }
