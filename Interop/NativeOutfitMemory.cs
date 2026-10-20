@@ -194,12 +194,28 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
             return false;
         var human = (Human*)model;
         var armor = outfit.Equipment[(int)slot];
-        // Change only the rendered stain bytes and this slot's textures, leaving model loading and motion alone.
-        human->EquipmentModels[(int)slot].Stain0 = armor.Stain1;
-        human->EquipmentModels[(int)slot].Stain1 = armor.Stain2;
+        // Change this slot's stain bytes and textures, leaving model loading and motion alone.
+        ApplyRenderedStains(human, (int)slot, armor);
         SetColorOutfit?.Invoke(actor.LogicalKey, outfit);
         confirmed = NativeEquipmentColors.ApplySlot(model, (int)slot, armor, true, channel).Applied;
         return true;
+    }
+
+    internal static void ApplyRenderedStains(Human* human, int slot, ArmorAppearance armor)
+    {
+        human->EquipmentModels[slot].Stain0 = armor.Stain1;
+        human->EquipmentModels[slot].Stain1 = armor.Stain2;
+        // Keep this explicit dye edit in the same model's selected input too.
+        // A different model may already be queued while the old one is still loaded.
+        if (human->ChangedEquipData != null)
+        {
+            var selected = (EquipmentModelId*)(human->ChangedEquipData + slot * 32);
+            if (selected->Id == armor.Set && selected->Variant == armor.Variant)
+            {
+                selected->Stain0 = armor.Stain1;
+                selected->Stain1 = armor.Stain2;
+            }
+        }
     }
 
     public bool TryApply(ActorSnapshot actor, OutfitData outfit)

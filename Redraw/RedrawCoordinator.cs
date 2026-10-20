@@ -99,6 +99,9 @@ public sealed class RedrawCoordinator : IDisposable
     }
 
     public void ProcessNextFrame()
+        => ProcessStep(true);
+
+    private void ProcessStep(bool advanceFrame)
     {
         if (disposed)
             return;
@@ -113,7 +116,7 @@ public sealed class RedrawCoordinator : IDisposable
         if (current is null)
             return;
 
-        var operation = current with { FrameCount = current.FrameCount + 1 };
+        var operation = current with { FrameCount = current.FrameCount + (advanceFrame ? 1 : 0) };
         if (operation.TerritoryId != clientContext.TerritoryId)
         {
             Finish(operation with { Stage = RedrawStage.Cancelled, Error = "Territory changed." });
@@ -145,6 +148,8 @@ public sealed class RedrawCoordinator : IDisposable
         }
         catch (Exception exception)
         {
+            if (current?.OperationId != operation.OperationId)
+                throw; // Preserve an already-published cancellation and its subscriber exception.
             Finish(operation with
             {
                 Stage = RedrawStage.Failed,
@@ -152,6 +157,8 @@ public sealed class RedrawCoordinator : IDisposable
             });
             return;
         }
+        if (current?.OperationId != operation.OperationId)
+            return; // A native callback may have cancelled this operation.
         current = operation.Stage switch
         {
             RedrawStage.Pending => operation with { Stage = RedrawStage.Disable },
@@ -166,6 +173,10 @@ public sealed class RedrawCoordinator : IDisposable
         if (current is { } changed && changed.Stage != previousStage)
             diagnostics.Write(CreateEntry(changed, DiagnosticEventIds.RedrawStateChanged, "Redraw state changed.",
                 properties: new Dictionary<string, object?> { ["previousState"] = previousStage, ["nextState"] = changed.Stage }));
+        // Cutscenes can recreate the original model between Framework callbacks.
+        // Finish this same redraw before the game can repopulate the disabled draw object.
+        if (previousStage == RedrawStage.Disable && current?.Stage == RedrawStage.Enable)
+            ProcessStep(false);
     }
 
     private void OnFrameworkUpdate(IFramework _)

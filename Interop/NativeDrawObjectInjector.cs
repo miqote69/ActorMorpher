@@ -370,6 +370,7 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
         var appearance = context.Appearance;
         var customizeInjected = !appearance.Customize.IsDefaultOrEmpty;
         var equipmentInjected = !appearance.Equipment.IsDefaultOrEmpty;
+        var colorsApplied = appearance.CustomizeColors.IsDefaultOrEmpty;
 
         var created = (CharacterBase*)InvokeWithTemporaryCreateBuffers(
             appearance,
@@ -384,6 +385,7 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
                     (CustomizeData*)customizeAddress,
                     (EquipmentModelId*)equipmentAddress,
                     unknown)));
+                colorsApplied = NativeCustomizeColors.Apply(result, appearance.CustomizeColors);
                 TryWriteCreateArguments(context, customizeAddress, equipmentAddress, "OriginalCreateReturnedArguments",
                     result is not null ? "NonNull" : "Null");
                 TryWriteCreateObservation(
@@ -391,7 +393,7 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
                     "OriginalCreateReturnedBeforeBufferRestore");
                 return (nint)result;
             });
-        context.CreateCallSucceeded = created is not null;
+        context.CreateCallSucceeded = created is not null && colorsApplied;
         context.CreatedCharacterBaseAddress = (nint)created;
         context.ConsumerTransaction?.CompleteCreate((nint)created);
         TryWriteCreateObservation(

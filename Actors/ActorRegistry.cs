@@ -3,6 +3,7 @@ using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
 using ActorMorpher.Localization;
 using System.Numerics;
+using System.Collections.Immutable;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using NativeGameObject = FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject;
@@ -79,17 +80,70 @@ public sealed unsafe class ActorRegistry : IDisposable
     }
 
     internal Func<LogicalActorKey, OutfitData?>? GetColorOutfit { get; set; }
+    internal Func<LogicalActorKey, OutfitData?>? GetRetainedOutfit { get; set; }
     internal Func<LogicalActorKey, bool, ulong?, WeaponDyes>? GetWeaponDyes { get; set; }
     internal Func<ushort, byte, FacewearAppearance>? ResolveFacewear { get; set; }
 
     internal AppearanceData? CaptureCurrentAppearance(ActorSnapshot expected)
+        => CaptureCurrentAppearance(expected, false);
+
+    internal AppearanceData? CaptureCustomizeAppearance(ActorSnapshot expected)
+        => CaptureCurrentAppearance(expected, true);
+
+    private AppearanceData? CaptureCurrentAppearance(ActorSnapshot expected, bool forCustomize)
     {
         var key = expected.RepresentationKey;
         var obj = objectTable[key.ObjectIndex];
         if (obj is null || obj.GameObjectId != key.GameObjectId || obj.EntityId != key.EntityId)
             return null;
         var fresh = CreateSnapshot(obj, clientState.TerritoryType, null, nint.Zero);
-        return DescribeRenderedAppearance(expected, fresh);
+        var appearance = DescribeRenderedAppearance(expected, fresh);
+        if (forCustomize && appearance is { Category: ModelCategory.Human })
+            appearance = CaptureCustomizeEquipment(appearance,
+                (Human*)((NativeGameObject*)obj.Address)->GetCharacterBase(), GetColorOutfit?.Invoke(expected.LogicalKey));
+        return ApplyRetainedOutfit(appearance, GetRetainedOutfit?.Invoke(expected.LogicalKey));
+    }
+
+    internal static AppearanceData? ApplyRetainedOutfit(AppearanceData? appearance, OutfitData? outfit)
+    {
+        if (appearance is not { Category: ModelCategory.Human, Equipment.Length: 10 } || outfit is null)
+            return appearance;
+        return appearance with
+        {
+            HatVisible = outfit.HatVisible,
+            // Hiding removes the draw slot; the selected head belongs to the outfit override.
+            Equipment = outfit.HatVisible ? appearance.Equipment
+                : appearance.Equipment.SetItem(0, ToEquipmentModelValue(outfit.Equipment[0])),
+            ColoredEquipment = !outfit.HatVisible && appearance.ColoredEquipment.Length == 10
+                ? appearance.ColoredEquipment.SetItem(0, outfit.Equipment[0]) : appearance.ColoredEquipment,
+        };
+    }
+
+    private ActorSnapshot RetainOutfitDescriptors(ActorSnapshot snapshot)
+        => snapshot with
+        {
+            CurrentAppearance = ApplyRetainedOutfit(snapshot.CurrentAppearance,
+                GetRetainedOutfit?.Invoke(snapshot.LogicalKey)),
+        };
+
+    internal static AppearanceData CaptureCustomizeEquipment(AppearanceData appearance, Human* human, OutfitData? ownedColors)
+    {
+        // A newly created Human already has its selected slot inputs while its loaded
+        // EquipmentModels can still be zero. Carry those inputs into the next redraw.
+        var equipment = CaptureRenderedEquipment((CharacterBase*)human);
+        if (appearance.HatVisible == false)
+            equipment[0] = ownedColors is not null
+                ? ToEquipmentModelValue(ownedColors.Equipment[0]) : appearance.Equipment[0];
+        var result = appearance with { Equipment = equipment.ToImmutableArray() };
+        if (ownedColors is not null)
+        {
+            var armor = equipment.Select(value => new EquipmentModelId { Value = value })
+                .Select(model => new ArmorAppearance(model.Id, model.Variant, model.Stain0, model.Stain1));
+            var outfit = OutfitData.Create(armor, FacewearAppearance.Unavailable,
+                appearance.HatVisible == true, appearance.VisorToggled == true);
+            result = result with { ColoredEquipment = NativeOutfitMemory.WithColors(outfit, ownedColors).Equipment };
+        }
+        return result;
     }
 
     internal static AppearanceData? DescribeRenderedAppearance(ActorSnapshot expected, ActorSnapshot? fresh)
@@ -105,6 +159,7 @@ public sealed unsafe class ActorRegistry : IDisposable
                 ? raw with
                 {
                     ModelCharaId = managed.ModelCharaId,
+                    CustomizeColors = managed.CustomizeColors,
                     HatVisible = raw.Category == ModelCategory.Human ? managed.HatVisible : raw.HatVisible,
                 }
                 : raw;
@@ -220,7 +275,7 @@ public sealed unsafe class ActorRegistry : IDisposable
                     static representation => (representation.LogicalKey, representation.RepresentationKey),
                     static representation => representation.CurrentAppearance!);
         }
-        snapshot = RetainManagedAppearance(mapped, retainedAppearances, getRetainedAppearance);
+        snapshot = RetainOutfitDescriptors(RetainManagedAppearance(mapped, retainedAppearances, getRetainedAppearance));
         return true;
     }
 
@@ -294,14 +349,14 @@ public sealed unsafe class ActorRegistry : IDisposable
         var mappedSnapshots = snapshots.Select(snapshot =>
         {
             if (!mappings.TryGetValue(snapshot.RepresentationKey, out var logicalKey))
-                return RetainManagedAppearance(snapshot, retainedAppearances, getRetainedAppearance);
+                return RetainOutfitDescriptors(RetainManagedAppearance(snapshot, retainedAppearances, getRetainedAppearance));
 
             var mapped = snapshot with
             {
                 LogicalKey = logicalKey,
                 RepresentationKey = snapshot.RepresentationKey with { IsGPoseRepresentation = true },
             };
-            return RetainManagedAppearance(mapped, retainedAppearances, getRetainedAppearance);
+            return RetainOutfitDescriptors(RetainManagedAppearance(mapped, retainedAppearances, getRetainedAppearance));
         });
 
         var next = OrderForDisplay(
@@ -551,6 +606,7 @@ public sealed unsafe class ActorRegistry : IDisposable
         var merged = current with
         {
             ModelCharaId = retained.ModelCharaId,
+            CustomizeColors = retained.CustomizeColors,
             HatVisible = current.Category == ModelCategory.Human
                 ? retained.HatVisible
                 : current.HatVisible,

@@ -80,13 +80,16 @@ public sealed unsafe class NativeAppearanceMemory : IAppearanceMemory
         var rendered = character->DrawData.Weapon(slot).Weapon;
         if (rendered is null)
             return 0;
+        // Initialize stores the selected body/variant/dyes here until the model loads.
+        // Rapid customize redraws must capture the same inputs as the weapon consumer.
+        var pending = rendered->ChangedData;
         return new WeaponModelId
         {
             Id = rendered->ModelSetId,
-            Type = rendered->SecondaryId,
-            Variant = rendered->Variant,
-            Stain0 = rendered->Stain0,
-            Stain1 = rendered->Stain1,
+            Type = pending is null ? rendered->SecondaryId : pending->SecondaryId,
+            Variant = pending is null ? rendered->Variant : pending->Variant,
+            Stain0 = pending is null ? rendered->Stain0 : pending->Stain0,
+            Stain1 = pending is null ? rendered->Stain1 : pending->Stain1,
         }.Value;
     }
 

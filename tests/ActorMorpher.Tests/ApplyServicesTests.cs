@@ -91,7 +91,7 @@ public sealed class ApplyServicesTests
             false, [snapshot with { CurrentAppearance = outfit is null ? null : HumanAppearance(1, 1)
                 .WithOutfit(outfit.Equipment.Select(ActorRegistry.ToEquipmentModelValue), outfit.VisorToggled),
                 EquipmentLoadRevision = consumer.GetEquipmentLoadRevision(owner, 1) }]);
-        var pins = new PinnedOutfitStore(new Configuration(), () => { });
+        var pins = new PinnedOutfitStore(new Configuration(), () => { }, () => 1);
         pins.Pin(Entry(desired), desired);
         var memory = new FakeOutfitMemory(new() { [snapshot.LogicalKey] = original });
         using var service = new BulkOutfitService(new FakeResolver(snapshot), memory, new FakeContext(),

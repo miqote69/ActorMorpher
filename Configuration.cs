@@ -34,8 +34,20 @@ public sealed class Configuration : IPluginConfiguration
     public int BulkExcludeAge { get; set; }
     public string BulkExcludeNameFilter { get; set; } = string.Empty;
     public List<PinnedOutfitConfiguration> PinnedOutfits { get; set; } = [];
+    public Dictionary<ulong, List<PinnedOutfitConfiguration>> PinnedOutfitsByCharacter { get; set; } = [];
     public HashSet<EquipmentChoiceKey> FavoriteEquipment { get; set; } = [];
     public Dictionary<ulong, SavedGlamourPlates> GlamourPlates { get; set; } = [];
+
+    internal bool MigrateLegacyPins(ulong owner)
+    {
+        if (owner == 0 || PinnedOutfits.Count == 0)
+            return false;
+        PinnedOutfitsByCharacter.TryGetValue(owner, out var current);
+        // Character-owned pins are newer than the unassigned legacy list.
+        PinnedOutfitsByCharacter[owner] = PinnedOutfitStore.NormalizePins([.. PinnedOutfits, .. (current ?? [])]);
+        PinnedOutfits = [];
+        return true;
+    }
 
     public static Configuration Create(bool isDev)
         => new()

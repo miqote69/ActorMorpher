@@ -19,18 +19,18 @@ public sealed unsafe class MinionPinRestartTests
     {
         var first = Minion(1234, 248, 1);
         var config = new Configuration();
-        var store = new PinnedOutfitStore(config, () => { });
+        var store = new PinnedOutfitStore(config, () => { }, () => 1);
         var appearance = Appearance();
         Assert.Equal((1, 0), store.PinCurrent([first], _ => appearance));
         var loaded = JsonConvert.DeserializeObject<Configuration>(JsonConvert.SerializeObject(config))!;
-        loaded.PinnedOutfits[0].Session = Guid.NewGuid();
+        loaded.PinnedOutfitsByCharacter[1][0].Session = Guid.NewGuid();
         PinnedOutfitStore.Normalize(loaded);
-        store = new PinnedOutfitStore(loaded, () => { });
+        store = new PinnedOutfitStore(loaded, () => { }, () => 1);
         var next = Minion(1234, 248, 19);
         Assert.True(store.IsPinned(next));
         Assert.True(store.TryGetAppearance(next, out var saved));
         Assert.True(PinnedOutfitStore.AppearanceEquals(appearance, saved));
-        Assert.Equal(config.PinnedOutfits[0].IdentityKey(), PinnedOutfitConfiguration.Create(next, appearance).IdentityKey());
+        Assert.Equal(config.PinnedOutfitsByCharacter[1][0].IdentityKey(), PinnedOutfitConfiguration.Create(next, appearance).IdentityKey());
 
         // The normal discovery/restore comparison still converges. No live key is reused.
         var discovery = new PinnedActorDiscovery();
@@ -50,9 +50,9 @@ public sealed unsafe class MinionPinRestartTests
         }
         Assert.False(store.IsPinned(next with { Kind = ObjectKind.EventNpc }));
         Assert.Equal((1, 0), store.PinCurrent([next], _ => appearance));
-        Assert.Single(loaded.PinnedOutfits);
+        Assert.Single(loaded.PinnedOutfitsByCharacter[1]);
         Assert.True(store.Unpin(next));
-        Assert.Empty(loaded.PinnedOutfits);
+        Assert.Empty(loaded.PinnedOutfitsByCharacter[1]);
     }
 
     [Fact]

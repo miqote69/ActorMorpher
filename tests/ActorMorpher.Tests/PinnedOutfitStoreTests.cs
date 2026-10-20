@@ -16,7 +16,7 @@ public sealed class PinnedOutfitStoreTests
         var actors = Enumerable.Range(1, 135)
             .Select(i => Actor($"Player {i}", false, (ushort)i, 1187)).ToArray();
         var config = new Configuration();
-        var store = new PinnedOutfitStore(config, () => { });
+        var store = new PinnedOutfitStore(config, () => { }, () => 1);
         var appearance = Appearance(ModelCategory.Human);
         store.PinCurrent(actors.Where((_, i) => i % 2 == 0), _ => appearance);
         // Same numeric lookup ID, but different lifetime: it must not become this actor's pin.
@@ -63,7 +63,7 @@ public sealed class PinnedOutfitStoreTests
         };
         foreach (var (pin, matching, different) in cases)
         {
-            var store = new PinnedOutfitStore(new Configuration { PinnedOutfits = [pin] }, () => { });
+            var store = new PinnedOutfitStore(new Configuration { PinnedOutfitsByCharacter = new() { [1] = [pin] } }, () => { }, () => 1);
             Assert.True(store.IsPinned(matching));
             Assert.False(store.IsPinned(different));
             Assert.Equal(matching.Key, Assert.Single(store.GetPinnedActorKeysForDisplay([matching])));
@@ -84,18 +84,18 @@ public sealed class PinnedOutfitStoreTests
         next = WithAttachment(next with { Key = movedKey, Representations = [next.Current with
         { LogicalKey = movedKey, RepresentationKey = next.Current.RepresentationKey with { TerritoryId = 999 } }] }, attachment);
         var config = new Configuration();
-        var store = new PinnedOutfitStore(config, () => { });
+        var store = new PinnedOutfitStore(config, () => { }, () => 1);
         var appearance = Appearance(ModelCategory.Human);
         store.PinCurrent([first], _ => appearance);
         var loaded = Newtonsoft.Json.JsonConvert.DeserializeObject<Configuration>(
             Newtonsoft.Json.JsonConvert.SerializeObject(config))!;
-        loaded.PinnedOutfits[0].Session = Guid.NewGuid(); // A new game/plugin session.
+        loaded.PinnedOutfitsByCharacter[1][0].Session = Guid.NewGuid(); // A new game/plugin session.
         PinnedOutfitStore.Normalize(loaded);
-        store = new PinnedOutfitStore(loaded, () => { });
+        store = new PinnedOutfitStore(loaded, () => { }, () => 1);
         Assert.True(store.IsPinned(next));
         Assert.True(store.TryGetAppearance(next, out var saved));
         Assert.True(PinnedOutfitStore.AppearanceEquals(appearance, saved));
-        Assert.Equal(config.PinnedOutfits[0].IdentityKey(), PinnedOutfitConfiguration.Create(next, appearance).IdentityKey());
+        Assert.Equal(config.PinnedOutfitsByCharacter[1][0].IdentityKey(), PinnedOutfitConfiguration.Create(next, appearance).IdentityKey());
         Assert.Null(ActorRegistry.DescribeRenderedAppearance(first.Current, next.Current with { CurrentAppearance = appearance }));
         Assert.True(store.Unpin(next));
         Assert.False(store.IsPinned(first));
@@ -151,20 +151,20 @@ public sealed class PinnedOutfitStoreTests
         var sessionA = oldJson.ToObject<PinnedOutfitConfiguration>()!;
         sessionA.Session = Guid.NewGuid();
         var sessionB = oldJson.ToObject<PinnedOutfitConfiguration>()!;
-        var config = new Configuration { PinnedOutfits = [sessionA, sessionB] };
-        var store = new PinnedOutfitStore(config, () => { });
+        var config = new Configuration { PinnedOutfitsByCharacter = new() { [1] = [sessionA, sessionB] } };
+        var store = new PinnedOutfitStore(config, () => { }, () => 1);
         Assert.True(store.Unpin(actor));
-        Assert.Same(sessionA, Assert.Single(config.PinnedOutfits));
+        Assert.Same(sessionA, Assert.Single(config.PinnedOutfitsByCharacter[1]));
 
         var loaded = Newtonsoft.Json.JsonConvert.DeserializeObject<Configuration>(
             Newtonsoft.Json.JsonConvert.SerializeObject(config))!;
         PinnedOutfitStore.Normalize(loaded);
-        store = new PinnedOutfitStore(loaded, () => { });
+        store = new PinnedOutfitStore(loaded, () => { }, () => 1);
         Assert.False(store.IsPinned(actor));
         Assert.False(store.TryGetAppearance(actor, out _));
 
         Assert.Equal((1, 0), store.PinCurrent([actor], _ => appearance));
-        var persistent = loaded.PinnedOutfits.Last();
+        var persistent = loaded.PinnedOutfitsByCharacter[1].Last();
         Assert.True(persistent.PersistAttachmentAcrossSessions);
         persistent.Session = Guid.NewGuid();
         Assert.True(store.IsPinned(actor));
@@ -172,7 +172,7 @@ public sealed class PinnedOutfitStoreTests
         PinnedOutfitStore.Normalize(loaded);
         Assert.False(store.IsPinned(actor));
         Assert.False(store.TryGetAppearance(actor, out _));
-        Assert.Single(loaded.PinnedOutfits); // No inferred deletion/conversion of the old row.
+        Assert.Single(loaded.PinnedOutfitsByCharacter[1]); // No inferred deletion/conversion of the old row.
     }
 
     [Theory]
@@ -211,14 +211,14 @@ public sealed class PinnedOutfitStoreTests
     {
         var actor = Actor("Head", false, 1, 10);
         var config = new Configuration();
-        var store = new PinnedOutfitStore(config, () => { });
+        var store = new PinnedOutfitStore(config, () => { }, () => 1);
         var original = Appearance(ModelCategory.Human);
         var outfit = EquipmentDisplayFormatting.CreateHumanOutfit(original)!;
         if (legacy) store.Pin(actor, outfit); else store.PinCurrent([actor], _ => original);
         var changed = outfit with { HatVisible = !outfit.HatVisible, VisorToggled = !outfit.VisorToggled, VieraEarsHidden = true };
         store.UpdateHeadgearSettings(actor, changed);
         var loaded = Newtonsoft.Json.JsonConvert.DeserializeObject<Configuration>(Newtonsoft.Json.JsonConvert.SerializeObject(config))!;
-        store = new PinnedOutfitStore(loaded, () => { });
+        store = new PinnedOutfitStore(loaded, () => { }, () => 1);
         Assert.True(store.TryGet(actor, out var retained));
         Assert.True(OutfitDataValueComparer.AreEqual(changed, retained));
         if (!legacy)
@@ -253,7 +253,7 @@ public sealed class PinnedOutfitStoreTests
         var first = SlotNpc(kind, 201, 1003782, 1, continuity);
         var recreated = SlotNpc(kind, 201, 1003782, 2, continuity);
         var configuration = new Configuration();
-        var store = new PinnedOutfitStore(configuration, () => { });
+        var store = new PinnedOutfitStore(configuration, () => { }, () => 1);
         var selected = Appearance(ModelCategory.Human) with
         {
             Equipment = Appearance(ModelCategory.Human).Equipment.SetItem(0, 9005),
@@ -268,11 +268,11 @@ public sealed class PinnedOutfitStoreTests
         var loaded = Newtonsoft.Json.JsonConvert.DeserializeObject<Configuration>(
             Newtonsoft.Json.JsonConvert.SerializeObject(configuration))!;
         PinnedOutfitStore.Normalize(loaded);
-        store = new PinnedOutfitStore(loaded, () => { });
+        store = new PinnedOutfitStore(loaded, () => { }, () => 1);
         Assert.True(store.IsPinned(recreated));
         Assert.True(store.TryGetAppearance(recreated, out var retained));
         Assert.True(PinnedOutfitStore.AppearanceEquals(selected, retained));
-        Assert.Equal(configuration.PinnedOutfits[0].IdentityKey(),
+        Assert.Equal(configuration.PinnedOutfitsByCharacter[1][0].IdentityKey(),
             PinnedOutfitConfiguration.Create(recreated, selected).IdentityKey());
         // Pin target continuity must not let an operation on the old instance capture its replacement.
         Assert.Null(ActorRegistry.DescribeRenderedAppearance(first.Current,
@@ -288,7 +288,7 @@ public sealed class PinnedOutfitStoreTests
     [Theory]
     [InlineData(ObjectKind.EventNpc)]
     [InlineData(ObjectKind.BattleNpc)]
-    public void NpcSlotPinDoesNotMatchOtherNumberSlotKindTerritoryOrSession(ObjectKind kind)
+    public void NpcSlotPinDoesNotMatchOtherNumberSlotKindOrTerritoryAcrossSessions(ObjectKind kind)
     {
         var first = SlotNpc(kind, 201, 1003782, 1, true);
         var pin = PinnedOutfitConfiguration.Create(first, Appearance(ModelCategory.Human));
@@ -297,9 +297,11 @@ public sealed class PinnedOutfitStoreTests
         Assert.False(pin.Matches(SlotNpc(kind == ObjectKind.EventNpc ? ObjectKind.BattleNpc : ObjectKind.EventNpc,
             201, 1003782, 2, true)));
         var recreated = SlotNpc(kind, 201, 1003782, 2, true);
-        Assert.False(pin.Matches(recreated with { Key = recreated.Key with { TerritoryId = 999 } }));
+        Assert.False(pin.Matches(recreated with { Key = recreated.Key with { TerritoryId = 999 },
+            Representations = [recreated.Current with
+                { RepresentationKey = recreated.Current.RepresentationKey with { TerritoryId = 999 } }] }));
         pin.Session = Guid.NewGuid();
-        Assert.False(pin.Matches(recreated));
+        Assert.True(pin.Matches(recreated));
     }
 
     private static ActorEntry SlotNpc(ObjectKind kind, ushort index, uint baseId, ulong lifetime, bool continuity)
@@ -323,7 +325,7 @@ public sealed class PinnedOutfitStoreTests
     [InlineData(true)]
     public void WeaponDyeUpdatesOnlyTheChosenPinnedHand(bool offhand)
     {
-        var store = new PinnedOutfitStore(new Configuration(), () => { });
+        var store = new PinnedOutfitStore(new Configuration(), () => { }, () => 1);
         var actor = Actor("Pinned", true, 1, 10);
         var original = Appearance(ModelCategory.Human) with
         { MainhandDyes = new(new(1, 0, 0), null), OffhandDyes = new(null, new(0, 1, 0)) };
@@ -344,7 +346,7 @@ public sealed class PinnedOutfitStoreTests
     public void WeaponSelectionUpdatesOnlyTheSelectedHandOfAnExistingPin(bool offhand, ulong weapon)
     {
         var configuration = new Configuration();
-        var store = new PinnedOutfitStore(configuration, () => { });
+        var store = new PinnedOutfitStore(configuration, () => { }, () => 1);
         var actor = Actor("Pinned", true, 1, 10);
         var original = Appearance(ModelCategory.Human);
         store.PinCurrent([actor], _ => original);
@@ -381,7 +383,7 @@ public sealed class PinnedOutfitStoreTests
         { SourceRowId = 999, Completeness = AppearanceCompleteness.Unsupported }));
 
         var configuration = new Configuration();
-        var store = new PinnedOutfitStore(configuration, () => { });
+        var store = new PinnedOutfitStore(configuration, () => { }, () => 1);
         var actor = Actor("Pinned cutscene actor", false, 214, 418);
         store.PinCurrent([actor], _ => pinned);
         Assert.True(store.TryGet(actor, out var outfit));
@@ -419,7 +421,7 @@ public sealed class PinnedOutfitStoreTests
     {
         var configuration = new Configuration();
         var saves = 0;
-        var store = new PinnedOutfitStore(configuration, () => saves++);
+        var store = new PinnedOutfitStore(configuration, () => saves++, () => 1);
         var actor = Actor("Selected", false, 1, 100);
         var other = Actor("Other", false, 2, 100);
         var original = Outfit(20);
@@ -458,7 +460,7 @@ public sealed class PinnedOutfitStoreTests
     {
         var configuration = new Configuration();
         var saves = 0;
-        var store = new PinnedOutfitStore(configuration, () => saves++);
+        var store = new PinnedOutfitStore(configuration, () => saves++, () => 1);
         var actor = Actor("Current", false, 1, 100);
         var displayed = Appearance(category);
         var result = store.PinCurrent([actor], _ => displayed);
@@ -468,7 +470,7 @@ public sealed class PinnedOutfitStoreTests
         var json = Newtonsoft.Json.JsonConvert.SerializeObject(configuration);
         var loaded = Newtonsoft.Json.JsonConvert.DeserializeObject<Configuration>(json)!;
         PinnedOutfitStore.Normalize(loaded);
-        Assert.True(new PinnedOutfitStore(loaded, () => { }).TryGetAppearance(actor, out var restored));
+        Assert.True(new PinnedOutfitStore(loaded, () => { }, () => 1).TryGetAppearance(actor, out var restored));
         Assert.True(PinnedOutfitStore.AppearanceEquals(displayed, restored));
         Assert.Equal(displayed.SourceRowId, restored.SourceRowId);
         Assert.Equal(displayed.Completeness, restored.Completeness);
@@ -479,7 +481,7 @@ public sealed class PinnedOutfitStoreTests
     {
         var configuration = new Configuration();
         var saves = 0;
-        var store = new PinnedOutfitStore(configuration, () => saves++);
+        var store = new PinnedOutfitStore(configuration, () => saves++, () => 1);
         var actors = Enumerable.Range(1, 270).Select(i => Actor("Same name", false, (ushort)i, 100)).ToArray();
         Assert.Equal((270, 0), store.PinCurrent(actors, actor => Appearance(ModelCategory.Human) with { ModelCharaId = actor.Key.OriginalObjectIndex }));
         Assert.Equal(270, store.Count);
@@ -581,7 +583,7 @@ public sealed class PinnedOutfitStoreTests
     {
         var configuration = new Configuration();
         var saves = 0;
-        var store = new PinnedOutfitStore(configuration, () => saves++);
+        var store = new PinnedOutfitStore(configuration, () => saves++, () => 1);
         var actor = Actor("Old", false, 1, 100);
         var expected = actor.Current with { CurrentAppearance = Appearance(ModelCategory.Human) };
         var fresh = expected with { LogicalKey = expected.LogicalKey with { Lifetime = 99 } };
@@ -631,7 +633,7 @@ public sealed class PinnedOutfitStoreTests
     public void LegacyOutfitPinRemainsOutfitOnly()
     {
         var configuration = new Configuration();
-        var store = new PinnedOutfitStore(configuration, () => { });
+        var store = new PinnedOutfitStore(configuration, () => { }, () => 1);
         var actor = Actor("Legacy", true, 1, 100);
         store.Pin(actor, Outfit(12));
         PinnedOutfitStore.Normalize(configuration);
@@ -658,7 +660,7 @@ public sealed class PinnedOutfitStoreTests
     {
         var configuration = new Configuration();
         var saveCount = 0;
-        var store = new PinnedOutfitStore(configuration, () => saveCount++);
+        var store = new PinnedOutfitStore(configuration, () => saveCount++, () => 1);
         var first = Actor("Test Player", true, 1, 10);
         var recreated = Actor("Test Player", true, 99, 20);
         var outfit = Outfit(42);
@@ -675,7 +677,7 @@ public sealed class PinnedOutfitStoreTests
     public void UnpinRemovesOnlyMatchingActor()
     {
         var configuration = new Configuration();
-        var store = new PinnedOutfitStore(configuration, static () => { });
+        var store = new PinnedOutfitStore(configuration, static () => { }, () => 1);
         var first = Actor("First", false, 1, 100);
         var second = Actor("Second", false, 2, 200);
         store.Pin(first, Outfit(10));

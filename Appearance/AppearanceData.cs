@@ -20,6 +20,7 @@ public sealed record AppearanceData(
     public WeaponDyes MainhandDyes { get; init; }
     public WeaponDyes OffhandDyes { get; init; }
     public bool? VieraEarsHidden { get; init; }
+    public ImmutableArray<CustomizeColorOverride> CustomizeColors { get; init; } = [];
 
     internal AppearanceData WithCurrentEarVisibility(AppearanceData current)
         => VieraEarsHidden is null && current.VieraEarsHidden is { } hidden

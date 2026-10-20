@@ -14,18 +14,49 @@ namespace ActorMorpher.Tests;
 public sealed class RedrawCoordinatorTests
 {
     [Fact]
-    public void CompletesSuccessfulOperationInFrameworkSizedSteps()
+    public void CompletesSuccessfulOperationWithoutLeavingTheActorHiddenBetweenFrames()
     {
         var fixture = new Fixture();
         using var coordinator = fixture.CreateCoordinator();
         coordinator.Enqueue(fixture.Operation());
 
-        for (var i = 0; i < 3; ++i)
+        for (var i = 0; i < 2; ++i)
             coordinator.ProcessNextFrame();
 
         Assert.Equal(RedrawStage.Completed, coordinator.LastResult?.Stage);
         Assert.Equal(1, fixture.Backend.DisableCount);
         Assert.Equal(1, fixture.Backend.EnableCount);
+        Assert.Equal(2, coordinator.LastResult?.FrameCount);
+    }
+
+    [Fact]
+    public void CutsceneModelRecreationCannotInterveneBetweenDisableAndSelectedAppearanceEnable()
+    {
+        var fixture = new Fixture();
+        fixture.Backend.RecreateOriginalModelBetweenFrames = true;
+        using var coordinator = fixture.CreateCoordinator();
+        var operation = fixture.Operation();
+        var finished = new List<RedrawOperation>();
+        coordinator.OperationFinished += finished.Add;
+        coordinator.Enqueue(operation);
+
+        for (var frame = 0; frame < 2; ++frame)
+        {
+            fixture.Backend.BeginGameFrame();
+            coordinator.ProcessNextFrame();
+        }
+
+        Assert.Equal(RedrawStage.Completed, coordinator.LastResult?.Stage);
+        Assert.Equal(1, fixture.Backend.DisableCount);
+        Assert.Equal(1, fixture.Backend.EnableCount);
+        Assert.Equal([operation.OperationId], fixture.Backend.EnabledOperationIds);
+        Assert.Equal([operation.Desired], fixture.Backend.EnabledAppearances);
+        Assert.Same(operation.Desired, fixture.Memory.Rendered);
+        Assert.Equal(operation.OperationId, Assert.Single(finished).OperationId);
+        fixture.Backend.BeginGameFrame();
+        coordinator.ProcessNextFrame();
+        Assert.Same(operation.Desired, fixture.Memory.Rendered);
+        Assert.Single(finished);
     }
 
     [Fact]
@@ -63,10 +94,8 @@ public sealed class RedrawCoordinatorTests
         var fixture = new Fixture();
         using var coordinator = fixture.CreateCoordinator();
         coordinator.Enqueue(fixture.Operation());
+        fixture.Backend.AfterDisable = () => fixture.Resolver.Available = false;
         coordinator.ProcessNextFrame();
-        coordinator.ProcessNextFrame();
-        fixture.Resolver.Available = false;
-
         coordinator.ProcessNextFrame();
 
         Assert.Equal(RedrawStage.Cancelled, coordinator.LastResult?.Stage);
@@ -78,14 +107,16 @@ public sealed class RedrawCoordinatorTests
     {
         var fixture = new Fixture();
         using var coordinator = fixture.CreateCoordinator();
+        var finished = new List<RedrawOperation>();
+        coordinator.OperationFinished += finished.Add;
         coordinator.Enqueue(fixture.Operation());
+        fixture.Backend.AfterDisable = () => coordinator.CancelAll("Cancelled by test.");
         coordinator.ProcessNextFrame();
         coordinator.ProcessNextFrame();
-
-        coordinator.CancelAll("Cancelled by test.");
 
         Assert.Equal(RedrawStage.Cancelled, coordinator.LastResult?.Stage);
         Assert.Empty(fixture.Backend.EnabledAppearances);
+        Assert.Single(finished);
     }
 
     [Fact]
@@ -110,17 +141,48 @@ public sealed class RedrawCoordinatorTests
         Assert.Equal(2, finished.Select(static operation => operation.Actor).Distinct().Count());
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ExceptionAfterCancellationPreservesTheSingleCancelledResult(bool subscriberThrows)
+    {
+        var fixture = new Fixture();
+        using var coordinator = fixture.CreateCoordinator();
+        var finished = new List<RedrawOperation>();
+        var expected = new InvalidOperationException("Exception after cancellation.");
+        coordinator.OperationFinished += operation =>
+        {
+            finished.Add(operation);
+            if (subscriberThrows) throw expected;
+        };
+        fixture.Backend.AfterDisable = () =>
+        {
+            coordinator.CancelAll("Cancelled by test.");
+            throw expected;
+        };
+        coordinator.Enqueue(fixture.Operation());
+
+        coordinator.ProcessNextFrame();
+        Assert.Same(expected, Assert.Throws<InvalidOperationException>(() => coordinator.ProcessNextFrame()));
+        coordinator.ProcessNextFrame();
+
+        Assert.Equal(RedrawStage.Cancelled, Assert.Single(finished).Stage);
+        Assert.Equal(RedrawStage.Cancelled, coordinator.LastResult?.Stage);
+        Assert.Equal("Cancelled by test.", coordinator.LastResult?.Error);
+        Assert.Null(coordinator.Current);
+        Assert.Equal(1, fixture.Backend.DisableCount);
+        Assert.Equal(0, fixture.Backend.EnableCount);
+    }
+
     [Fact]
     public void TerritoryChangeWhileHiddenDoesNotRedrawAutomatically()
     {
         var fixture = new Fixture();
         using var coordinator = fixture.CreateCoordinator();
         coordinator.Enqueue(fixture.Operation());
+        fixture.Backend.AfterDisable = () => fixture.Context.TerritoryId = 31;
         for (var frame = 0; frame < 2; ++frame)
             coordinator.ProcessNextFrame();
-        fixture.Context.TerritoryId = 31;
-
-        coordinator.ProcessNextFrame();
 
         Assert.Equal(RedrawStage.Cancelled, coordinator.LastResult?.Stage);
         Assert.Empty(fixture.Backend.EnabledAppearances);
@@ -132,13 +194,11 @@ public sealed class RedrawCoordinatorTests
         var fixture = new Fixture();
         using var coordinator = fixture.CreateCoordinator();
         coordinator.Enqueue(fixture.Operation());
-        coordinator.ProcessNextFrame();
-        coordinator.ProcessNextFrame();
-        fixture.Resolver.Snapshot = fixture.Resolver.Snapshot with
+        fixture.Backend.AfterDisable = () => fixture.Resolver.Snapshot = fixture.Resolver.Snapshot with
         {
             RepresentationKey = fixture.Resolver.Snapshot.RepresentationKey with { GameObjectId = 999 },
         };
-
+        coordinator.ProcessNextFrame();
         coordinator.ProcessNextFrame();
 
         Assert.Equal(RedrawStage.Cancelled, coordinator.LastResult?.Stage);
@@ -154,12 +214,17 @@ public sealed class RedrawCoordinatorTests
     {
         var fixture = new Fixture(failure);
         using var coordinator = fixture.CreateCoordinator();
+        var finished = new List<RedrawOperation>();
+        coordinator.OperationFinished += finished.Add;
         coordinator.Enqueue(fixture.Operation());
 
         for (var i = 0; i < 4; ++i)
             coordinator.ProcessNextFrame();
 
         Assert.Equal(RedrawStage.Failed, coordinator.LastResult?.Stage);
+        Assert.Equal(1, fixture.Backend.DisableCount);
+        Assert.Equal(failure == FailurePoint.Enable ? 1 : 0, fixture.Backend.EnableCount);
+        Assert.Single(finished);
         if (failure == FailurePoint.Enable)
             Assert.Equal([fixture.Memory.Desired], fixture.Backend.EnabledAppearances);
     }
@@ -194,7 +259,6 @@ public sealed class RedrawCoordinatorTests
             throw new InvalidOperationException("Subscriber failed.");
         };
 
-        coordinator.ProcessNextFrame();
         coordinator.ProcessNextFrame();
         Assert.Throws<InvalidOperationException>(() => coordinator.ProcessNextFrame());
         for (var i = 0; i < 4; ++i)
@@ -263,11 +327,24 @@ public sealed class RedrawCoordinatorTests
         public int EnableCount { get; private set; }
         public List<AppearanceData?> EnabledAppearances { get; } = new();
         public List<Guid> EnabledOperationIds { get; } = new();
+        public Action? AfterDisable { get; set; }
+        public bool RecreateOriginalModelBetweenFrames { get; set; }
+        private bool modelPresent = true;
+
+        public void BeginGameFrame()
+        {
+            if (!RecreateOriginalModelBetweenFrames || modelPresent) return;
+            modelPresent = true;
+            memory.Rendered = Appearance(200, 1);
+        }
 
         public bool TryDisable(ActorSnapshot actor)
         {
             DisableCount++;
-            return failure != FailurePoint.Disable;
+            if (failure == FailurePoint.Disable) return false;
+            modelPresent = false;
+            AfterDisable?.Invoke();
+            return true;
         }
 
         public bool TryEnable(ActorSnapshot actor, AppearanceData? appearance, Guid operationId)
@@ -277,13 +354,18 @@ public sealed class RedrawCoordinatorTests
             EnabledOperationIds.Add(operationId);
             if (failure == FailurePoint.EnableThrows)
                 throw new InvalidOperationException("Native apply failed.");
+            // A cutscene-created draw object makes Enable a no-op: no Create hook receives the selection.
+            if (RecreateOriginalModelBetweenFrames && modelPresent) return false;
             var succeeded = failure switch
             {
                 FailurePoint.Enable => false,
                 _ => true,
             };
             if (succeeded && appearance is not null)
+            {
+                modelPresent = true;
                 memory.Rendered = appearance;
+            }
             return succeeded;
         }
     }

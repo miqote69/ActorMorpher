@@ -96,6 +96,9 @@ public sealed class BulkOutfitService : IDisposable
         return true;
     }
 
+    public void SetSourceOutfit(OutfitData outfit)
+        => SourceOutfit = outfit;
+
     public void SetSourceEquipment(IEnumerable<ArmorAppearance> equipment)
     {
         SourceOutfit = OutfitData.Create(equipment,

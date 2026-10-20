@@ -64,8 +64,11 @@ jobs:
             Compress-Archive -Path "$($releaseDir.FullName)/*" -DestinationPath artifacts/ActorMorpher.zip -Force
           }
 
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          Copy-Item -LiteralPath "docs/RELEASE_NOTES_$version.md" -Destination artifacts/release-notes.md
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/ActorMorpher.zip
-          generate_release_notes: true
+          body_path: artifacts/release-notes.md

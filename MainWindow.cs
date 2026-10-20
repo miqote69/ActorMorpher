@@ -89,6 +89,8 @@ public sealed partial class MainWindow : Window, IDisposable
         : base($"{Plugin.DisplayName} v{Plugin.DisplayVersion}###ActorMorpherMain")
     {
         this.plugin = plugin;
+        plugin.CustomizeOperationCompleted += OnCustomizeOperationCompleted;
+        plugin.EquipmentOperationCompleted += OnEquipmentOperationCompleted;
         Flags |= ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
         var configuration = plugin.Configuration;
         bulkNameFilter = configuration.BulkNameFilter;
@@ -112,6 +114,8 @@ public sealed partial class MainWindow : Window, IDisposable
 
     public void Dispose()
     {
+        plugin.CustomizeOperationCompleted -= OnCustomizeOperationCompleted;
+        plugin.EquipmentOperationCompleted -= OnEquipmentOperationCompleted;
         previewProjector.Clear();
         plugin.SetModelPreviewActive(false);
     }
@@ -125,7 +129,8 @@ public sealed partial class MainWindow : Window, IDisposable
         {
             if (ImGui.BeginTabItem($"{T(TextKey.Actors)}###actors"))
             {
-                if (ImGui.BeginChild("##actors-tab-content", Vector2.Zero, false))
+                if (ImGui.BeginChild("##actors-tab-content", Vector2.Zero, false,
+                    ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse))
                     DrawActorsTab();
                 ImGui.EndChild();
                 ImGui.EndTabItem();
@@ -348,6 +353,7 @@ public sealed partial class MainWindow : Window, IDisposable
         if (ImGui.CollapsingHeader($"{T(TextKey.BulkSourceEquipment)}###bulk-source-equipment", ImGuiTreeNodeFlags.DefaultOpen))
         {
             DrawBulkSourceChooser();
+            DrawBulkEquipmentCopyActions();
             if (plugin.IsPlateImportPending)
                 ImGui.BeginDisabled();
             DrawOutfitDisplay("source-outfit", plugin.SourceOutfit, true);
@@ -1212,7 +1218,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void DrawActorDetails()
     {
-        if (ImGui.BeginChild("##actor-details", Vector2.Zero, true))
+        if (ImGui.BeginChild("##actor-details", Vector2.Zero, false, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse))
         {
             if (selectedActorKey is not { } key
                 || !plugin.TryResolveActorRepresentation(key, out var actor, out var current))
@@ -1222,11 +1228,17 @@ public sealed partial class MainWindow : Window, IDisposable
                 return;
             }
 
-            var appearance = current.CurrentAppearance;
-            ImGui.TextUnformatted(actor.Name);
+            var namePosition = ImGui.GetCursorScreenPos();
+            var nameSize = ImGui.GetFontSize() * 1.25f;
+            ImGui.GetWindowDrawList().AddText(ImGui.GetFont(), nameSize, namePosition, ImGui.GetColorU32(ImGuiCol.Text), actor.Name);
+            ImGui.Dummy(new Vector2(ImGui.CalcTextSize(actor.Name).X * 1.25f, nameSize + 4));
             var actorPinned = plugin.IsOutfitPinned(actor.Key);
             ImGui.BeginDisabled(!actorPinned && !plugin.IsActorModified(actor.Key));
-            if (ImGui.Button($"{T(actorPinned ? TextKey.UnpinOutfit : TextKey.PinCurrentAppearance)}###actor-appearance-pin"))
+            ImGui.PushID("actor-appearance-pin");
+            var pinClicked = Dalamud.Interface.Components.ImGuiComponents.IconButtonWithText(Dalamud.Interface.FontAwesomeIcon.Thumbtack,
+                T(actorPinned ? TextKey.UnpinOutfit : TextKey.PinCurrentAppearance), Vector2.Zero);
+            ImGui.PopID();
+            if (pinClicked)
             {
                 plugin.TrySetOutfitPinned(actor.Key, !actorPinned, out pinActionStatus);
             }
@@ -1236,87 +1248,113 @@ public sealed partial class MainWindow : Window, IDisposable
                 ImGui.SameLine();
                 ImGui.TextColored(new Vector4(1.0f, 0.74f, 0.25f, 1.0f), T(TextKey.PinnedOutfit));
             }
-            ImGui.Separator();
-            DrawActorAppearanceInfo(current);
-            if (ImGui.CollapsingHeader($"{T(TextKey.OtherCharacterInfo)}###actor-other-info")
-                && ImGui.BeginTable("##actor-detail-fields", 2, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
+            DrawActorDetailTabs();
+            switch (actorDetailTab)
             {
-                ImGui.TableSetupColumn(T(TextKey.Field), ImGuiTableColumnFlags.WidthFixed, 150.0f);
-                ImGui.TableSetupColumn(T(TextKey.Value), ImGuiTableColumnFlags.WidthStretch);
-                DrawDetailRow(T(TextKey.ActorType), actor.Kind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc ? T(TextKey.Players) : T(TextKey.Npcs));
-                DrawDetailRow(T(TextKey.ObjectKind), actor.Kind.ToString());
-                DrawDetailRow(T(TextKey.Representation), actor.Representations.Count.ToString());
-                DrawDetailRow(T(TextKey.ObjectIndex), current.RepresentationKey.ObjectIndex.ToString());
-                DrawDetailRow(T(TextKey.OriginalObjectIndex), actor.Key.OriginalObjectIndex.ToString());
-                DrawDetailRow(T(TextKey.GameObjectId), $"0x{current.RepresentationKey.GameObjectId:X}");
-                DrawDetailRow(T(TextKey.EntityId), $"0x{current.RepresentationKey.EntityId:X}");
-                DrawDetailRow(T(TextKey.BaseId), current.BaseId.ToString());
-                DrawDetailRow(T(TextKey.ModelCharaId), current.ModelCharaId.ToString());
-                DrawDetailRow(T(TextKey.Category), appearance?.Category.ToString() ?? T(TextKey.Unavailable));
-                ImGui.EndTable();
+                case 0:
+                    DrawCustomizeEditor(current);
+                    break;
+                case 1:
+                    DrawEquipmentCopyActions(current);
+                    if (ImGui.BeginChild("##actor-equipment-scroll", Vector2.Zero, false))
+                        DrawActorEquipment(actor, current);
+                    ImGui.EndChild();
+                    break;
+                case 2:
+                    if (ImGui.BeginChild("##actor-information-scroll", Vector2.Zero, false))
+                        DrawActorInformation(actor, current);
+                    ImGui.EndChild();
+                    break;
             }
-            if (ImGui.CollapsingHeader($"{T(TextKey.RawAppearanceInfo)}###actor-raw-info")
-                && ImGui.BeginTable("##actor-raw-fields", 2, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
-            {
-                ImGui.TableSetupColumn(T(TextKey.Field), ImGuiTableColumnFlags.WidthFixed, 150);
-                ImGui.TableSetupColumn(T(TextKey.Value), ImGuiTableColumnFlags.WidthStretch);
-                DrawDetailRow(
-                    T(TextKey.Customize),
-                    appearance is { Customize.IsEmpty: false }
-                        ? Convert.ToHexString(appearance.Customize.AsSpan())
-                        : T(TextKey.Unavailable));
-                DrawDetailRow(T(TextKey.Mainhand), appearance?.Mainhand is { } mainhand ? $"0x{mainhand:X16}" : T(TextKey.Unavailable));
-                DrawDetailRow(T(TextKey.Offhand), appearance?.Offhand is { } offhand ? $"0x{offhand:X16}" : T(TextKey.Unavailable));
-                ImGui.EndTable();
-            }
-            if (ImGui.CollapsingHeader($"{T(TextKey.ActorStateInfo)}###actor-state-info")
-                && ImGui.BeginTable("##actor-state-fields", 2, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
-            {
-                ImGui.TableSetupColumn(T(TextKey.Field), ImGuiTableColumnFlags.WidthFixed, 150);
-                ImGui.TableSetupColumn(T(TextKey.Value), ImGuiTableColumnFlags.WidthStretch);
-                DrawDetailRow(T(TextKey.Level), current.Level.ToString());
-                DrawDetailRow(T(TextKey.IsLocalPlayer), current.IsLocalPlayer ? T(TextKey.Yes) : T(TextKey.No));
-                DrawDetailRow(
-                    T(TextKey.BulkOutfitModified),
-                    plugin.IsOutfitModified(actor.Key) || plugin.IsOutfitPinned(actor.Key)
-                        ? T(TextKey.Yes)
-                        : T(TextKey.No));
-                DrawDetailRow(T(TextKey.GPoseRepresentation), current.RepresentationKey.IsGPoseRepresentation ? T(TextKey.Yes) : T(TextKey.No));
-                ImGui.EndTable();
-            }
+        }
+        ImGui.EndChild();
+    }
 
-            ImGui.Spacing();
-            ImGui.TextUnformatted(T(TextKey.Equipment));
-            var currentOutfit = EquipmentDisplayFormatting.CreateHumanOutfit(appearance);
-            var equipmentStart = UiTimestamp();
-            DrawOutfitDisplay($"actor-current-outfit-{actor.Key.GetHashCode()}", currentOutfit,
-                editActor: actor.Key, showWeapons: true, appearance: appearance);
-            AddUiTiming(5, equipmentStart);
-            if (plugin.WeaponSelectionActor == actor.Key && !string.IsNullOrEmpty(plugin.WeaponSelectionStatus))
-                ImGui.TextWrapped(plugin.WeaponSelectionStatus);
-
-            ImGui.Spacing();
-            var hasOutfitOverride = plugin.TryGetOutfitOverride(actor.Key, out var outfitState);
-            if (hasOutfitOverride)
-            {
-                if (ImGui.CollapsingHeader($"{T(TextKey.OriginalEquipment)}###actor-original-outfit-header-{actor.Key.GetHashCode()}"))
-                    DrawOutfitDisplay($"actor-original-outfit-{actor.Key.GetHashCode()}", outfitState.Original);
-                ImGui.Spacing();
-                if (ImGui.CollapsingHeader($"{T(TextKey.AppliedEquipment)}###actor-applied-outfit-header-{actor.Key.GetHashCode()}"))
-                    DrawOutfitDisplay($"actor-applied-outfit-{actor.Key.GetHashCode()}", outfitState.Desired);
-            }
-            else if (plugin.TryGetPinnedOutfit(actor.Key, out var pinnedOutfit))
-            {
-                if (ImGui.CollapsingHeader($"{T(TextKey.AppliedEquipment)}###actor-applied-outfit-header-{actor.Key.GetHashCode()}"))
-                    DrawOutfitDisplay($"actor-pinned-outfit-{actor.Key.GetHashCode()}", pinnedOutfit);
-            }
-
-            ImGui.Spacing();
-            if (ImGui.Button($"{T(TextKey.RestoreOriginalState)}###restore-actor"))
-                applySucceeded = plugin.TryRestoreActor(actor.Key, out applyStatus);
+    private void DrawActorInformation(ActorEntry actor, ActorSnapshot current)
+    {
+        var appearance = current.CurrentAppearance;
+        DrawActorAppearanceInfo(current);
+        if (ImGui.CollapsingHeader($"{T(TextKey.OtherCharacterInfo)}###actor-other-info")
+            && ImGui.BeginTable("##actor-detail-fields", 2, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
+        {
+            ImGui.TableSetupColumn(T(TextKey.Field), ImGuiTableColumnFlags.WidthFixed, 150.0f);
+            ImGui.TableSetupColumn(T(TextKey.Value), ImGuiTableColumnFlags.WidthStretch);
+            DrawDetailRow(T(TextKey.ActorType), actor.Kind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc ? T(TextKey.Players) : T(TextKey.Npcs));
+            DrawDetailRow(T(TextKey.ObjectKind), actor.Kind.ToString());
+            DrawDetailRow(T(TextKey.Representation), actor.Representations.Count.ToString());
+            DrawDetailRow(T(TextKey.ObjectIndex), current.RepresentationKey.ObjectIndex.ToString());
+            DrawDetailRow(T(TextKey.OriginalObjectIndex), actor.Key.OriginalObjectIndex.ToString());
+            DrawDetailRow(T(TextKey.GameObjectId), $"0x{current.RepresentationKey.GameObjectId:X}");
+            DrawDetailRow(T(TextKey.EntityId), $"0x{current.RepresentationKey.EntityId:X}");
+            DrawDetailRow(T(TextKey.BaseId), current.BaseId.ToString());
+            DrawDetailRow(T(TextKey.ModelCharaId), current.ModelCharaId.ToString());
+            DrawDetailRow(T(TextKey.Category), appearance?.Category.ToString() ?? T(TextKey.Unavailable));
+            ImGui.EndTable();
+        }
+        if (ImGui.CollapsingHeader($"{T(TextKey.RawAppearanceInfo)}###actor-raw-info")
+            && ImGui.BeginTable("##actor-raw-fields", 2, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
+        {
+            ImGui.TableSetupColumn(T(TextKey.Field), ImGuiTableColumnFlags.WidthFixed, 150);
+            ImGui.TableSetupColumn(T(TextKey.Value), ImGuiTableColumnFlags.WidthStretch);
+            DrawDetailRow(
+                T(TextKey.Customize),
+                appearance is { Customize.IsEmpty: false }
+                    ? Convert.ToHexString(appearance.Customize.AsSpan())
+                    : T(TextKey.Unavailable));
+            DrawDetailRow(T(TextKey.Mainhand), appearance?.Mainhand is { } mainhand ? $"0x{mainhand:X16}" : T(TextKey.Unavailable));
+            DrawDetailRow(T(TextKey.Offhand), appearance?.Offhand is { } offhand ? $"0x{offhand:X16}" : T(TextKey.Unavailable));
+            ImGui.EndTable();
+        }
+        if (ImGui.CollapsingHeader($"{T(TextKey.ActorStateInfo)}###actor-state-info")
+            && ImGui.BeginTable("##actor-state-fields", 2, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
+        {
+            ImGui.TableSetupColumn(T(TextKey.Field), ImGuiTableColumnFlags.WidthFixed, 150);
+            ImGui.TableSetupColumn(T(TextKey.Value), ImGuiTableColumnFlags.WidthStretch);
+            DrawDetailRow(T(TextKey.Level), current.Level.ToString());
+            DrawDetailRow(T(TextKey.IsLocalPlayer), current.IsLocalPlayer ? T(TextKey.Yes) : T(TextKey.No));
+            DrawDetailRow(
+                T(TextKey.BulkOutfitModified),
+                plugin.IsOutfitModified(actor.Key) || plugin.IsOutfitPinned(actor.Key)
+                    ? T(TextKey.Yes)
+                    : T(TextKey.No));
+            DrawDetailRow(T(TextKey.GPoseRepresentation), current.RepresentationKey.IsGPoseRepresentation ? T(TextKey.Yes) : T(TextKey.No));
+            ImGui.EndTable();
         }
 
-        ImGui.EndChild();
+    }
+
+    private void DrawActorEquipment(ActorEntry actor, ActorSnapshot current)
+    {
+        var appearance = current.CurrentAppearance;
+        ImGui.Spacing();
+        ImGui.TextUnformatted(T(TextKey.Equipment));
+        var currentOutfit = EquipmentDisplayFormatting.CreateHumanOutfit(appearance);
+        var equipmentStart = UiTimestamp();
+        DrawOutfitDisplay($"actor-current-outfit-{actor.Key.GetHashCode()}", currentOutfit,
+            editActor: actor.Key, showWeapons: true, appearance: appearance);
+        AddUiTiming(5, equipmentStart);
+        if (plugin.WeaponSelectionActor == actor.Key && !string.IsNullOrEmpty(plugin.WeaponSelectionStatus))
+            ImGui.TextWrapped(plugin.WeaponSelectionStatus);
+
+        ImGui.Spacing();
+        var hasOutfitOverride = plugin.TryGetOutfitOverride(actor.Key, out var outfitState);
+        if (hasOutfitOverride)
+        {
+            if (ImGui.CollapsingHeader($"{T(TextKey.OriginalEquipment)}###actor-original-outfit-header-{actor.Key.GetHashCode()}"))
+                DrawOutfitDisplay($"actor-original-outfit-{actor.Key.GetHashCode()}", outfitState.Original);
+            ImGui.Spacing();
+            if (ImGui.CollapsingHeader($"{T(TextKey.AppliedEquipment)}###actor-applied-outfit-header-{actor.Key.GetHashCode()}"))
+                DrawOutfitDisplay($"actor-applied-outfit-{actor.Key.GetHashCode()}", outfitState.Desired);
+        }
+        else if (plugin.TryGetPinnedOutfit(actor.Key, out var pinnedOutfit))
+        {
+            if (ImGui.CollapsingHeader($"{T(TextKey.AppliedEquipment)}###actor-applied-outfit-header-{actor.Key.GetHashCode()}"))
+                DrawOutfitDisplay($"actor-pinned-outfit-{actor.Key.GetHashCode()}", pinnedOutfit);
+        }
+
+        ImGui.Spacing();
+        if (ImGui.Button($"{T(TextKey.RestoreOriginalState)}###restore-actor"))
+            applySucceeded = plugin.TryRestoreActor(actor.Key, out applyStatus);
     }
 
     private static void PushDangerButtonColors()
@@ -1447,6 +1485,16 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void DrawModelDetails()
     {
+        if (modelEquipmentCopyTarget is { } copyTarget && !IsSelectedModel(copyTarget))
+        {
+            modelEquipmentCopyTarget = null;
+            modelEquipmentCopyStatus = string.Empty;
+        }
+        if (modelCustomizeCopyTarget is { } customizeCopyTarget && !IsSelectedModel(customizeCopyTarget))
+        {
+            modelCustomizeCopyTarget = null;
+            modelCustomizeCopyStatus = string.Empty;
+        }
         if (ImGui.BeginChild("##model-details", Vector2.Zero, true))
         {
             if (selectedModel is not { } model)
@@ -1458,8 +1506,7 @@ public sealed partial class MainWindow : Window, IDisposable
                 return;
             }
 
-            ImGui.TextUnformatted(model.Name);
-            ImGui.Separator();
+            DrawModelHeader(model);
             if (plugin.Configuration.Enable3DPreview)
             {
                 plugin.SelectPreviewModel(model);
@@ -1510,20 +1557,6 @@ public sealed partial class MainWindow : Window, IDisposable
                 DrawOutfitDisplay("model-equipment", plugin.GetHumanOutfit(model));
             }
 
-            ImGui.Spacing();
-            if (ImGui.Button($"{T(TextKey.ApplyToYourself)}###apply-yourself"))
-            {
-                var accepted = plugin.TryApplyModelToLocalPlayer(model, out var operationId, out var localMessage);
-                SetApplyRequestResult(accepted, operationId, localMessage);
-            }
-
-            ImGui.SameLine();
-            if (ImGui.Button($"{T(TextKey.ApplyToTarget)}###apply-target"))
-            {
-                var accepted = plugin.TryApplyModelToTarget(model, out var operationId, out var targetMessage);
-                SetApplyRequestResult(accepted, operationId, targetMessage);
-            }
-
             if (awaitingApplyTerminal
                 && awaitingApplyOperationId is { } awaitedOperationId
                 && plugin.AppearanceOperationId == awaitedOperationId
@@ -1552,6 +1585,40 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         ImGui.EndChild();
+    }
+
+    private void DrawModelHeader(ModelSearchEntry model)
+    {
+        if (model.Category == ModelCategory.Human)
+            ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted(model.Name);
+        if (model.Category == ModelCategory.Human)
+        {
+            ImGui.SameLine();
+            DrawModelEquipmentCopyActions(model);
+            ImGui.SameLine();
+            DrawModelCustomizeCopyActions(model);
+        }
+
+        ImGui.Spacing();
+        if (ImGui.Button($"{T(TextKey.ApplyToYourself)}###apply-yourself"))
+        {
+            var accepted = plugin.TryApplyModelToLocalPlayer(model, out var operationId, out var localMessage);
+            SetApplyRequestResult(accepted, operationId, localMessage);
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button($"{T(TextKey.ApplyToTarget)}###apply-target"))
+        {
+            var accepted = plugin.TryApplyModelToTarget(model, out var operationId, out var targetMessage);
+            SetApplyRequestResult(accepted, operationId, targetMessage);
+        }
+
+        if (!string.IsNullOrEmpty(modelEquipmentCopyStatus))
+            ImGui.TextWrapped(modelEquipmentCopyStatus);
+        if (!string.IsNullOrEmpty(modelCustomizeCopyStatus))
+            ImGui.TextWrapped(modelCustomizeCopyStatus);
+        ImGui.Separator();
     }
 
     private void SetApplyRequestResult(bool accepted, Guid operationId, string message)

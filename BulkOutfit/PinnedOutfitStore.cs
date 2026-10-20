@@ -1,23 +1,49 @@
 namespace ActorMorpher.BulkOutfit;
 
-public sealed class PinnedOutfitStore
+public sealed partial class PinnedOutfitStore
 {
     private readonly Configuration configuration;
     private readonly Action save;
+    private readonly Func<ulong> getOwner;
 
-    public PinnedOutfitStore(Configuration configuration, Action save)
+    public PinnedOutfitStore(Configuration configuration, Action save, Func<ulong> getOwner)
+        : this(configuration, save, getOwner, null) { }
+
+    internal PinnedOutfitStore(Configuration configuration, Action save, Func<ulong> getOwner,
+        Func<Dalamud.Game.ClientState.Objects.Enums.ObjectKind, uint, NpcEquipmentGroup?>? getNpcEquipmentGroup)
     {
         this.configuration = configuration;
         this.save = save;
+        this.getOwner = getOwner;
+        this.getNpcEquipmentGroup = getNpcEquipmentGroup;
+    }
+
+    private List<PinnedOutfitConfiguration>? CurrentPins(bool create = false)
+        => PinsForOwner(getOwner(), create);
+
+    private List<PinnedOutfitConfiguration>? PinsForOwner(ulong owner, bool create = false)
+    {
+        if (owner == 0)
+            return null;
+        if (configuration.PinnedOutfitsByCharacter.TryGetValue(owner, out var pins))
+            return pins;
+        if (!create)
+            return null;
+        pins = [];
+        configuration.PinnedOutfitsByCharacter.Add(owner, pins);
+        return pins;
     }
 
     public bool IsPinned(ActorEntry actor)
-        => configuration.PinnedOutfits.Any(entry => entry.Matches(actor));
+        => CurrentPins()?.Any(entry => entry.Matches(actor)) == true;
 
     // Rebuilt from current pins for each UI draw; no result survives an identity or pin change.
     public HashSet<LogicalActorKey> GetPinnedActorKeysForDisplay(IReadOnlyList<ActorEntry> actors)
     {
-        var candidates = configuration.PinnedOutfits.ToLookup(static pin => pin.DisplayLookupId);
+        var pins = CurrentPins();
+        if (pins is null)
+            return [];
+        var candidates = pins.ToLookup(static pin => pin.DisplayLookupId);
         var pinned = new HashSet<LogicalActorKey>();
         foreach (var actor in actors)
         {
@@ -34,19 +60,24 @@ public sealed class PinnedOutfitStore
         return pinned;
     }
 
-    public int Count => configuration.PinnedOutfits.Count;
+    public int Count => CurrentPins()?.Count ?? 0;
 
     public bool TryGetAppearance(ActorEntry actor, out AppearanceData appearance)
     {
-        appearance = configuration.PinnedOutfits.LastOrDefault(entry => entry.Matches(actor))?.Appearance!;
+        appearance = CurrentPins()?.LastOrDefault(entry => entry.Matches(actor))?.Appearance!;
         return appearance is not null;
     }
 
     public (int Pinned, int Unavailable) PinCurrent(
         IEnumerable<ActorEntry> actors, Func<ActorEntry, AppearanceData?> capture)
     {
+        var owner = getOwner();
+        var pins = PinsForOwner(owner, create: true);
+        if (pins is null)
+            return (0, actors.Count());
         var pinned = 0;
         var unavailable = 0;
+        LoadSharedEquipment(owner, pins);
         foreach (var actor in actors)
         {
             var appearance = capture(actor);
@@ -55,8 +86,9 @@ public sealed class PinnedOutfitStore
                 unavailable++;
                 continue;
             }
-            configuration.PinnedOutfits.RemoveAll(entry => entry.Matches(actor));
-            configuration.PinnedOutfits.Add(PinnedOutfitConfiguration.Create(actor, appearance));
+            pins.RemoveAll(entry => entry.Matches(actor));
+            pins.Add(PinnedOutfitConfiguration.Create(actor, appearance));
+            PinSharedEquipment(owner, pins, actor);
             pinned++;
         }
         if (pinned != 0)
@@ -66,10 +98,13 @@ public sealed class PinnedOutfitStore
 
     public int UnpinAll()
     {
-        var count = Count;
+        var owner = getOwner();
+        var pins = PinsForOwner(owner);
+        var count = pins?.Count ?? 0;
+        sharedEquipment.Remove(owner);
         if (count != 0)
         {
-            configuration.PinnedOutfits.Clear();
+            pins!.Clear();
             save();
         }
         return count;
@@ -78,6 +113,7 @@ public sealed class PinnedOutfitStore
     internal static bool AppearanceEquals(AppearanceData left, AppearanceData right)
         => left.ModelCharaId == right.ModelCharaId && left.Category == right.Category
             && left.Customize.AsSpan().SequenceEqual(right.Customize.AsSpan())
+            && left.CustomizeColors.AsSpan().SequenceEqual(right.CustomizeColors.AsSpan())
             && left.Equipment.AsSpan().SequenceEqual(right.Equipment.AsSpan())
             && left.ModelScale == right.ModelScale && left.Mainhand == right.Mainhand
             && left.Offhand == right.Offhand && left.VisorToggled == right.VisorToggled
@@ -91,13 +127,14 @@ public sealed class PinnedOutfitStore
         => current.Category == ModelCategory.Human && pinned.Category == ModelCategory.Human
             && current.ModelCharaId == pinned.ModelCharaId
             && current.Customize.AsSpan().SequenceEqual(pinned.Customize.AsSpan())
+            && current.CustomizeColors.AsSpan().SequenceEqual(pinned.CustomizeColors.AsSpan())
             && current.ModelScale == pinned.ModelScale
             && (current.Mainhand & WeaponSelection.ModelMask) == (pinned.Mainhand & WeaponSelection.ModelMask)
             && (current.Offhand & WeaponSelection.ModelMask) == (pinned.Offhand & WeaponSelection.ModelMask);
 
     public bool TryGet(ActorEntry actor, out OutfitData outfit)
     {
-        var entry = configuration.PinnedOutfits.LastOrDefault(candidate => candidate.Matches(actor));
+        var entry = CurrentPins()?.LastOrDefault(candidate => candidate.Matches(actor));
         if (entry is not null && entry.TryCreateOutfit(out outfit))
             return true;
         outfit = null!;
@@ -106,22 +143,31 @@ public sealed class PinnedOutfitStore
 
     public void Pin(ActorEntry actor, OutfitData outfit)
     {
-        configuration.PinnedOutfits.RemoveAll(entry => entry.Matches(actor));
-        configuration.PinnedOutfits.Add(PinnedOutfitConfiguration.Create(actor, outfit));
+        var owner = getOwner();
+        var pins = PinsForOwner(owner, create: true);
+        if (pins is null)
+            return;
+        LoadSharedEquipment(owner, pins);
+        pins.RemoveAll(entry => entry.Matches(actor));
+        pins.Add(PinnedOutfitConfiguration.Create(actor, outfit));
+        PinSharedEquipment(owner, pins, actor);
         save();
     }
 
     public bool Unpin(ActorEntry actor)
     {
-        var removed = configuration.PinnedOutfits.RemoveAll(entry => entry.Matches(actor)) > 0;
-        if (removed)
+        var owner = getOwner();
+        var pins = PinsForOwner(owner);
+        var removed = pins?.RemoveAll(entry => entry.Matches(actor)) > 0;
+        var sharedPinsChanged = ClearSharedNpcEquipment(owner, pins, actor);
+        if (removed || sharedPinsChanged)
             save();
         return removed;
     }
 
     internal void UpdateSelectedEquipment(ActorEntry actor, EquipmentChoiceKey choice, OutfitData applied)
     {
-        var pin = configuration.PinnedOutfits.LastOrDefault(entry => entry.Matches(actor));
+        var pin = CurrentPins()?.LastOrDefault(entry => entry.Matches(actor));
         if (pin is null || !pin.TryCreateOutfit(out var pinned))
             return;
         var updated = choice.Slot == 10 ? pinned with { Facewear = applied.Facewear }
@@ -147,9 +193,54 @@ public sealed class PinnedOutfitStore
         save();
     }
 
+    internal void UpdateEquipment(ActorEntry actor, EquipmentCopyData equipment)
+    {
+        var pin = CurrentPins()?.LastOrDefault(entry => entry.Matches(actor));
+        if (pin is null) return;
+        ApplyEquipmentToPin(pin, equipment);
+        save();
+    }
+
+    private static void ApplyEquipmentToPin(PinnedOutfitConfiguration pin, EquipmentCopyData equipment)
+    {
+        if (pin.Appearance is { } appearance)
+            pin.Appearance = equipment.ApplyTo(appearance);
+        else
+        {
+            var outfit = equipment.Outfit;
+            // Older outfit-only pins keep their original scope; copying equipment
+            // does not turn them into pins for customization or model/scale.
+            pin.Equipment = outfit.Equipment.Select(armor => new PinnedArmorConfiguration
+            {
+                Set = armor.Set, Variant = armor.Variant, Stain1 = armor.Stain1, Stain2 = armor.Stain2,
+                Color1 = armor.Color1, Color2 = armor.Color2,
+            }).ToList();
+            if (equipment.IncludesHeadSettings || outfit.Facewear.IsAvailable)
+            {
+                pin.FacewearAvailable = outfit.Facewear.IsAvailable;
+                pin.FacewearModelId = outfit.Facewear.ModelId;
+            }
+            pin.HatVisible = outfit.HatVisible;
+            pin.VisorToggled = outfit.VisorToggled;
+            if (equipment.IncludesHeadSettings || outfit.VieraEarsHidden is not null)
+                pin.VieraEarsHidden = outfit.VieraEarsHidden;
+        }
+    }
+
+    internal void UpdateCustomize(ActorEntry actor, System.Collections.Immutable.ImmutableArray<byte> customize,
+        System.Collections.Immutable.ImmutableArray<CustomizeColorOverride> colors = default)
+    {
+        var pin = CurrentPins()?.LastOrDefault(entry => entry.Matches(actor));
+        if (pin?.Appearance is not { } appearance)
+            return;
+        pin.Appearance = appearance with { Customize = customize,
+            CustomizeColors = colors.IsDefault ? appearance.CustomizeColors : colors };
+        save();
+    }
+
     internal void UpdateSelectedWeapon(ActorEntry actor, bool offhand, ulong weapon, WeaponDyes? dyes = null)
     {
-        var pin = configuration.PinnedOutfits.LastOrDefault(entry => entry.Matches(actor));
+        var pin = CurrentPins()?.LastOrDefault(entry => entry.Matches(actor));
         if (pin?.Appearance is not { } appearance)
             return;
         pin.Appearance = offhand
@@ -160,7 +251,7 @@ public sealed class PinnedOutfitStore
 
     internal void UpdateHeadgearSettings(ActorEntry actor, OutfitData applied)
     {
-        var pin = configuration.PinnedOutfits.LastOrDefault(entry => entry.Matches(actor));
+        var pin = CurrentPins()?.LastOrDefault(entry => entry.Matches(actor));
         if (pin is null) return;
         if (pin.Appearance is { } appearance)
             pin.Appearance = appearance with { HatVisible = applied.HatVisible,
@@ -176,8 +267,14 @@ public sealed class PinnedOutfitStore
 
     public static void Normalize(Configuration configuration)
     {
-        configuration.PinnedOutfits ??= [];
-        configuration.PinnedOutfits = configuration.PinnedOutfits
+        configuration.PinnedOutfits = NormalizePins(configuration.PinnedOutfits);
+        configuration.PinnedOutfitsByCharacter ??= [];
+        foreach (var owner in configuration.PinnedOutfitsByCharacter.Keys.ToArray())
+            configuration.PinnedOutfitsByCharacter[owner] = NormalizePins(configuration.PinnedOutfitsByCharacter[owner]);
+    }
+
+    internal static List<PinnedOutfitConfiguration> NormalizePins(List<PinnedOutfitConfiguration>? pins)
+        => (pins ?? [])
             .Where(static entry => entry is not null
                 && !string.IsNullOrWhiteSpace(entry.ActorName)
                 && entry.ActorName.Length <= 128
@@ -188,5 +285,4 @@ public sealed class PinnedOutfitStore
             .GroupBy(static entry => entry.IdentityKey(), StringComparer.Ordinal)
             .Select(static group => group.Last())
             .ToList();
-    }
 }

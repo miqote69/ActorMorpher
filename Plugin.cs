@@ -40,6 +40,7 @@ public sealed partial class Plugin : IDalamudPlugin
     [PluginService] private static ITextureProvider TextureProvider { get; set; } = null!;
 
     private readonly MainWindow mainWindow;
+    private readonly HashSet<Guid> modelSearchOperations = new();
     private readonly GlamourPlateImportOperation plateImport = new();
     private readonly GlamourPlateCache plateCache;
     private ulong PlateOwner => ClientState.IsLoggedIn ? PlayerState.ContentId : 0;
@@ -73,7 +74,7 @@ public sealed partial class Plugin : IDalamudPlugin
     private readonly ModelPreviewGeometryInspector modelPreviewGeometryInspector;
     private readonly LuminaModelGeometrySource modelPreviewGeometrySource;
     private readonly ModelPreviewTextureCache modelPreviewTextureCache;
-    private readonly ActorAppearancePersistence appearancePersistence = new();
+    private readonly ActorAppearancePersistence appearancePersistence;
     private readonly NativeActorContinuity actorContinuity = new();
     private readonly CommandRegistrationLease primaryCommandRegistration;
     private readonly CommandRegistrationLease aliasCommandRegistration;
@@ -97,6 +98,7 @@ public sealed partial class Plugin : IDalamudPlugin
     private long nextPinnedOutfitScanTick;
     private readonly PinnedActorDiscovery pinnedActorDiscovery = new();
     private uint pinnedOutfitTerritory;
+    private ulong pinnedOutfitOwner;
     private LogicalActorKey? pinnedOutfitOperationActor;
     private OutfitData? pinnedOutfitOperationObservedState;
     private readonly Dictionary<LogicalActorKey, OutfitData> failedPinnedOutfitReapplyStates = new();
@@ -128,18 +130,19 @@ public sealed partial class Plugin : IDalamudPlugin
         var isDev = PluginInterface.IsDev;
         var loadedConfiguration = PluginInterface.GetPluginConfig();
         Configuration = loadedConfiguration as Configuration ?? Configuration.Create(isDev);
-        var loadedPinCount = Configuration.PinnedOutfits?.Count ?? 0;
+        var loadedPinCount = StoredPinCount;
         Configuration.MigrateAndValidate(isDev);
-        Log.Information("[PinPersistence] Loaded Type={Type} BeforeMigration={Before} AfterMigration={After} IsDev={IsDev} ConfigFile={ConfigFile}",
-            loadedConfiguration?.GetType().FullName ?? "null", loadedPinCount, Configuration.PinnedOutfits!.Count,
-            isDev, PluginInterface.ConfigFile.FullName);
+        var migratedPins = Configuration.MigrateLegacyPins(PlateOwner);
+        pinnedOutfitStore = new PinnedOutfitStore(Configuration,
+            () => SaveConfiguration("PinChange"), () => PlateOwner, FindNpcEquipmentGroup);
+        appearancePersistence = new ActorAppearancePersistence(() => PlateOwner);
+        Log.Information("[PinPersistence] Loaded Type={Type} BeforeMigration={Before} AfterMigration={After} Owner={Owner} OwnerPinCount={OwnerPinCount} IsDev={IsDev} ConfigFile={ConfigFile}",
+            loadedConfiguration?.GetType().FullName ?? "null", loadedPinCount, StoredPinCount,
+            PlateOwner, pinnedOutfitStore.Count, isDev, PluginInterface.ConfigFile.FullName);
         Configuration.GlamourPlates ??= [];
         plateCache = new GlamourPlateCache(Configuration.GlamourPlates,
             () => SaveConfiguration("PlateCache"));
-        SaveConfiguration("Startup");
-        pinnedOutfitStore = new PinnedOutfitStore(
-            Configuration,
-            () => SaveConfiguration("PinChange"));
+        SaveConfiguration(migratedPins ? "CharacterPinMigration" : "Startup");
         Localizer = new Localizer(Configuration, ClientState);
         diagnosticRouter = new DiagnosticLogRouter(
             PluginInterface.ConfigDirectory.FullName,
@@ -227,6 +230,7 @@ public sealed partial class Plugin : IDalamudPlugin
         equipmentColors = new NativeEquipmentColors(GameInteropProvider, ObjectTable,
             drawObjectInjector.ResolveActor, appearancePersistence, diagnosticRouter, DataManager);
         actorRegistry.GetColorOutfit = outfitMemory.GetColorOutfit;
+        actorRegistry.GetRetainedOutfit = appearancePersistence.GetRetainedOutfit;
         actorRegistry.GetWeaponDyes = appearancePersistence.GetWeaponDyes;
         actorRegistry.GetEquipmentLoadRevision = drawObjectInjector.GetEquipmentLoadRevision;
         bulkOutfitService = new BulkOutfitService(
@@ -255,6 +259,7 @@ public sealed partial class Plugin : IDalamudPlugin
     public void Dispose()
     {
         ObservePinState("Dispose");
+        pendingCustomizeEdits.Clear();
         plateImport.Cancel();
         ClientState.Logout -= OnPlateLogout;
         Framework.Update -= OnPluginFrameworkUpdate;
@@ -393,11 +398,14 @@ public sealed partial class Plugin : IDalamudPlugin
         return draw != null && draw->IsVisible ? draw : null;
     }
 
+    private int StoredPinCount => (Configuration.PinnedOutfits?.Count ?? 0)
+        + (Configuration.PinnedOutfitsByCharacter?.Values.Sum(pins => pins?.Count ?? 0) ?? 0);
+
     private void SaveConfiguration(string reason)
     {
         PluginInterface.SavePluginConfig(Configuration);
-        Log.Information("[PinPersistence] Saved Reason={Reason} PinCount={PinCount} IsDev={IsDev}",
-            reason, Configuration.PinnedOutfits.Count, PluginInterface.IsDev);
+        Log.Information("[PinPersistence] Saved Reason={Reason} PinCount={PinCount} Owner={Owner} OwnerPinCount={OwnerPinCount} IsDev={IsDev}",
+            reason, StoredPinCount, PlateOwner, pinnedOutfitStore.Count, PluginInterface.IsDev);
     }
 
     private void ObservePinState(string phase)
@@ -406,8 +414,8 @@ public sealed partial class Plugin : IDalamudPlugin
         if (phase == "Framework" && lastPinObservation == state)
             return;
         lastPinObservation = state;
-        Log.Information("[PinPersistence] State Phase={Phase} PinCount={PinCount} LoggedIn={LoggedIn} IsDev={IsDev}",
-            phase, state.Count, state.LoggedIn, PluginInterface.IsDev);
+        Log.Information("[PinPersistence] State Phase={Phase} PinCount={PinCount} Owner={Owner} LoggedIn={LoggedIn} IsDev={IsDev}",
+            phase, state.Count, state.Owner, state.LoggedIn, PluginInterface.IsDev);
     }
 
     public BulkOutfitPreview GetBulkOutfitPreview(BulkOutfitSettings settings)
@@ -784,7 +792,8 @@ public sealed partial class Plugin : IDalamudPlugin
                 drawObjectInjector.EnablePersistentAppearance(current);
                 if (appearancePersistence.GetModel(current.LogicalKey) is { } updatedModel)
                     actorRegistry.RecordAppliedAppearance(current.LogicalKey, current.RepresentationKey, updatedModel);
-                if (actorRegistry.TryGet(current.LogicalKey, out var dyedActor))
+                if (!ShareNpcEquipment(current, EquipmentCopyData.FromOutfit(outfit))
+                    && actorRegistry.TryGet(current.LogicalKey, out var dyedActor))
                     pinnedOutfitStore.UpdateSelectedEquipment(dyedActor, selection.Choice, outfit);
                 WeaponSelectionStatus = Localizer[confirmed ? TextKey.DyeApplied : TextKey.DyeSavedUnconfirmed];
                 continue;
@@ -818,7 +827,7 @@ public sealed partial class Plugin : IDalamudPlugin
             if (appearancePersistence.GetModel(current.LogicalKey) is not null)
                 actorRegistry.RecordAppliedAppearance(current.LogicalKey, current.RepresentationKey, updated);
             drawObjectInjector.EnablePersistentAppearance(current);
-            if (actorRegistry.TryGet(current.LogicalKey, out var entry))
+            if (!ShareNpcEquipment(current) && actorRegistry.TryGet(current.LogicalKey, out var entry))
                 pinnedOutfitStore.UpdateSelectedWeapon(entry, offhand, weapon, dyes);
             WeaponSelectionStatus = Localizer[selection.DyeChannel is null ? TextKey.WeaponSelectionApplied
                 : colorResult.Applied ? TextKey.DyeApplied : TextKey.DyeSavedUnconfirmed];
@@ -986,8 +995,10 @@ public sealed partial class Plugin : IDalamudPlugin
         });
 
     public IReadOnlyList<ModelSearchEntry> GetModelSearchEntries()
+        => GetModelSearchEntries(ClientState.ClientLanguage);
+
+    private IReadOnlyList<ModelSearchEntry> GetModelSearchEntries(ClientLanguage language)
     {
-        var language = ClientState.ClientLanguage;
         if (modelSearchCaches.TryGetValue(language, out var cache))
             return cache;
 
@@ -1167,8 +1178,11 @@ public sealed partial class Plugin : IDalamudPlugin
     {
         operationId = Guid.Empty;
         restoreStatus = string.Empty;
-        return TryGetCurrentTarget(out var snapshot, out message)
-            && appearanceApplyService.TryApply(snapshot, model.ModelAppearance, out operationId, out message);
+        if (!TryGetCurrentTarget(out var snapshot, out message)
+            || !appearanceApplyService.TryApply(snapshot, model.ModelAppearance, out operationId, out message))
+            return false;
+        modelSearchOperations.Add(operationId);
+        return true;
     }
 
     private bool TryGetCurrentTarget(out ActorSnapshot snapshot, out string message)
@@ -1196,6 +1210,7 @@ public sealed partial class Plugin : IDalamudPlugin
         restoreStatus = string.Empty;
         if (!appearanceApplyService.TryApply(actor, model.ModelAppearance, out operationId, out message))
             return false;
+        modelSearchOperations.Add(operationId);
         return true;
     }
 
@@ -1205,6 +1220,7 @@ public sealed partial class Plugin : IDalamudPlugin
     private bool TryRestoreActor(LogicalActorKey actor, out string message, bool restoreWithinBatch)
     {
         restoreStatus = string.Empty;
+        pendingCustomizeEdits.Remove(actor);
         if (!actorResolver.TryResolve(actor, out var current))
         {
             message = "The actor is no longer available.";
@@ -1476,13 +1492,14 @@ public sealed partial class Plugin : IDalamudPlugin
         => (model.RowId, model.Category, model.Source, model.SourceId);
 
     private void OnAppearanceOperationCompleted(
-        Guid _,
+        Guid operationId,
         LogicalActorKey actor,
         ActorRepresentationKey representation,
         AppearanceData applied,
         bool succeeded)
     {
-        if (pinnedAppearanceOperationActor == actor)
+        var maintenance = pinnedAppearanceOperationActor == actor;
+        if (maintenance)
         {
             if (succeeded)
                 failedPinnedAppearanceStates.Remove(actor);
@@ -1492,15 +1509,26 @@ public sealed partial class Plugin : IDalamudPlugin
             pinnedAppearanceOperationObservedState = null;
             nextPinnedOutfitScanTick = Environment.TickCount64 + 500;
         }
-        if (!actorResolver.TryResolve(actor, representation, out var current)
-            || !CanPublishAppearanceCompletion(succeeded, representation, current))
+        if (HandleEquipmentOperationCompleted(operationId, actor, representation, applied, succeeded, maintenance))
             return;
-        var publishedAppearance = CreatePublishedAppearance(applied);
-        if (!actorRegistry.RecordAppliedAppearance(actor, representation, publishedAppearance))
-            return;
-
-        appearancePersistence.RecordModel(current, publishedAppearance);
-        drawObjectInjector.EnablePersistentAppearance(current);
+        var modelSearchApply = modelSearchOperations.Remove(operationId);
+        var customizeEdit = customizeOperations.Remove(operationId, out var requestId);
+        try
+        {
+            if (actorResolver.TryResolve(actor, representation, out var current)
+                && CanPublishAppearanceCompletion(succeeded, representation, current))
+            {
+                if (PublishAppliedAppearance(current, CreatePublishedAppearance(applied), customizeEdit)
+                    && modelSearchApply)
+                    mainWindow.RebaseCustomizeDraft(current, applied,
+                        pendingCustomizeEdits.GetLatest(actor, representation));
+            }
+        }
+        finally
+        {
+            if (customizeEdit)
+                CustomizeOperationCompleted?.Invoke(requestId, succeeded);
+        }
     }
 
     internal static bool CanPublishAppearanceCompletion(
@@ -1515,17 +1543,21 @@ public sealed partial class Plugin : IDalamudPlugin
         OutfitData? desired,
         bool succeeded)
     {
+        var maintenance = pinnedOutfitOperationActor == actor;
+        var shared = !maintenance && succeeded && type is BulkOperationType.ApplyOutfit or BulkOperationType.UnequipAll
+            && bulkOutfitService.TryResolveOperationActor(actor, out var sharedSource)
+            && desired is not null && ShareNpcEquipment(sharedSource, EquipmentCopyData.FromOutfit(desired));
         if (pendingHeadgearSetting == actor)
         {
             pendingHeadgearSetting = null;
-            if (type == BulkOperationType.ApplyOutfit && succeeded && desired is not null
+            if (!shared && type == BulkOperationType.ApplyOutfit && succeeded && desired is not null
                 && actorRegistry.TryGet(actor, out var selectedActor))
                 pinnedOutfitStore.UpdateHeadgearSettings(selectedActor, desired);
         }
         if (pendingEquipmentSelection is { } selection && selection.Actor == actor)
         {
             pendingEquipmentSelection = null;
-            if (type == BulkOperationType.ApplyOutfit && succeeded && desired is not null
+            if (!shared && type == BulkOperationType.ApplyOutfit && succeeded && desired is not null
                 && actorRegistry.TryGet(actor, out var selectedActor))
                 pinnedOutfitStore.UpdateSelectedEquipment(selectedActor, selection.Choice, desired);
         }
@@ -1589,14 +1621,19 @@ public sealed partial class Plugin : IDalamudPlugin
 
     private void OnPluginFrameworkUpdate(IFramework framework)
     {
+        var owner = PlateOwner;
+        if (Configuration.MigrateLegacyPins(owner))
+            SaveConfiguration("CharacterPinMigration");
         ObservePinState("Framework");
+        ProcessPendingCustomizeEdits();
         ProcessWeaponSelections();
         UpdateGlamourPlateCache();
         ProcessGlamourPlateImport();
         EnsureCommandsRegistered();
         var now = Environment.TickCount64;
-        if (pinnedOutfitTerritory != ClientState.TerritoryType || !ClientState.IsLoggedIn)
+        if (pinnedOutfitOwner != owner || pinnedOutfitTerritory != ClientState.TerritoryType || !ClientState.IsLoggedIn)
         {
+            pinnedOutfitOwner = owner;
             pinnedOutfitTerritory = ClientState.TerritoryType;
             pinnedOutfitOperationActor = null;
             pinnedOutfitOperationObservedState = null;
@@ -1631,34 +1668,67 @@ public sealed partial class Plugin : IDalamudPlugin
 
     private bool TryReapplyPinnedOutfit(long now)
     {
-        if (pinnedOutfitStore.Count == 0 || pinnedOutfitOperationActor is not null
+        if ((pinnedOutfitStore.Count == 0 && !pinnedOutfitStore.HasSharedNpcEquipment)
+            || pinnedOutfitOperationActor is not null
             || pinnedAppearanceOperationActor is not null
             || bulkOutfitService.CurrentOperation is not null)
             return false;
 
         var actors = actorRegistry.Entries;
-        foreach (var actor in pinnedActorDiscovery.GetCandidates(actors, pinnedOutfitStore.IsPinned,
+        foreach (var actor in pinnedActorDiscovery.GetCandidates(actors,
+                     actor => pinnedOutfitStore.IsPinned(actor) || pinnedOutfitStore.IsNpcEquipmentSharingCandidate(actor),
                      now, ref nextPinnedOutfitScanTick))
         {
             OutfitData desired;
             OutfitData current;
-            if (pinnedOutfitStore.TryGetAppearance(actor, out var pinnedAppearance))
+            var shareEquipment = pinnedOutfitStore.TryGetSharedNpcEquipment(actor, out var sharedEquipment);
+            var shareCustomize = pinnedOutfitStore.TryGetSharedNpcCustomize(actor, out var sharedCustomize);
+            var hasPinnedAppearance = pinnedOutfitStore.TryGetAppearance(actor, out var pinnedAppearance);
+            if (hasPinnedAppearance || shareEquipment || shareCustomize)
             {
                 if (!actorResolver.TryResolve(actor.Key, out var representation)
-                    || actorRegistry.CaptureCurrentAppearance(representation) is not { } rendered
+                    || (shareCustomize ? actorRegistry.CaptureCustomizeAppearance(representation)
+                        : actorRegistry.CaptureCurrentAppearance(representation)) is not { } rendered
                     || appearanceApplyService.IsPending(actor.Key))
                     continue;
-                pinnedAppearance = pinnedAppearance.WithCurrentEarVisibility(rendered);
-                if (PinnedOutfitStore.AppearanceEquals(rendered, pinnedAppearance))
-                    continue;
+                var individualOutfit = !hasPinnedAppearance && pinnedOutfitStore.TryGet(actor, out var storedOutfit)
+                    ? storedOutfit : null;
+                pinnedAppearance = ComposeSharedNpcAppearance(rendered, pinnedAppearance, individualOutfit,
+                    shareEquipment ? sharedEquipment : null, shareCustomize ? sharedCustomize : null);
+                if ((shareEquipment || shareCustomize) && !pinnedOutfitStore.WasSharedNpcChangeAttempted(actor))
+                {
+                    // A completion for an older request must not block this new edit.
+                    failedPinnedAppearanceStates.Remove(actor.Key);
+                    failedPinnedOutfitReapplyStates.Remove(actor.Key);
+                }
                 if (failedPinnedAppearanceStates.TryGetValue(actor.Key, out var failed)
                     && PinnedOutfitStore.AppearanceEquals(rendered, failed))
                     continue;
+                if (shareCustomize && CanApplySharedCustomizeDirectly(rendered, pinnedAppearance))
+                {
+                    pinnedOutfitStore.MarkSharedNpcEquipmentAttempted(actor);
+                    if (!TryApplySharedCustomizeDirectly(representation, rendered, sharedCustomize, out var applied))
+                    {
+                        failedPinnedAppearanceStates[actor.Key] = rendered;
+                        continue;
+                    }
+                    rendered = applied;
+                }
+                if (PinnedOutfitStore.AppearanceEquals(rendered, pinnedAppearance))
+                {
+                    pinnedOutfitStore.MarkSharedNpcEquipmentAttempted(actor);
+                    continue;
+                }
                 if (!PinnedOutfitStore.CanMaintainWithOutfit(rendered, pinnedAppearance)
                     || EquipmentDisplayFormatting.CreateHumanOutfit(rendered) is not { } renderedOutfit
-                    || !pinnedOutfitStore.TryGet(actor, out desired))
+                    || !(shareEquipment ? AssignSharedOutfit(sharedEquipment, out desired)
+                        : pinnedOutfitStore.TryGet(actor, out desired)))
                 {
-                    if (!appearanceApplyService.TryApply(actor.Key, pinnedAppearance, out _))
+                    pinnedOutfitStore.MarkSharedNpcEquipmentAttempted(actor);
+                    var started = !hasPinnedAppearance && shareEquipment && !shareCustomize
+                        ? TryPasteEquipment(representation, sharedEquipment, out _, out _)
+                        : appearanceApplyService.TryApply(actor.Key, pinnedAppearance, out _);
+                    if (!started)
                         continue;
                     pinnedAppearanceOperationActor = actor.Key;
                     pinnedAppearanceOperationObservedState = rendered;
@@ -1666,6 +1736,7 @@ public sealed partial class Plugin : IDalamudPlugin
                 }
                 // An equipment-only difference uses the existing slot operation and its
                 // completion/failure handling, preserving the cutscene's animated model.
+                pinnedOutfitStore.MarkSharedNpcEquipmentAttempted(actor);
                 if (!ApplyMatchingWeaponDyes(representation, rendered, pinnedAppearance, out _))
                 {
                     failedPinnedAppearanceStates[actor.Key] = rendered;
@@ -1686,8 +1757,12 @@ public sealed partial class Plugin : IDalamudPlugin
                 failedPinnedOutfitReapplyStates.Remove(actor.Key);
             }
             if (OutfitDataValueComparer.AreEqual(current, desired))
+            {
+                pinnedOutfitStore.MarkSharedNpcEquipmentAttempted(actor);
                 continue;
+            }
 
+            pinnedOutfitStore.MarkSharedNpcEquipmentAttempted(actor);
             if (!bulkOutfitService.StartPersistentApply(actor.Key, desired, out _))
                 continue;
             pinnedOutfitOperationActor = actor.Key;
@@ -1883,7 +1958,7 @@ public sealed partial class Plugin : IDalamudPlugin
             .ToArray();
     }
 
-    private static string CreateAppearanceSignature(AppearanceData appearance)
+    internal static string CreateAppearanceSignature(AppearanceData appearance)
         => string.Join(
             ':',
             appearance.ModelCharaId,
