@@ -81,7 +81,7 @@ public sealed unsafe class ActorRegistry : IDisposable
 
     internal Func<LogicalActorKey, OutfitData?>? GetColorOutfit { get; set; }
     internal Func<LogicalActorKey, OutfitData?>? GetRetainedOutfit { get; set; }
-    internal Func<LogicalActorKey, bool, ulong?, WeaponDyes>? GetWeaponDyes { get; set; }
+    internal Func<ActorSnapshot, bool, ulong?, WeaponDyes>? GetWeaponDyes { get; set; }
     internal Func<ushort, byte, FacewearAppearance>? ResolveFacewear { get; set; }
 
     internal AppearanceData? CaptureCurrentAppearance(ActorSnapshot expected)
@@ -509,8 +509,8 @@ public sealed unsafe class ActorRegistry : IDisposable
         if (category == ModelCategory.Human && GetWeaponDyes is { } getWeaponDyes)
             currentAppearance = currentAppearance with
             {
-                MainhandDyes = getWeaponDyes(snapshot.LogicalKey, false, mainhand),
-                OffhandDyes = getWeaponDyes(snapshot.LogicalKey, true, offhand),
+                MainhandDyes = getWeaponDyes(snapshot, false, mainhand),
+                OffhandDyes = getWeaponDyes(snapshot, true, offhand),
             };
         snapshot = snapshot with { CurrentAppearance = currentAppearance };
         if (category != ModelCategory.Human)

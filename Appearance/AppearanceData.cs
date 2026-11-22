@@ -21,6 +21,24 @@ public sealed record AppearanceData(
     public WeaponDyes OffhandDyes { get; init; }
     public bool? VieraEarsHidden { get; init; }
     public ImmutableArray<CustomizeColorOverride> CustomizeColors { get; init; } = [];
+    // Request metadata only. The saved pin owns the job; this travels with a queued
+    // maintenance operation so a later job change cannot reapply its old weapons.
+    internal WeaponPinScope? PinnedWeaponScope { get; init; }
+
+    internal AppearanceData ForWeaponJob(byte classJob, AppearanceData? current = null)
+        => PinnedWeaponScope is not { } scope ? this
+            : scope.AppliesTo(classJob)
+            ? this with
+            {
+                Mainhand = scope.Weapons.Mainhand, Offhand = scope.Weapons.Offhand,
+                MainhandDyes = scope.Weapons.MainhandDyes, OffhandDyes = scope.Weapons.OffhandDyes,
+            }
+            : this with
+            {
+                Mainhand = current?.Mainhand, Offhand = current?.Offhand,
+                MainhandDyes = current?.MainhandDyes ?? default,
+                OffhandDyes = current?.OffhandDyes ?? default,
+            };
 
     internal AppearanceData WithCurrentEarVisibility(AppearanceData current)
         => VieraEarsHidden is null && current.VieraEarsHidden is { } hidden
@@ -72,4 +90,9 @@ public sealed record AppearanceData(
             FacewearModelId = facewearModelId,
             HatVisible = hatVisible,
         };
+}
+
+internal sealed record WeaponPinScope(byte? ClassJob, PinnedSharedWeaponsConfiguration Weapons)
+{
+    internal bool AppliesTo(byte classJob) => ClassJob == classJob;
 }

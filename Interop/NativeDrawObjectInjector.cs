@@ -52,7 +52,8 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
             cutsceneActors = new NativeCutsceneActorTracker(interop, diagnostics, CaptureCopySource, continuity.Forget);
             consumerTransaction = new OneShotAppearanceConsumerTransaction(interop);
             consumerTransaction.GetWeaponDyes = (owner, offhand, weapon)
-                => transitionState.GetWeaponDyes(ResolveActor(owner), offhand, weapon);
+                => transitionState.GetWeaponDyes(DescribeWeaponActor(objectTable, ResolveActor(owner), owner,
+                    clientState.TerritoryType), offhand, weapon);
             headInputOverride = new HumanHeadInputOverride(interop);
             createHook = interop.HookFromAddress<CreateCharacterBaseDelegate>(
                 (nint)CharacterBase.MemberFunctionPointers.Create,
@@ -166,7 +167,8 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
         }
 
         var actor = ResolveActor((nint)gameObject);
-        var appearance = transitionState.GetCreateAppearance(actor,
+        var appearance = transitionState.GetCreateAppearance(
+            DescribeWeaponActor(objectTable, actor, (nint)gameObject, clientState.TerritoryType),
             (uint)((Character*)gameObject)->ModelContainer.ModelCharaId, out var outfitOnly);
         if (appearance is null)
         {
@@ -210,6 +212,25 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
         return transitionState.Resolve(identity.Key, current);
     }
 
+    internal static ActorSnapshot DescribeWeaponActor(IObjectTable objects, LogicalActorKey actor,
+        nint address, uint territory)
+    {
+        var native = (GameObject*)address;
+        var source = objects[actor.OriginalObjectIndex];
+        // A cutscene copy follows its source player's job, not the copy's often-zero job.
+        var sameContent = source is { Address: not 0, ObjectKind: Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc }
+            && actor.Continuity is { Source: 1 } identity
+            && ((Character*)source.Address)->ContentId == identity.Id;
+        if (source is null || (source.GameObjectId != actor.GameObjectId && !sameContent))
+            source = objects[native->ObjectIndex];
+        var character = source is { Address: not 0 } ? (Character*)source.Address : (Character*)address;
+        return new(actor, new(native->ObjectIndex, native->GetGameObjectId().Id, native->EntityId, false, territory),
+            source?.Name.ToString() ?? string.Empty, actor.ObjectKind, actor.BaseId,
+            (uint)character->ModelContainer.ModelCharaId, null, null, null, character->CharacterData.ClassJob,
+            character->CharacterData.Level, source is not null && source.GameObjectId == objects.LocalPlayer?.GameObjectId)
+        { ContinuityKey = actor.Continuity };
+    }
+
     private bool TryDescribeRepresentation(
         GameObject* gameObject,
         out ActorRepresentationKey representation,
@@ -246,6 +267,12 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
     {
         var character = (Character*)gameObject;
         var appearance = context.Appearance;
+        if (appearance.PinnedWeaponScope is not null)
+        {
+            var current = DescribeWeaponActor(objectTable, context.Actor, (nint)gameObject, clientState.TerritoryType);
+            appearance = appearance.ForWeaponJob(current.ClassJob);
+            context.Appearance = appearance;
+        }
         var originalModelCharaId = character->ModelContainer.ModelCharaId;
         var originalCustomize = character->DrawData.CustomizeData.Data.ToArray();
         var originalEquipment = character->DrawData.EquipmentModelIds

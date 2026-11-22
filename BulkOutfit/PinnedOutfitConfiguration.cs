@@ -14,6 +14,7 @@ public sealed class PinnedOutfitConfiguration
     public int ObjectKind { get; set; }
     public uint BaseId { get; set; }
     public bool IsLocalPlayer { get; set; }
+    public byte? WeaponClassJob { get; set; }
     public bool NpcGroupSharingStopped { get; set; }
     public bool ShareNpcEquipment { get; set; }
     public PinnedSharedWeaponsConfiguration? SharedWeapons { get; set; }
@@ -91,6 +92,8 @@ public sealed class PinnedOutfitConfiguration
             BaseId = actor.BaseId,
             IsLocalPlayer = actor.IsLocalPlayer,
             Appearance = appearance,
+            WeaponClassJob = actor.Kind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc
+                ? actor.Current.ClassJob : null,
         };
 
     public bool Matches(ActorEntry actor)

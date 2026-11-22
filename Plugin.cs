@@ -135,7 +135,7 @@ public sealed partial class Plugin : IDalamudPlugin
         var migratedPins = Configuration.MigrateLegacyPins(PlateOwner);
         pinnedOutfitStore = new PinnedOutfitStore(Configuration,
             () => SaveConfiguration("PinChange"), () => PlateOwner, FindNpcEquipmentGroup);
-        appearancePersistence = new ActorAppearancePersistence(() => PlateOwner);
+        appearancePersistence = new ActorAppearancePersistence(() => PlateOwner, pinnedOutfitStore.GetWeaponPinScope);
         Log.Information("[PinPersistence] Loaded Type={Type} BeforeMigration={Before} AfterMigration={After} Owner={Owner} OwnerPinCount={OwnerPinCount} IsDev={IsDev} ConfigFile={ConfigFile}",
             loadedConfiguration?.GetType().FullName ?? "null", loadedPinCount, StoredPinCount,
             PlateOwner, pinnedOutfitStore.Count, isDev, PluginInterface.ConfigFile.FullName);
@@ -1683,7 +1683,7 @@ public sealed partial class Plugin : IDalamudPlugin
             OutfitData current;
             var shareEquipment = pinnedOutfitStore.TryGetSharedNpcEquipment(actor, out var sharedEquipment);
             var shareCustomize = pinnedOutfitStore.TryGetSharedNpcCustomize(actor, out var sharedCustomize);
-            var hasPinnedAppearance = pinnedOutfitStore.TryGetAppearance(actor, out var pinnedAppearance);
+            var hasPinnedAppearance = pinnedOutfitStore.TryGetAppearanceForCurrentJob(actor, out var pinnedAppearance);
             if (hasPinnedAppearance || shareEquipment || shareCustomize)
             {
                 if (!actorResolver.TryResolve(actor.Key, out var representation)

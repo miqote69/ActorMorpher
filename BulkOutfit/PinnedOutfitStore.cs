@@ -68,6 +68,26 @@ public sealed partial class PinnedOutfitStore
         return appearance is not null;
     }
 
+    internal WeaponPinScope? GetWeaponPinScope(ActorSnapshot snapshot)
+    {
+        if (snapshot.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc) return null;
+        var actor = new ActorEntry(snapshot.LogicalKey, snapshot.Name, snapshot.ObjectKind,
+            snapshot.IsLocalPlayer, [snapshot]);
+        var pin = CurrentPins()?.LastOrDefault(entry => entry.Matches(actor));
+        return pin?.Appearance is { } appearance
+            ? new(pin.WeaponClassJob, new(appearance.Mainhand, appearance.Offhand,
+                appearance.MainhandDyes, appearance.OffhandDyes)) : null;
+    }
+
+    internal bool TryGetAppearanceForCurrentJob(ActorEntry actor, out AppearanceData appearance)
+    {
+        if (!TryGetAppearance(actor, out appearance)) return false;
+        if (GetWeaponPinScope(actor.Current) is { } scope)
+            appearance = (appearance with { PinnedWeaponScope = scope })
+                .ForWeaponJob(actor.Current.ClassJob, actor.Current.CurrentAppearance);
+        return true;
+    }
+
     public (int Pinned, int Unavailable) PinCurrent(
         IEnumerable<ActorEntry> actors, Func<ActorEntry, AppearanceData?> capture)
     {
@@ -197,7 +217,16 @@ public sealed partial class PinnedOutfitStore
     {
         var pin = CurrentPins()?.LastOrDefault(entry => entry.Matches(actor));
         if (pin is null) return;
+        var before = pin.Appearance;
         ApplyEquipmentToPin(pin, equipment);
+        if (actor.Kind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc
+            && pin.WeaponClassJob != actor.Current.ClassJob
+            && before is not null && pin.Appearance is { } updated)
+            pin.Appearance = updated with
+            {
+                Mainhand = before.Mainhand, Offhand = before.Offhand,
+                MainhandDyes = before.MainhandDyes, OffhandDyes = before.OffhandDyes,
+            };
         save();
     }
 
@@ -242,6 +271,9 @@ public sealed partial class PinnedOutfitStore
     {
         var pin = CurrentPins()?.LastOrDefault(entry => entry.Matches(actor));
         if (pin?.Appearance is not { } appearance)
+            return;
+        if (actor.Kind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc
+            && pin.WeaponClassJob != actor.Current.ClassJob)
             return;
         pin.Appearance = offhand
             ? appearance with { Offhand = weapon, OffhandDyes = dyes ?? appearance.OffhandDyes }

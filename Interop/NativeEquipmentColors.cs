@@ -104,7 +104,10 @@ internal sealed unsafe class NativeEquipmentColors : IDisposable
                 if ((CharacterBase*)character->DrawData.Weapon(weaponSlot).Weapon != model)
                     continue;
                 var packed = NativeAppearanceMemory.CaptureRenderedWeapon(character, weaponSlot);
-                var dyes = persistence.GetWeaponDyes(resolve(obj.Address), hand == 1, packed);
+                var actor = resolve(obj.Address);
+                var snapshot = NativeDrawObjectInjector.DescribeWeaponActor(objects, actor, obj.Address,
+                    actor.TerritoryId);
+                var dyes = persistence.GetWeaponDyes(snapshot, hand == 1, packed);
                 ApplySlot(model, slot, dyes.AsArmor(packed), false);
                 return;
             }

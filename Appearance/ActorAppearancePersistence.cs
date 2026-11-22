@@ -3,6 +3,7 @@ namespace ActorMorpher.Appearance;
 public sealed class ActorAppearancePersistence
 {
     private readonly Func<ulong> getOwner;
+    private readonly Func<ActorSnapshot, WeaponPinScope?>? getWeaponPinScope;
     private readonly Dictionary<ulong, CharacterState> characters = new();
     private sealed class CharacterState
     {
@@ -15,8 +16,13 @@ public sealed class ActorAppearancePersistence
     private readonly record struct WeaponOverride(ulong? Mainhand, ulong? Offhand,
         WeaponDyes MainhandDyes, WeaponDyes OffhandDyes);
     public ActorAppearancePersistence(Func<ulong>? getOwner = null)
+        : this(getOwner, null) { }
+
+    internal ActorAppearancePersistence(Func<ulong>? getOwner,
+        Func<ActorSnapshot, WeaponPinScope?>? getWeaponPinScope)
     {
         this.getOwner = getOwner ?? (() => 0);
+        this.getWeaponPinScope = getWeaponPinScope;
         Outfits = new(this.getOwner);
     }
 
@@ -72,6 +78,8 @@ public sealed class ActorAppearancePersistence
 
     public void RecordModel(ActorSnapshot actor, AppearanceData appearance)
     {
+        if (appearance.PinnedWeaponScope is not null)
+            appearance = appearance with { PinnedWeaponScope = null };
         var state = GetState(getOwner());
         Register(state, actor);
         state.Weapons.Remove(actor.LogicalKey);
@@ -139,8 +147,25 @@ public sealed class ActorAppearancePersistence
             ? dyes : default;
     }
 
+    internal WeaponDyes GetWeaponDyes(ActorSnapshot actor, bool offhand, ulong? rendered)
+    {
+        var dyes = GetWeaponDyes(actor.LogicalKey, offhand, rendered);
+        return dyes != default && getWeaponPinScope?.Invoke(actor) is { } scope
+            && !scope.AppliesTo(actor.ClassJob) ? default : dyes;
+    }
+
     public AppearanceData? GetRetainedAppearance(ActorSnapshot snapshot)
-        => GetModel(snapshot.LogicalKey);
+        => GetModel(snapshot.LogicalKey) is { } model ? WithWeaponPinScope(snapshot, model) : null;
+
+    private AppearanceData WithWeaponPinScope(ActorSnapshot actor, AppearanceData appearance)
+        => getWeaponPinScope?.Invoke(actor) is { } scope
+            ? (appearance with { PinnedWeaponScope = scope })
+                .ForWeaponJob(actor.ClassJob, actor.CurrentAppearance)
+            : appearance;
+
+    internal AppearanceData? GetCreateAppearance(ActorSnapshot actor, uint currentModelId, out bool outfitOnly)
+        => GetCreateAppearance(actor.LogicalKey, currentModelId, out outfitOnly) is { } appearance
+            ? WithWeaponPinScope(actor with { CurrentAppearance = null }, appearance) : null;
 
     public AppearanceData? GetCreateAppearance(LogicalActorKey actor, uint currentModelId, out bool outfitOnly)
     {
