@@ -17,7 +17,7 @@ public sealed partial class Plugin
             message = "The selected actor's character customization is not available.";
             return false;
         }
-        draft = new CustomizeEditState(current, appearance.Customize, appearance.CustomizeColors);
+        draft = appearancePersistence.CreateCustomizeDraft(current, appearance);
         message = string.Empty;
         return true;
     }
@@ -64,6 +64,8 @@ public sealed partial class Plugin
         restoreStatus = string.Empty;
         var accepted = pendingCustomizeEdits.Submit(new(requestId, draft.Actor, draft.Representation,
             draft.ToCustomize(), draft.ToColorOverrides(), customizeMasks, colorMask), appearanceApplyService.IsPending, DispatchCustomizeEdit);
+        if (accepted && draft.HasChanges)
+            appearancePersistence.RememberOriginalCustomize(draft);
         message = accepted ? "Applying character customization." : "Character customization could not be applied.";
         return accepted;
     }

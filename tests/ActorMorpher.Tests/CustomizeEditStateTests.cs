@@ -132,6 +132,59 @@ public sealed class CustomizeEditStateTests
     }
 
     [Fact]
+    public void ReturningToThePlayerAfterEditingAndPinningAnotherActorKeepsTheOriginalCustomize()
+    {
+        var state = new ActorAppearancePersistence(() => 1);
+        var player = Actor();
+        var original = Appearance() with
+        {
+            Customize = Appearance().Customize.SetItem(0, 4),
+            CustomizeColors = [new(10, .1f, .2f, .3f)],
+        };
+        var firstDraft = state.CreateCustomizeDraft(player, original);
+        firstDraft.SetValue(0, 5);
+        firstDraft.SetColor(10, new(.4f, .5f, .6f));
+        var changedPlayer = firstDraft.CreateAppearance(original);
+        state.RememberOriginalCustomize(firstDraft);
+        state.RecordModel(player, changedPlayer);
+
+        var other = player with
+        {
+            LogicalKey = new(2, 2, 2, 20, ObjectKind.EventNpc, 30) { Lifetime = 2 },
+            RepresentationKey = new(2, 2, 2, false, 30),
+            ObjectKind = ObjectKind.EventNpc,
+            BaseId = 20,
+            IsLocalPlayer = false,
+        };
+        var otherOriginal = Appearance() with { Customize = Appearance().Customize.SetItem(1, 0) };
+        var otherDraft = state.CreateCustomizeDraft(other, otherOriginal);
+        otherDraft.SetValue(1, 1);
+        var changedOther = otherDraft.CreateAppearance(otherOriginal);
+        state.RememberOriginalCustomize(otherDraft);
+        state.RecordModel(other, changedOther);
+        var otherEntry = new ActorEntry(other.LogicalKey, other.Name, other.ObjectKind, false, [other]);
+        var pins = new PinnedOutfitStore(new Configuration(), () => { }, () => 1);
+        Assert.Equal((1, 0), pins.PinCurrent([otherEntry], _ => changedOther));
+
+        var reopened = state.CreateCustomizeDraft(player, changedPlayer);
+        Assert.Equal(5, reopened.GetValue(0));
+        Assert.Equal(new Vector3(.4f, .5f, .6f), reopened.GetColor(10));
+        reopened.Reset();
+        var restored = reopened.CreateAppearance(changedPlayer);
+        Assert.Equal<byte>(original.Customize, restored.Customize);
+        Assert.Equal<CustomizeColorOverride>(original.CustomizeColors, restored.CustomizeColors);
+        Assert.Equal(changedPlayer, restored with
+        { Customize = changedPlayer.Customize, CustomizeColors = changedPlayer.CustomizeColors });
+        Assert.True(pins.TryGetAppearance(otherEntry, out var pinned));
+        Assert.Equal<byte>(changedOther.Customize, pinned.Customize);
+        Assert.Equal(0, state.CreateCustomizeDraft(other, changedOther).Original[1]);
+
+        state.Restore(player.LogicalKey);
+        Assert.Equal<byte>(changedPlayer.Customize, state.CreateCustomizeDraft(player, changedPlayer).Original);
+        Assert.Equal(0, state.CreateCustomizeDraft(other, changedOther).Original[1]);
+    }
+
+    [Fact]
     public void DraftTargetsOneLogicalActorAndOneRepresentation()
     {
         var actor = Actor();

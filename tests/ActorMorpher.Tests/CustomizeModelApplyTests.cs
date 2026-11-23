@@ -111,6 +111,11 @@ public sealed class CustomizeModelApplyTests
         Assert.Equal<byte>(fixture.Desired.Customize, rebased.Original);
         Assert.Equal<byte>(expected, rebased.ToCustomize());
         Assert.Equal<CustomizeColorOverride>(fixture.Desired.CustomizeColors, rebased.ToColorOverrides());
+        var persistence = Get<ActorAppearancePersistence>(fixture.Plugin, "appearancePersistence");
+        var reopened = persistence.CreateCustomizeDraft(fixture.Actor, desired);
+        reopened.Reset();
+        Assert.Equal<byte>(fixture.Desired.Customize, reopened.ToCustomize());
+        Assert.Equal<CustomizeColorOverride>(fixture.Desired.CustomizeColors, reopened.ToColorOverrides());
         Assert.Equal(previousOperation, Get<object?>(fixture.Window, "customizeOperation"));
         Assert.Equal("previous status", Get<string>(fixture.Window, "customizeStatus"));
         Assert.Equal(1, fixture.Backend.EnableCount);

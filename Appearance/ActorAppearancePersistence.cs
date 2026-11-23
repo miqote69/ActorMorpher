@@ -12,6 +12,7 @@ public sealed class ActorAppearancePersistence
         public readonly Dictionary<LogicalActorKey, WeaponOverride> Weapons = new();
         public readonly Dictionary<ulong, LogicalActorKey> LivingActors = new();
         public readonly Dictionary<LogicalActorKey, OutfitData> ColorOutfits = new();
+        public readonly Dictionary<(LogicalActorKey Actor, ActorRepresentationKey Representation), CustomizeCopyData> OriginalCustomize = new();
     }
     private readonly record struct WeaponOverride(ulong? Mainhand, ulong? Offhand,
         WeaponDyes MainhandDyes, WeaponDyes OffhandDyes);
@@ -99,6 +100,23 @@ public sealed class ActorAppearancePersistence
     }
 
     public AppearanceData? GetModel(LogicalActorKey actor) => GetState(getOwner()).Models.GetValueOrDefault(actor);
+
+    internal CustomizeEditState CreateCustomizeDraft(ActorSnapshot actor, AppearanceData rendered)
+        => new(actor, rendered.Customize, rendered.CustomizeColors,
+            GetState(getOwner()).OriginalCustomize.GetValueOrDefault((actor.LogicalKey, actor.RepresentationKey)));
+
+    internal void RememberOriginalCustomize(CustomizeEditState draft)
+        => GetState(getOwner()).OriginalCustomize.TryAdd((draft.Actor, draft.Representation), draft.GetOriginal());
+
+    internal void RebaseOriginalCustomize(ActorSnapshot actor, CustomizeCopyData? original)
+    {
+        var originals = GetState(getOwner()).OriginalCustomize;
+        var key = (actor.LogicalKey, actor.RepresentationKey);
+        if (original is null)
+            originals.Remove(key);
+        else
+            originals[key] = original;
+    }
 
     internal OutfitData? GetRetainedOutfit(LogicalActorKey actor)
     {
@@ -194,6 +212,8 @@ public sealed class ActorAppearancePersistence
         state.Models.Remove(actor);
         state.Weapons.Remove(actor);
         state.ColorOutfits.Remove(actor);
+        foreach (var key in state.OriginalCustomize.Keys.Where(key => key.Actor == actor).ToArray())
+            state.OriginalCustomize.Remove(key);
         Outfits.CompleteRestore(owner, actor);
     }
 

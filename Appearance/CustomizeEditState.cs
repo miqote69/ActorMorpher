@@ -13,19 +13,25 @@ public sealed class CustomizeEditState
 
     public CustomizeEditState(ActorSnapshot target, ImmutableArray<byte> customize,
         ImmutableArray<CustomizeColorOverride> colorOverrides = default)
+        : this(target, customize, colorOverrides, null) { }
+
+    internal CustomizeEditState(ActorSnapshot target, ImmutableArray<byte> customize,
+        ImmutableArray<CustomizeColorOverride> colorOverrides, CustomizeCopyData? savedOriginal)
     {
         Actor = target.LogicalKey;
         Representation = target.RepresentationKey;
-        Original = customize;
+        Original = savedOriginal?.Customize ?? customize;
         values = customize.ToArray();
         fieldChangeMasks = new byte[values.Length];
-        originalColors = colorOverrides.IsDefault ? [] : colorOverrides.OrderBy(color => color.Index).ToImmutableArray();
-        colors = originalColors.ToDictionary(color => color.Index);
+        var original = savedOriginal?.CustomizeColors ?? colorOverrides;
+        originalColors = original.IsDefault ? [] : original.OrderBy(color => color.Index).ToImmutableArray();
+        colors = colorOverrides.IsDefault ? new() : colorOverrides.ToDictionary(color => color.Index);
     }
 
     public LogicalActorKey Actor { get; }
     public ActorRepresentationKey Representation { get; }
     public ImmutableArray<byte> Original { get; }
+    internal CustomizeCopyData GetOriginal() => new(Original, originalColors);
     public long Revision { get; private set; }
     internal uint ColorChangeMask { get; private set; }
     public bool HasChanges => !values.AsSpan().SequenceEqual(Original.AsSpan())

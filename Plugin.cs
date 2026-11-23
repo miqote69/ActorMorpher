@@ -1287,6 +1287,7 @@ public sealed partial class Plugin : IDalamudPlugin
         }
         actorRegistry.ClearManagedAppearance(actor);
         appearancePersistence.Restore(actor);
+        mainWindow.ClearCustomizeDraft(actor);
         UnpinActor(actor);
         if (outfitOnly)
         {
@@ -1520,8 +1521,12 @@ public sealed partial class Plugin : IDalamudPlugin
             {
                 if (PublishAppliedAppearance(current, CreatePublishedAppearance(applied), customizeEdit)
                     && modelSearchApply)
-                    mainWindow.RebaseCustomizeDraft(current, applied,
-                        pendingCustomizeEdits.GetLatest(actor, representation));
+                {
+                    var pending = pendingCustomizeEdits.GetLatest(actor, representation);
+                    appearancePersistence.RebaseOriginalCustomize(current,
+                        pending is not null && CustomizeCopyData.TryCreate(applied, out var original) ? original : null);
+                    mainWindow.RebaseCustomizeDraft(current, applied, pending);
+                }
             }
         }
         finally

@@ -61,6 +61,12 @@ public sealed partial class MainWindow
         customizeDraft = draft;
     }
 
+    internal void ClearCustomizeDraft(LogicalActorKey actor)
+    {
+        if (customizeDraft?.Actor == actor)
+            customizeDraft = null;
+    }
+
     private void DrawCustomizeEditor(ActorSnapshot current)
     {
         if (customizeDraft is null || !customizeDraft.Matches(current))
