@@ -78,11 +78,14 @@ public sealed class ApplyServicesTests
         Assert.Single(memory.ApplyCalls);
     }
 
-    [Fact]
-    public unsafe void ReturningMinionEquipmentFinalizationBypassesScanAndConverges()
+    [Theory]
+    [InlineData(ObjectKind.Companion)]
+    [InlineData(ObjectKind.EventNpc)]
+    [InlineData(ObjectKind.BattleNpc)]
+    public unsafe void ReturningActorEquipmentFinalizationBypassesScanAndConverges(ObjectKind kind)
     {
-        var snapshot = Snapshot(1) with { ObjectKind = ObjectKind.Companion, MinionOwnerContentId = 777 };
-        snapshot = snapshot with { LogicalKey = snapshot.LogicalKey with { ObjectKind = ObjectKind.Companion } };
+        var snapshot = Snapshot(1) with { ObjectKind = kind, MinionOwnerContentId = kind == ObjectKind.Companion ? 777UL : 0 };
+        snapshot = snapshot with { LogicalKey = snapshot.LogicalKey with { ObjectKind = kind } };
         var original = Outfit(10);
         var desired = Outfit(20);
         using var consumer = new OneShotAppearanceConsumerTransaction();
@@ -100,7 +103,7 @@ public sealed class ApplyServicesTests
         var discovery = new PinnedActorDiscovery();
         long nextScan = 500;
         Assert.Single(discovery.GetCandidates([Entry(desired)], pins.IsPinned, 0, ref nextScan));
-        Assert.Empty(discovery.GetCandidates([Entry(null)], pins.IsPinned, 10, ref nextScan)); // Mounted.
+        Assert.Empty(discovery.GetCandidates([Entry(null)], pins.IsPinned, 10, ref nextScan));
         var returning = Entry(original);
         Assert.Single(discovery.GetCandidates([returning], pins.IsPinned, 20, ref nextScan));
         Assert.True(pins.TryGet(returning, out var saved));
@@ -124,12 +127,13 @@ public sealed class ApplyServicesTests
         Assert.Single(discovery.GetCandidates([Entry(original)], pins.IsPinned, 40, ref nextScan));
         Assert.True(service.StartPersistentApply(snapshot.LogicalKey, saved, out _));
         service.ProcessNextFrame();
+        nextScan = 540; // A successful pin operation at t=40 moves the regular scan back.
         Assert.Single(discovery.GetCandidates([Entry(desired)], pins.IsPinned, 50, ref nextScan));
         Assert.True(OutfitDataValueComparer.AreEqual(memory.Rendered[snapshot.LogicalKey], saved));
         for (var now = 60; now < 500; now += 10)
             Assert.Empty(discovery.GetCandidates([Entry(desired)], pins.IsPinned, now, ref nextScan));
         Assert.Equal(2, memory.ApplyCalls.Count);
-        Assert.Equal(500, nextScan);
+        Assert.Equal(540, nextScan);
 
         service.ProcessNextFrame();
         // A further native load returns before its queued equipment has reached the renderer.
@@ -138,14 +142,14 @@ public sealed class ApplyServicesTests
         Assert.True(OutfitDataValueComparer.AreEqual(memory.Rendered[snapshot.LogicalKey], saved));
         Assert.Equal(2, memory.ApplyCalls.Count); // Plugin's desired-equality path performs no write.
         memory.SetRendered(snapshot.LogicalKey, original); // Queued render update arrives later.
-        Assert.Single(discovery.GetCandidates([Entry(original)], pins.IsPinned, 491, ref nextScan));
+        Assert.Single(discovery.GetCandidates([Entry(original)], pins.IsPinned, 521, ref nextScan));
         Assert.True(service.StartPersistentApply(snapshot.LogicalKey, saved, out _));
         service.ProcessNextFrame();
         Assert.True(OutfitDataValueComparer.AreEqual(memory.Rendered[snapshot.LogicalKey], saved));
-        Assert.Single(discovery.GetCandidates([Entry(desired)], pins.IsPinned, 492, ref nextScan));
-        Assert.Empty(discovery.GetCandidates([Entry(desired)], pins.IsPinned, 493, ref nextScan));
+        Assert.Single(discovery.GetCandidates([Entry(desired)], pins.IsPinned, 522, ref nextScan));
+        Assert.Empty(discovery.GetCandidates([Entry(desired)], pins.IsPinned, 523, ref nextScan));
         Assert.True(pins.Unpin(Entry(desired)));
-        Assert.Empty(discovery.GetCandidates([Entry(original)], pins.IsPinned, 494, ref nextScan));
+        Assert.Empty(discovery.GetCandidates([Entry(original)], pins.IsPinned, 524, ref nextScan));
         Assert.Equal(3, memory.ApplyCalls.Count);
     }
 
@@ -169,18 +173,20 @@ public sealed class ApplyServicesTests
     [Theory]
     [InlineData(ObjectKind.Pc)]
     [InlineData(ObjectKind.EventNpc)]
-    public void EquipmentInitializationDoesNotAccelerateOtherActors(ObjectKind kind)
+    [InlineData(ObjectKind.BattleNpc)]
+    public void EquipmentChangesOnAnAlreadyDisplayedActorRetainTheScanInterval(ObjectKind kind)
     {
         var snapshot = Snapshot(1) with { ObjectKind = kind, CurrentAppearance = HumanAppearance(1, 1) };
         ActorEntry Entry(ActorSnapshot s) => new(s.LogicalKey, s.Name, s.ObjectKind, false, [s]);
         var discovery = new PinnedActorDiscovery();
         long nextScan = 500;
         Assert.Single(discovery.GetCandidates([Entry(snapshot)], _ => true, 0, ref nextScan));
+        Assert.Single(discovery.GetCandidates([Entry(snapshot)], _ => true, 500, ref nextScan));
         snapshot = snapshot with { EquipmentLoadRevision = 1, CurrentAppearance = HumanAppearance(2, 1) };
-        Assert.Empty(discovery.GetCandidates([Entry(snapshot)], _ => true, 10, ref nextScan));
+        Assert.Empty(discovery.GetCandidates([Entry(snapshot)], _ => true, 510, ref nextScan));
         snapshot = snapshot with { EquipmentLoadRevision = 2, CurrentAppearance = HumanAppearance(3, 2) with { ModelCharaId = 123 } };
-        Assert.Empty(discovery.GetCandidates([Entry(snapshot)], _ => true, 20, ref nextScan));
-        Assert.Equal(500, nextScan);
+        Assert.Empty(discovery.GetCandidates([Entry(snapshot)], _ => true, 520, ref nextScan));
+        Assert.Equal(1000, nextScan);
     }
 
     [Fact]

@@ -441,7 +441,7 @@ public sealed unsafe class ActorRegistry : IDisposable
         {
             Position = obj.Position,
             ContinuityKey = copyActor is null ? identity : null,
-            EquipmentLoadRevision = obj.ObjectKind == ObjectKind.Companion
+            EquipmentLoadRevision = obj.ObjectKind is ObjectKind.Companion or ObjectKind.EventNpc or ObjectKind.BattleNpc
                 ? GetEquipmentLoadRevision?.Invoke(obj.Address, objectIndex) ?? 0 : 0,
         };
 
