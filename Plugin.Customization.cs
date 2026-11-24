@@ -99,17 +99,20 @@ public sealed partial class Plugin
             CustomizeOperationCompleted?.Invoke(request.RequestId, true);
             return true;
         }
+        if (appearancePersistence.HasLocalModelSearchAppearance(current.LogicalKey))
+            desired = desired with { UsesRetainedPlayerEquipment = true };
         if (!appearanceApplyService.TryApply(current, desired, out var operationId, out _))
             return false;
         customizeOperations.Add(operationId, request.RequestId);
         return true;
     }
 
-    private bool PublishAppliedAppearance(ActorSnapshot current, AppearanceData appearance, bool customizeEdit)
+    private bool PublishAppliedAppearance(ActorSnapshot current, AppearanceData appearance, bool customizeEdit,
+        byte? modelSearchWeaponJob = null)
     {
         if (!actorRegistry.RecordAppliedAppearance(current.LogicalKey, current.RepresentationKey, appearance))
             return false;
-        appearancePersistence.RecordModel(current, appearance);
+        appearancePersistence.RecordModel(current, appearance, modelSearchWeaponJob);
         drawObjectInjector.EnablePersistentAppearance(current);
         if (customizeEdit && !ShareNpcCustomize(current, appearance)
             && actorRegistry.TryGet(current.LogicalKey, out var entry))

@@ -267,12 +267,20 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
     {
         var character = (Character*)gameObject;
         var appearance = context.Appearance;
-        if (appearance.PinnedWeaponScope is not null)
+        if (appearance.PinnedWeaponScope is not null || appearance.UsesRetainedPlayerEquipment)
         {
             var current = DescribeWeaponActor(objectTable, context.Actor, (nint)gameObject, clientState.TerritoryType);
-            appearance = appearance.ForWeaponJob(current.ClassJob);
-            context.Appearance = appearance;
+            appearance = appearance.UsesRetainedPlayerEquipment
+                ? transitionState.ResolveCustomizeEquipment(current, appearance)
+                : appearance.ForWeaponJob(current.ClassJob);
         }
+        if (appearance.UsesGameHeadSettings)
+        {
+            appearance = appearance with { HatVisible = null, FacewearModelId = null, VisorToggled = null };
+            if (character->DrawData.IsHatHidden && !appearance.Equipment.IsDefaultOrEmpty)
+                appearance = appearance with { Equipment = appearance.Equipment.SetItem(0, 0) };
+        }
+        context.Appearance = appearance;
         var originalModelCharaId = character->ModelContainer.ModelCharaId;
         var originalCustomize = character->DrawData.CustomizeData.Data.ToArray();
         var originalEquipment = character->DrawData.EquipmentModelIds
@@ -326,11 +334,17 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
             originalCustomize.AsSpan().CopyTo(character->DrawData.CustomizeData.Data);
             for (var index = 0; index < originalEquipment.Length; ++index)
                 character->DrawData.EquipmentModelIds[index].Value = originalEquipment[index];
-            character->DrawData.Weapon(DrawDataContainer.WeaponSlot.MainHand).ModelId.Value = originalMainhand;
-            character->DrawData.Weapon(DrawDataContainer.WeaponSlot.OffHand).ModelId.Value = originalOffhand;
-            character->DrawData.GlassesIds[0] = originalFacewear;
-            character->DrawData.IsHatHidden = originalHatHidden;
-            character->DrawData.IsVisorToggled = originalVisor;
+            // An unspecified Human weapon belongs to the game throughout this call.
+            if (appearance.Category != ModelCategory.Human || appearance.Mainhand is not null)
+                character->DrawData.Weapon(DrawDataContainer.WeaponSlot.MainHand).ModelId.Value = originalMainhand;
+            if (appearance.Category != ModelCategory.Human || appearance.Offhand is not null)
+                character->DrawData.Weapon(DrawDataContainer.WeaponSlot.OffHand).ModelId.Value = originalOffhand;
+            if (!appearance.UsesGameHeadSettings)
+            {
+                character->DrawData.GlassesIds[0] = originalFacewear;
+                character->DrawData.IsHatHidden = originalHatHidden;
+                character->DrawData.IsVisorToggled = originalVisor;
+            }
             character->DrawData.VieraEarsHidden = originalEarsHidden;
             character->ModelScale = originalScale;
             TryWritePostRestoreObservation(context, character);

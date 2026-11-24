@@ -89,5 +89,6 @@ public sealed class EquipmentCopyData
             HatVisible = HatVisible,
             VisorToggled = VisorToggled,
             VieraEarsHidden = IncludesHeadSettings ? VieraEarsHidden : VieraEarsHidden ?? destination.VieraEarsHidden,
+            UsesGameHeadSettings = false,
         };
 }

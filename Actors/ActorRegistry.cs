@@ -160,7 +160,9 @@ public sealed unsafe class ActorRegistry : IDisposable
                 {
                     ModelCharaId = managed.ModelCharaId,
                     CustomizeColors = managed.CustomizeColors,
-                    HatVisible = raw.Category == ModelCategory.Human ? managed.HatVisible : raw.HatVisible,
+                    HatVisible = raw.Category == ModelCategory.Human && !managed.UsesGameHeadSettings
+                        ? managed.HatVisible : raw.HatVisible,
+                    UsesGameHeadSettings = managed.UsesGameHeadSettings,
                 }
                 : raw;
     }
@@ -607,9 +609,10 @@ public sealed unsafe class ActorRegistry : IDisposable
         {
             ModelCharaId = retained.ModelCharaId,
             CustomizeColors = retained.CustomizeColors,
-            HatVisible = current.Category == ModelCategory.Human
+            HatVisible = current.Category == ModelCategory.Human && !retained.UsesGameHeadSettings
                 ? retained.HatVisible
                 : current.HatVisible,
+            UsesGameHeadSettings = retained.UsesGameHeadSettings,
         };
         return ApplyManagedAppearance(snapshot, merged);
     }

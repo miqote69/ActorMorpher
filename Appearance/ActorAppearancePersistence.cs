@@ -8,12 +8,18 @@ public sealed class ActorAppearancePersistence
     private sealed class CharacterState
     {
         public readonly Dictionary<ActorContinuityKey, LogicalActorKey> Identities = new();
-        public readonly Dictionary<LogicalActorKey, AppearanceData> Models = new();
+        public readonly Dictionary<LogicalActorKey, RetainedModel> Models = new();
         public readonly Dictionary<LogicalActorKey, WeaponOverride> Weapons = new();
         public readonly Dictionary<ulong, LogicalActorKey> LivingActors = new();
         public readonly Dictionary<LogicalActorKey, OutfitData> ColorOutfits = new();
         public readonly Dictionary<(LogicalActorKey Actor, ActorRepresentationKey Representation), CustomizeCopyData> OriginalCustomize = new();
     }
+    private sealed record RetainedModel(AppearanceData Appearance, byte? MainhandJob, byte? OffhandJob)
+    {
+        internal bool AllowsWeapon(bool offhand, byte job)
+            => (offhand ? OffhandJob : MainhandJob) is not { } weaponJob || weaponJob == job;
+    }
+
     private readonly record struct WeaponOverride(ulong? Mainhand, ulong? Offhand,
         WeaponDyes MainhandDyes, WeaponDyes OffhandDyes);
     public ActorAppearancePersistence(Func<ulong>? getOwner = null)
@@ -78,17 +84,49 @@ public sealed class ActorAppearancePersistence
     }
 
     public void RecordModel(ActorSnapshot actor, AppearanceData appearance)
+        => RecordModel(actor, appearance, modelSearchWeaponJob: null);
+
+    internal void RecordModel(ActorSnapshot actor, AppearanceData appearance, byte? modelSearchWeaponJob,
+        bool equipmentEdited = false, bool weaponsEdited = false)
     {
-        if (appearance.PinnedWeaponScope is not null)
-            appearance = appearance with { PinnedWeaponScope = null };
+        if (appearance.PinnedWeaponScope is not null || appearance.UsesRetainedPlayerEquipment)
+            appearance = appearance with { PinnedWeaponScope = null, UsesRetainedPlayerEquipment = false };
         var state = GetState(getOwner());
         Register(state, actor);
         state.Weapons.Remove(actor.LogicalKey);
-        state.Models[actor.LogicalKey] = appearance;
+        var previous = state.Models.GetValueOrDefault(actor.LogicalKey);
+        state.Models[actor.LogicalKey] = RetainModel(previous, appearance,
+            weaponsEdited && previous?.MainhandJob is not null ? actor.ClassJob : modelSearchWeaponJob,
+            equipmentEdited);
         if (EquipmentDisplayFormatting.CreateHumanOutfit(appearance) is { } outfit)
             state.ColorOutfits[actor.LogicalKey] = outfit;
         else
             state.ColorOutfits.Remove(actor.LogicalKey);
+    }
+
+    private static RetainedModel RetainModel(RetainedModel? previous, AppearanceData appearance, byte? weaponJob,
+        bool equipmentEdited)
+    {
+        if (appearance.Category != ModelCategory.Human)
+            return new(appearance, null, null);
+        if (weaponJob is { } job)
+            return new(appearance with { UsesGameHeadSettings = false }, job, job);
+        if (previous?.MainhandJob is null)
+            return new(appearance, null, null);
+
+        // Publishing a body/customize edit must not adopt another job's rendered weapons.
+        var saved = previous.Appearance;
+        return previous with
+        {
+            Appearance = appearance with
+            {
+                Mainhand = saved.Mainhand,
+                Offhand = saved.Offhand,
+                MainhandDyes = saved.MainhandDyes,
+                OffhandDyes = saved.OffhandDyes,
+                UsesGameHeadSettings = !equipmentEdited && saved.UsesGameHeadSettings,
+            },
+        };
     }
 
     public void RecordOutfit(ActorSnapshot actor, OutfitData outfit)
@@ -96,10 +134,10 @@ public sealed class ActorAppearancePersistence
         var state = GetState(getOwner());
         Register(state, actor);
         if (state.Models.TryGetValue(actor.LogicalKey, out var model))
-            state.Models[actor.LogicalKey] = WithOutfit(model, outfit);
+            state.Models[actor.LogicalKey] = model with { Appearance = WithOutfit(model.Appearance, outfit) };
     }
 
-    public AppearanceData? GetModel(LogicalActorKey actor) => GetState(getOwner()).Models.GetValueOrDefault(actor);
+    public AppearanceData? GetModel(LogicalActorKey actor) => GetState(getOwner()).Models.GetValueOrDefault(actor)?.Appearance;
 
     internal CustomizeEditState CreateCustomizeDraft(ActorSnapshot actor, AppearanceData rendered)
         => new(actor, rendered.Customize, rendered.CustomizeColors,
@@ -118,6 +156,40 @@ public sealed class ActorAppearancePersistence
             originals[key] = original;
     }
 
+    internal bool HasLocalModelSearchAppearance(LogicalActorKey actor)
+        => GetState(getOwner()).Models.GetValueOrDefault(actor)?.MainhandJob is not null;
+
+    internal bool ReleaseModelSearchHeadSettings(LogicalActorKey actor, out AppearanceData appearance)
+    {
+        appearance = null!;
+        var models = GetState(getOwner()).Models;
+        if (!models.TryGetValue(actor, out var model) || model.MainhandJob is null
+            || model.Appearance.UsesGameHeadSettings)
+            return false;
+
+        appearance = model.Appearance with { UsesGameHeadSettings = true };
+        models[actor] = model with { Appearance = appearance };
+        return true;
+    }
+
+    internal AppearanceData ResolveCustomizeEquipment(ActorSnapshot actor, AppearanceData desired)
+    {
+        if (!desired.UsesRetainedPlayerEquipment
+            || GetState(getOwner()).Models.GetValueOrDefault(actor.LogicalKey) is not { MainhandJob: not null } model)
+            return desired;
+
+        var equipment = ForCurrentWeaponJob(actor, model.Appearance);
+        return desired with
+        {
+            Mainhand = equipment.Mainhand,
+            Offhand = equipment.Offhand,
+            MainhandDyes = equipment.MainhandDyes,
+            OffhandDyes = equipment.OffhandDyes,
+            UsesGameHeadSettings = equipment.UsesGameHeadSettings,
+            UsesRetainedPlayerEquipment = false,
+        };
+    }
+
     internal OutfitData? GetRetainedOutfit(LogicalActorKey actor)
     {
         var owner = getOwner();
@@ -133,9 +205,18 @@ public sealed class ActorAppearancePersistence
         Register(state, actor);
         if (state.Models.TryGetValue(actor.LogicalKey, out var model))
         {
+            var appearance = model.Appearance;
             state.Models[actor.LogicalKey] = offhand
-                ? model with { Offhand = weapon, OffhandDyes = dyes ?? model.OffhandDyes }
-                : model with { Mainhand = weapon, MainhandDyes = dyes ?? model.MainhandDyes };
+                ? model with
+                {
+                    Appearance = appearance with { Offhand = weapon, OffhandDyes = dyes ?? appearance.OffhandDyes },
+                    OffhandJob = model.OffhandJob is null ? null : actor.ClassJob,
+                }
+                : model with
+                {
+                    Appearance = appearance with { Mainhand = weapon, MainhandDyes = dyes ?? appearance.MainhandDyes },
+                    MainhandJob = model.MainhandJob is null ? null : actor.ClassJob,
+                };
             return;
         }
         var current = state.Weapons.GetValueOrDefault(actor.LogicalKey);
@@ -151,8 +232,8 @@ public sealed class ActorAppearancePersistence
         WeaponDyes dyes;
         if (state.Models.TryGetValue(actor, out var model))
         {
-            selected = offhand ? model.Offhand : model.Mainhand;
-            dyes = offhand ? model.OffhandDyes : model.MainhandDyes;
+            selected = offhand ? model.Appearance.Offhand : model.Appearance.Mainhand;
+            dyes = offhand ? model.Appearance.OffhandDyes : model.Appearance.MainhandDyes;
         }
         else
         {
@@ -168,22 +249,44 @@ public sealed class ActorAppearancePersistence
     internal WeaponDyes GetWeaponDyes(ActorSnapshot actor, bool offhand, ulong? rendered)
     {
         var dyes = GetWeaponDyes(actor.LogicalKey, offhand, rendered);
-        return dyes != default && getWeaponPinScope?.Invoke(actor) is { } scope
-            && !scope.AppliesTo(actor.ClassJob) ? default : dyes;
+        if (dyes == default)
+            return default;
+        if (getWeaponPinScope?.Invoke(actor) is { } scope)
+            return scope.AppliesTo(actor.ClassJob) ? dyes : default;
+        var model = GetState(getOwner()).Models.GetValueOrDefault(actor.LogicalKey);
+        return model?.AllowsWeapon(offhand, actor.ClassJob) == false ? default : dyes;
     }
 
     public AppearanceData? GetRetainedAppearance(ActorSnapshot snapshot)
-        => GetModel(snapshot.LogicalKey) is { } model ? WithWeaponPinScope(snapshot, model) : null;
+        => GetModel(snapshot.LogicalKey) is { } model ? ForCurrentWeaponJob(snapshot, model) : null;
 
-    private AppearanceData WithWeaponPinScope(ActorSnapshot actor, AppearanceData appearance)
-        => getWeaponPinScope?.Invoke(actor) is { } scope
-            ? (appearance with { PinnedWeaponScope = scope })
-                .ForWeaponJob(actor.ClassJob, actor.CurrentAppearance)
-            : appearance;
+    private AppearanceData ForCurrentWeaponJob(ActorSnapshot actor, AppearanceData appearance)
+    {
+        if (getWeaponPinScope?.Invoke(actor) is { } scope)
+            return (appearance with { PinnedWeaponScope = scope }).ForWeaponJob(actor.ClassJob, actor.CurrentAppearance);
+        if (!GetState(getOwner()).Models.TryGetValue(actor.LogicalKey, out var model))
+            return appearance;
+
+        var useMainhand = model.AllowsWeapon(false, actor.ClassJob);
+        var useOffhand = model.AllowsWeapon(true, actor.ClassJob);
+        return useMainhand && useOffhand ? appearance : appearance with
+        {
+            Mainhand = useMainhand ? appearance.Mainhand : actor.CurrentAppearance?.Mainhand,
+            Offhand = useOffhand ? appearance.Offhand : actor.CurrentAppearance?.Offhand,
+            MainhandDyes = useMainhand ? appearance.MainhandDyes : actor.CurrentAppearance?.MainhandDyes ?? default,
+            OffhandDyes = useOffhand ? appearance.OffhandDyes : actor.CurrentAppearance?.OffhandDyes ?? default,
+        };
+    }
 
     internal AppearanceData? GetCreateAppearance(ActorSnapshot actor, uint currentModelId, out bool outfitOnly)
-        => GetCreateAppearance(actor.LogicalKey, currentModelId, out outfitOnly) is { } appearance
-            ? WithWeaponPinScope(actor with { CurrentAppearance = null }, appearance) : null;
+    {
+        var appearance = GetCreateAppearance(actor.LogicalKey, currentModelId, out outfitOnly);
+        if (appearance is null)
+            return null;
+        if (appearance.UsesGameHeadSettings)
+            appearance = appearance with { HatVisible = null, FacewearModelId = null, VisorToggled = null };
+        return ForCurrentWeaponJob(actor with { CurrentAppearance = null }, appearance);
+    }
 
     public AppearanceData? GetCreateAppearance(LogicalActorKey actor, uint currentModelId, out bool outfitOnly)
     {
@@ -191,7 +294,7 @@ public sealed class ActorAppearancePersistence
         var state = GetState(owner);
         outfitOnly = false;
         if (state.Models.TryGetValue(actor, out var model))
-            return model;
+            return model.Appearance;
         var hasOutfit = Outfits.TryGet(owner, actor, out var outfit);
         var hasWeapons = state.Weapons.TryGetValue(actor, out var selectedWeapons);
         if (!hasOutfit && !hasWeapons)
@@ -224,5 +327,6 @@ public sealed class ActorAppearancePersistence
         {
             ColoredEquipment = outfit.Equipment,
             VieraEarsHidden = outfit.VieraEarsHidden ?? model.VieraEarsHidden,
+            UsesGameHeadSettings = false,
         };
 }

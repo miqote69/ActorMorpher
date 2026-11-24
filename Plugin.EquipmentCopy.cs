@@ -82,7 +82,8 @@ public sealed partial class Plugin
         if (original is not null)
             persistence.Outfits.SetDesired(actor.LogicalKey, original, outfit);
         if (persistence.GetModel(actor.LogicalKey) is { } existingModel)
-            persistence.RecordModel(actor, data.ApplyTo(existingModel));
+            persistence.RecordModel(actor, data.ApplyTo(existingModel), modelSearchWeaponJob: null,
+                equipmentEdited: true, weaponsEdited: data.IncludesWeapons);
         else
         {
             persistence.RecordOutfit(actor, outfit);

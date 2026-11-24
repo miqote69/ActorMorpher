@@ -2,6 +2,8 @@ using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Game.Command;
+using Dalamud.Game.Inventory;
+using Dalamud.Game.Inventory.InventoryEventArgTypes;
 using Dalamud.IoC;
 using Dalamud.Interface.Textures;
 using Dalamud.Interface.Textures.TextureWraps;
@@ -33,6 +35,7 @@ public sealed partial class Plugin : IDalamudPlugin
     [PluginService] private static IDataManager DataManager { get; set; } = null!;
     [PluginService] private static IPluginLog Log { get; set; } = null!;
     [PluginService] private static IClientState ClientState { get; set; } = null!;
+    [PluginService] private static IGameInventory GameInventory { get; set; } = null!;
     [PluginService] private static IPlayerState PlayerState { get; set; } = null!;
     [PluginService] private static ISigScanner SigScanner { get; set; } = null!;
     [PluginService] private static IFramework Framework { get; set; } = null!;
@@ -220,9 +223,11 @@ public sealed partial class Plugin : IDalamudPlugin
             redrawCoordinator,
             diagnosticRouter);
         outfitMemory = new NativeOutfitMemory(ObjectTable, humanModelClassifier, diagnosticRouter, SigScanner);
-        var facewearModels = new FacewearModelLookup(DataManager.GetExcelSheet<Glasses>()
+        var glasses = DataManager.GetExcelSheet<Glasses>();
+        var facewearModels = new FacewearModelLookup(glasses
             .Select(row => ((ushort)row.RowId, (ushort)(row.Model & 0xFFFF), (byte)((row.Model >> 16) & 0xFF))));
         outfitMemory.ResolveFacewear = facewearModels.Resolve;
+        outfitMemory.GetFacewearModel = id => glasses.TryGetRow(id, out var row) ? (uint?)row.Model : null;
         actorRegistry.ResolveFacewear = facewearModels.Resolve;
         drawObjectInjector.ResolveFacewear = facewearModels.Resolve;
         outfitMemory.GetColorOutfit = appearancePersistence.GetColorOutfit;
@@ -239,7 +244,10 @@ public sealed partial class Plugin : IDalamudPlugin
             outfitMemory,
             clientContext,
             appearancePersistence.Outfits,
-            diagnosticRouter);
+            diagnosticRouter)
+        {
+            RestoreWithGameHeadSettings = key => appearancePersistence.GetModel(key)?.UsesGameHeadSettings == true,
+        };
         appearanceApplyService.OperationCompleted += OnAppearanceOperationCompleted;
         bulkOutfitService.ActorOperationCompleted += OnBulkOutfitActorOperationCompleted;
         bulkOutfitTargetResolver = new BulkOutfitTargetResolver(diagnosticRouter, () => ClientState.ClientLanguage);
@@ -253,6 +261,8 @@ public sealed partial class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.Draw += DrawUi;
         PluginInterface.UiBuilder.OpenConfigUi += ToggleMainUi;
         Framework.Update += OnPluginFrameworkUpdate;
+        ClientState.ClassJobChanged += OnLocalPlayerClassJobChanged;
+        GameInventory.InventoryChangedRaw += OnLocalPlayerInventoryChanged;
         ClientState.Logout += OnPlateLogout;
     }
 
@@ -263,6 +273,8 @@ public sealed partial class Plugin : IDalamudPlugin
         plateImport.Cancel();
         ClientState.Logout -= OnPlateLogout;
         Framework.Update -= OnPluginFrameworkUpdate;
+        ClientState.ClassJobChanged -= OnLocalPlayerClassJobChanged;
+        GameInventory.InventoryChangedRaw -= OnLocalPlayerInventoryChanged;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleMainUi;
         PluginInterface.UiBuilder.Draw -= DrawUi;
         primaryCommandRegistration.Dispose();
@@ -1265,11 +1277,12 @@ public sealed partial class Plugin : IDalamudPlugin
 
     private bool CompleteActorRestore(LogicalActorKey actor, out string message, bool outfitRestored = false)
     {
-        // A pin also registers an appearance without changing the model. Compare the
-        // actual model fields to the game source, not whether a pin/record exists.
+        // Restore an applied local NPC model through the game redraw even if an
+        // outfit was also restored. A pin alone does not require a model redraw.
         var outfitOnly = false;
         var weaponColorsConfirmed = true;
-        if (actorResolver.TryResolve(actor, out var restored)
+        if (!appearancePersistence.HasLocalModelSearchAppearance(actor)
+            && actorResolver.TryResolve(actor, out var restored)
             && actorRegistry.CaptureCurrentAppearance(restored) is { } rendered
             && appearanceMemory.TryCapture(restored, out var gameAppearance)
             && PinnedOutfitStore.CanMaintainWithOutfit(rendered, gameAppearance)
@@ -1393,7 +1406,7 @@ public sealed partial class Plugin : IDalamudPlugin
         var appearance = actorRegistry.CaptureCurrentAppearance(current);
         if (appearance is not null)
         {
-            appearancePersistence.RecordModel(current, appearance);
+            appearancePersistence.RecordModel(current, appearance, modelSearchWeaponJob: null, equipmentEdited: true);
             drawObjectInjector.EnablePersistentAppearance(current);
             failedPinnedOutfitReapplyStates.Remove(actor.Key);
             failedPinnedAppearanceStates.Remove(actor.Key);
@@ -1519,7 +1532,11 @@ public sealed partial class Plugin : IDalamudPlugin
             if (actorResolver.TryResolve(actor, representation, out var current)
                 && CanPublishAppearanceCompletion(succeeded, representation, current))
             {
-                if (PublishAppliedAppearance(current, CreatePublishedAppearance(applied), customizeEdit)
+                var weaponJob = modelSearchApply && current.IsLocalPlayer
+                    ? (byte?)(ObjectTable.LocalPlayer?.ClassJob.RowId ?? current.ClassJob)
+                    : null;
+                var appearance = CreatePublishedAppearance(appearancePersistence.ResolveCustomizeEquipment(current, applied));
+                if (PublishAppliedAppearance(current, appearance, customizeEdit, weaponJob)
                     && modelSearchApply)
                 {
                     var pending = pendingCustomizeEdits.GetLatest(actor, representation);
@@ -1604,7 +1621,7 @@ public sealed partial class Plugin : IDalamudPlugin
         {
             appearancePersistence.RecordOutfit(current, desired);
             drawObjectInjector.EnablePersistentAppearance(current);
-            if (appearancePersistence.GetModel(actor) is { } updated)
+            if (appearancePersistence.GetRetainedAppearance(current) is { } updated)
                 actorRegistry.RecordAppliedAppearance(actor, current.RepresentationKey, updated);
         }
 
@@ -1622,6 +1639,42 @@ public sealed partial class Plugin : IDalamudPlugin
             ActorKey = DiagnosticActorKeys.Format(diagnosticRouter, actor),
             Outcome = "Failed",
         });
+    }
+
+    private void OnLocalPlayerClassJobChanged(uint _) => FollowLocalPlayerHeadSettings();
+
+    private void OnLocalPlayerInventoryChanged(IReadOnlyCollection<InventoryEventArgs> events)
+    {
+        if (events.Any(IsEquippedAppearanceChange))
+            FollowLocalPlayerHeadSettings();
+    }
+
+    private static bool IsEquippedAppearanceChange(InventoryEventArgs change)
+    {
+        if (change.Item.ContainerType != GameInventoryType.EquippedItems)
+            return false;
+        if (change is not InventoryItemChangedArgs changed)
+            return change.Type is GameInventoryEvent.Added or GameInventoryEvent.Removed;
+
+        ref readonly var oldItem = ref changed.OldItemState;
+        ref readonly var newItem = ref changed.Item;
+        return oldItem.ItemId != newItem.ItemId || oldItem.GlamourId != newItem.GlamourId
+            || !oldItem.Stains.SequenceEqual(newItem.Stains);
+    }
+
+    private void FollowLocalPlayerHeadSettings()
+    {
+        var local = actorRegistry.Entries.FirstOrDefault(static actor => actor.IsLocalPlayer);
+        if (local is null || ObjectTable.LocalPlayer?.GameObjectId != local.GameObjectId
+            || pinnedOutfitStore.IsPinned(local)
+            || !appearancePersistence.ReleaseModelSearchHeadSettings(local.Key, out var appearance))
+            return;
+
+        var current = local.Current;
+        if (current.CurrentAppearance is { } rendered)
+            actorRegistry.RecordAppliedAppearance(local.Key, current.RepresentationKey,
+                rendered with { UsesGameHeadSettings = true });
+        outfitMemory.ApplyGameHeadSettings(current, appearance);
     }
 
     private void OnPluginFrameworkUpdate(IFramework framework)

@@ -254,6 +254,61 @@ public sealed unsafe class NativeOutfitMemoryTests
         }
     }
 
+    [Fact]
+    public void RestoringAlreadyLoadedHeadReplacesAStalePendingHead()
+    {
+        Human human = default;
+        var table = stackalloc nint[72];
+        new Span<nint>(table, 72).Clear();
+        table[69] = (nint)(delegate* unmanaged<CharacterBase*, uint, EquipmentModelId*, byte>)&QueueEquipment;
+        *(nint**)&human = table;
+        var pending = stackalloc byte[10 * 32];
+        new Span<byte>(pending, 10 * 32).Clear();
+        human.ChangedEquipData = pending;
+        human.SlotNeedsUpdateBitfield = 1u;
+        *(ulong*)pending = 456;
+        var original = OutfitData.Create(Enumerable.Repeat(default(ArmorAppearance), 10),
+            new FacewearAppearance(true, 0), false, false);
+
+        NativeOutfitMemory.ApplyRenderedEquipment(&human, original);
+
+        Assert.Equal(0UL, *(ulong*)pending);
+        Assert.Equal(1, *(int*)(pending + 8));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(0x040384)]
+    public void RestoringFacewearTargetsTheRenderedSlotEvenWhenGameOwnedSettingsAreAlreadySet(uint packed)
+    {
+        Human human = default;
+        var table = stackalloc nint[73];
+        new Span<nint>(table, 73).Clear();
+        table[70] = (nint)(delegate* unmanaged<CharacterBase*, uint, EquipmentModelId*, byte>)&QueueGlasses;
+        table[72] = (nint)(delegate* unmanaged<CharacterBase*, EquipmentModelId*, uint, void>)&GetSelectedGlasses;
+        *(nint**)&human = table;
+        human.Glasses0 = new EquipmentModelId { Id = 800, Variant = 3 };
+        human.Glasses1 = new EquipmentModelId { Id = 801, Variant = 3 };
+
+        NativeOutfitMemory.ApplyRenderedFacewear((CharacterBase*)&human, packed);
+
+        Assert.Equal((ushort)packed, human.Glasses0.Id);
+        Assert.Equal((byte)(packed >> 16), human.Glasses0.Variant);
+        Assert.Equal((ushort)801, human.Glasses1.Id);
+    }
+
+    [UnmanagedCallersOnly]
+    private static byte QueueGlasses(CharacterBase* draw, uint slot, EquipmentModelId* model)
+    {
+        if (slot == 0)
+            ((Human*)draw)->Glasses0 = *model;
+        return 1;
+    }
+
+    [UnmanagedCallersOnly]
+    private static void GetSelectedGlasses(CharacterBase* draw, EquipmentModelId* model, uint slot)
+        => *model = slot == 0 ? ((Human*)draw)->Glasses0 : default;
+
     [UnmanagedCallersOnly]
     private static byte SubstituteHead(CharacterBase* draw, uint slot, EquipmentModelId* model)
     {

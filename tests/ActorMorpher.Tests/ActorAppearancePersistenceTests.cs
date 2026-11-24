@@ -283,6 +283,112 @@ public sealed unsafe class ActorAppearancePersistenceTests
     }
 
     [Fact]
+    public void LocalNpcApplicationKeepsItsBodyAndLeavesDifferentJobWeaponsToTheGame()
+    {
+        var state = new ActorAppearancePersistence();
+        var actor = Snapshot(ObjectKind.Pc) with { ClassJob = 42 };
+        var npc = Model(12) with
+        {
+            Mainhand = 4295036164UL,
+            Offhand = 0,
+            MainhandDyes = new(new DyeColor(1, 0, 0), null),
+        };
+        state.RecordModel(actor, npc, actor.ClassJob);
+        var otherJob = actor with { ClassJob = 19, CurrentAppearance = npc with { Mainhand = 23, Offhand = 24 } };
+
+        var sameJob = state.GetCreateAppearance(actor, 0, out _)!;
+        Assert.Equal(npc.Mainhand, sameJob.Mainhand);
+        Assert.Equal(npc.Offhand, sameJob.Offhand);
+        Assert.Equal(npc.MainhandDyes, sameJob.MainhandDyes);
+        var differentJob = state.GetCreateAppearance(otherJob, 0, out var outfitOnly)!;
+        Assert.False(outfitOnly);
+        Assert.Null(differentJob.Mainhand);
+        Assert.Null(differentJob.Offhand);
+        Assert.Equal(default, differentJob.MainhandDyes);
+        Assert.Equal(npc.Customize, differentJob.Customize);
+        Assert.Equal(npc.Equipment, differentJob.Equipment);
+        Assert.Equal(23UL, state.GetRetainedAppearance(otherJob)!.Mainhand);
+        Assert.Equal(default, state.GetWeaponDyes(otherJob, false, npc.Mainhand));
+
+        state.RecordModel(otherJob, otherJob.CurrentAppearance!);
+        Assert.Equal(npc.Mainhand, state.GetCreateAppearance(actor, 0, out _)!.Mainhand);
+        state.RecordWeapon(otherJob, true, 42);
+        Assert.Equal(42UL, state.GetCreateAppearance(otherJob, 0, out _)!.Offhand);
+        Assert.Equal(npc.Mainhand, state.GetCreateAppearance(actor, 0, out _)!.Mainhand);
+        Assert.Null(state.GetCreateAppearance(actor, 0, out _)!.Offhand);
+
+        state.Restore(actor.LogicalKey);
+        Assert.Null(state.GetCreateAppearance(otherJob, 0, out _));
+        Assert.False(state.HasLocalModelSearchAppearance(actor.LogicalKey));
+    }
+
+    [Fact]
+    public void EquipmentChangeReleasesNpcHeadSettingsAndAnotherApplyOwnsThemAgain()
+    {
+        var state = new ActorAppearancePersistence();
+        var actor = Snapshot(ObjectKind.Pc) with { ClassJob = 42 };
+        var npc = Model(12) with
+        {
+            ModelScale = 1,
+            Mainhand = 5,
+            Offhand = 0,
+            HatVisible = true,
+            FacewearModelId = 77,
+            VisorToggled = true,
+        };
+        state.RecordModel(actor, npc);
+        Assert.False(state.ReleaseModelSearchHeadSettings(actor.LogicalKey, out _));
+        state.RecordModel(actor, npc, actor.ClassJob);
+        Assert.True(state.HasLocalModelSearchAppearance(actor.LogicalKey));
+        Assert.True(state.ReleaseModelSearchHeadSettings(actor.LogicalKey, out var released));
+        var game = npc with { HatVisible = false, FacewearModelId = 0, VisorToggled = false };
+        var managed = ActorRegistry.MergeManagedAppearance(actor with { CurrentAppearance = game }, released);
+        Assert.False(managed.CurrentAppearance!.HatVisible);
+        Assert.Equal((ushort)0, managed.CurrentAppearance!.FacewearModelId);
+        var recreated = state.GetCreateAppearance(actor, 0, out _)!;
+        Assert.Equal(npc.Equipment, recreated.Equipment);
+        Assert.Null(recreated.HatVisible);
+        Assert.Null(recreated.FacewearModelId);
+        Assert.Null(recreated.VisorToggled);
+        Assert.False(state.ReleaseModelSearchHeadSettings(actor.LogicalKey, out _));
+        state.RecordModel(actor, npc, actor.ClassJob);
+        var reapplied = state.GetCreateAppearance(actor, 0, out _)!;
+        Assert.Equal(npc.HatVisible, reapplied.HatVisible);
+        Assert.Equal(npc.FacewearModelId, reapplied.FacewearModelId);
+    }
+
+    [Theory]
+    [InlineData(42, 19)]
+    [InlineData(19, 42)]
+    [InlineData(42, 42)]
+    public void QueuedCustomizeUsesTheJobAndHeadSettingsAtExecution(byte queuedJob, byte executingJob)
+    {
+        var state = new ActorAppearancePersistence();
+        var actor = Snapshot(ObjectKind.Pc) with { ClassJob = 42 };
+        var npc = Model(12) with { Mainhand = 11, Offhand = 12, HatVisible = true, FacewearModelId = 77 };
+        state.RecordModel(actor, npc, actor.ClassJob);
+        var change = Model(13).Customize;
+        var queued = npc with
+        {
+            Customize = change,
+            Mainhand = queuedJob == 42 ? 11UL : 21UL,
+            Offhand = queuedJob == 42 ? 12UL : 22UL,
+            UsesRetainedPlayerEquipment = true,
+        };
+        Assert.True(state.ReleaseModelSearchHeadSettings(actor.LogicalKey, out _));
+
+        var resolved = state.ResolveCustomizeEquipment(actor with { ClassJob = executingJob }, queued);
+
+        Assert.Equal(executingJob == 42 ? npc.Mainhand : null, resolved.Mainhand);
+        Assert.Equal(executingJob == 42 ? npc.Offhand : null, resolved.Offhand);
+        Assert.True(resolved.UsesGameHeadSettings);
+        Assert.False(resolved.UsesRetainedPlayerEquipment);
+        Assert.Equal(change, resolved.Customize);
+        Assert.Equal(npc.Equipment, resolved.Equipment);
+        Assert.Same(npc, state.ResolveCustomizeEquipment(actor, npc));
+    }
+
+    [Fact]
     public void OutfitOnlyUsesGameCustomizeAndOneCreateWithTemporaryEquipment()
     {
         var state = new ActorAppearancePersistence();

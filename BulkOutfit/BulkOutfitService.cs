@@ -56,6 +56,7 @@ public sealed class BulkOutfitService : IDisposable
     public OutfitOverrideStore Store => store;
     public string LastStatus { get; private set; } = string.Empty;
     public event Action<LogicalActorKey, BulkOperationType, OutfitData?, bool>? ActorOperationCompleted;
+    internal Func<LogicalActorKey, bool>? RestoreWithGameHeadSettings { get; set; }
 
     internal bool TryResolveOperationActor(LogicalActorKey key, out ActorSnapshot actor)
         => operationTargetRepresentation is { } representation
@@ -247,10 +248,27 @@ public sealed class BulkOutfitService : IDisposable
         if (!resolver.TryResolve(key, out var actor) || !memory.TryCaptureRendered(actor, out _)
             || !store.TryGet(key, out var state))
             return false;
-        if (!memory.TryApply(actor, state.Original))
+        if (!TryApplyOriginalOutfit(actor, state.Original, out _))
             return false;
         store.CompleteRestore(key);
         return true;
+    }
+
+    private bool TryApplyOriginalOutfit(ActorSnapshot actor, OutfitData original, out OutfitData restored)
+    {
+        restored = original;
+        if (RestoreWithGameHeadSettings?.Invoke(actor.LogicalKey) is true)
+        {
+            if (!memory.TryCapture(actor, out var game))
+                return false;
+            restored = original with
+            {
+                HatVisible = game.HatVisible,
+                Facewear = game.Facewear,
+                VisorToggled = game.VisorToggled,
+            };
+        }
+        return memory.TryApply(actor, restored);
     }
 
     public bool StartPersistentApply(LogicalActorKey actor, OutfitData outfit, out string message)
@@ -483,12 +501,12 @@ public sealed class BulkOutfitService : IDisposable
                 NotifyActorOperationCompleted(key, activeOperation.Type, null, false);
                 return;
             }
-            if (memory.TryApply(actor, state.Original))
+            if (TryApplyOriginalOutfit(actor, state.Original, out var restored))
             {
                 store.CompleteRestore(key);
                 activeOperation.RecordSuccess();
                 WriteActorLog(DiagnosticEventIds.OutfitApplied, "Original actor outfit restored.", key, "Restored");
-                NotifyActorOperationCompleted(key, activeOperation.Type, state.Original, true);
+                NotifyActorOperationCompleted(key, activeOperation.Type, restored, true);
             }
             else
             {

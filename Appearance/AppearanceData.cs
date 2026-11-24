@@ -21,6 +21,10 @@ public sealed record AppearanceData(
     public WeaponDyes OffhandDyes { get; init; }
     public bool? VieraEarsHidden { get; init; }
     public ImmutableArray<CustomizeColorOverride> CustomizeColors { get; init; } = [];
+    // A game job/equipment change releases the local Model Search head settings.
+    internal bool UsesGameHeadSettings { get; init; }
+    // Only a queued customize redraw can carry this request to reuse the live model's equipment scope.
+    internal bool UsesRetainedPlayerEquipment { get; init; }
     // Request metadata only. The saved pin owns the job; this travels with a queued
     // maintenance operation so a later job change cannot reapply its old weapons.
     internal WeaponPinScope? PinnedWeaponScope { get; init; }

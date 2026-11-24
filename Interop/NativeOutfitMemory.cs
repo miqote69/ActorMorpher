@@ -15,6 +15,7 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
     private readonly IHumanModelClassifier humanModelClassifier;
     private readonly IDiagnosticLog diagnostics;
     internal Func<ushort, byte, FacewearAppearance>? ResolveFacewear { get; set; }
+    internal Func<ushort, uint?>? GetFacewearModel { get; set; }
     internal Func<LogicalActorKey, OutfitData?>? GetColorOutfit { get; set; }
     internal Action<LogicalActorKey, OutfitData>? SetColorOutfit { get; set; }
 
@@ -243,13 +244,60 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
             NativeEquipmentColors.ApplySlot(characterBase, slot, outfit.Equipment[slot],
                 previousColors is not null && slot < previousColors.Equipment.Length
                 && (previousColors.Equipment[slot].Color1 is not null || previousColors.Equipment[slot].Color2 is not null));
-        if (outfit.Facewear.IsAvailable && character->DrawData.GlassesIds[0] != outfit.Facewear.ModelId)
-            character->DrawData.SetGlasses(0, outfit.Facewear.ModelId);
-        if (character->DrawData.IsVisorToggled != outfit.VisorToggled)
+        if (outfit.Facewear.IsAvailable)
+            ApplyFacewear(character, human, outfit.Facewear.ModelId);
+        if (character->DrawData.IsVisorToggled != outfit.VisorToggled
+            || characterBase->VisorToggled != outfit.VisorToggled)
             character->DrawData.SetVisor(outfit.VisorToggled);
         ApplyEarVisibility(characterBase, outfit.VieraEarsHidden);
         ObserveAnimation(diagnostics, characterBase, "AfterOutfitMetadata");
         return true;
+    }
+
+    internal void ApplyGameHeadSettings(ActorSnapshot actor, AppearanceData previous)
+    {
+        if (!TryResolveHuman(actor, out var character))
+            return;
+        var characterBase = ((GameObject*)character)->GetCharacterBase();
+        if (characterBase is null || characterBase->GetModelType() != CharacterBase.ModelType.Human)
+            return;
+
+        var human = (Human*)characterBase;
+        var head = default(EquipmentModelId);
+        characterBase->GetEquipmentSlotModel(&head, 0);
+        if (character->DrawData.IsHatHidden)
+            head = default;
+        else if (head.Id == 0 && previous.HatVisible == false && !previous.Equipment.IsDefaultOrEmpty)
+            head.Value = previous.Equipment[0];
+        ApplyRenderedEquipmentSlot(human, 0, head);
+
+        ApplyFacewear(character, human, character->DrawData.GlassesIds[0]);
+        var visorToggled = character->DrawData.IsVisorToggled;
+        if (characterBase->VisorToggled != visorToggled)
+            character->DrawData.SetVisor(visorToggled);
+    }
+
+    private void ApplyFacewear(Character* character, Human* human, ushort rowId)
+    {
+        if (character->DrawData.GlassesIds[0] != rowId)
+        {
+            character->DrawData.SetGlasses(0, rowId);
+            return;
+        }
+        // SetGlasses returns early when the backing row is unchanged. An NPC can
+        // still have left different glasses on this Human's draw object.
+        var model = rowId == 0 ? 0U : GetFacewearModel?.Invoke(rowId);
+        if (model is { } packed)
+            ApplyRenderedFacewear((CharacterBase*)human, packed);
+    }
+
+    internal static void ApplyRenderedFacewear(CharacterBase* human, uint packed)
+    {
+        var desired = new EquipmentModelId { Id = (ushort)packed, Variant = (byte)(packed >> 16) };
+        var selected = default(EquipmentModelId);
+        human->GetGlassesSlotModel(&selected, 0);
+        if (selected.Id != desired.Id || selected.Variant != desired.Variant)
+            human->SetGlassesSlotModel(0, &desired);
     }
 
     internal static void ApplyEarVisibility(CharacterBase* model, bool? hidden)
@@ -342,18 +390,25 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
                 Stain0 = source.Stain1,
                 Stain1 = source.Stain2,
             };
-            if (human->EquipmentModels[index].Value != model.Value || (index == 0 && visibilityChanged))
-            {
-                var requested = model.Value;
-                ((CharacterBase*)human)->SetEquipmentSlotModel((uint)index, &model);
-                if (index == 0)
-                {
-                    // A nested setter can reinterpret an empty Head as a hat-visibility
-                    // update. Keep this operation's head in the existing pending slot.
-                    ((EquipmentModelId*)human->ChangedEquipData)->Value = requested;
-                    human->SlotNeedsUpdateBitfield |= 1u;
-                }
-            }
+            ApplyRenderedEquipmentSlot(human, index, model, index == 0 && visibilityChanged);
+        }
+    }
+
+    private static void ApplyRenderedEquipmentSlot(Human* human, int index, EquipmentModelId model, bool force = false)
+    {
+        var pendingHeadDiffers = index == 0 && (human->SlotNeedsUpdateBitfield & 1u) != 0
+            && human->ChangedEquipData != null && ((EquipmentModelId*)human->ChangedEquipData)->Value != model.Value;
+        if (!force && !pendingHeadDiffers && human->EquipmentModels[index].Value == model.Value)
+            return;
+
+        var requested = model.Value;
+        ((CharacterBase*)human)->SetEquipmentSlotModel((uint)index, &model);
+        if (index == 0)
+        {
+            // A nested setter can reinterpret an empty Head as a hat-visibility
+            // update. Keep this operation's head in the existing pending slot.
+            ((EquipmentModelId*)human->ChangedEquipData)->Value = requested;
+            human->SlotNeedsUpdateBitfield |= 1u;
         }
     }
 

@@ -730,6 +730,34 @@ public sealed class ApplyServicesTests
     }
 
     [Fact]
+    public void ActorRestoreKeepsTheGamesCurrentHeadSettingsAfterAnEquipmentChange()
+    {
+        var actor = Snapshot(1);
+        var original = Outfit(1) with { HatVisible = true, Facewear = new(true, 45), VisorToggled = true };
+        var desired = Outfit(9);
+        var game = Outfit(11) with { HatVisible = false, Facewear = new(true, 0), VisorToggled = false };
+        var store = new OutfitOverrideStore();
+        store.SetDesired(actor.LogicalKey, original, desired);
+        var memory = new FakeOutfitMemory(new() { [actor.LogicalKey] = game });
+        memory.Rendered[actor.LogicalKey] = desired;
+        using var service = new BulkOutfitService(new FakeResolver(actor), memory,
+            new FakeContext(), store, NullDiagnosticLog.Instance)
+        {
+            RestoreWithGameHeadSettings = key => key == actor.LogicalKey,
+        };
+        service.ProcessNextFrame();
+        Assert.True(service.StartRestore(actor.LogicalKey, out _));
+        service.ProcessNextFrame();
+
+        var restored = Assert.Single(memory.ApplyCalls).Outfit;
+        Assert.Equal(original.Equipment, restored.Equipment);
+        Assert.Equal(game.HatVisible, restored.HatVisible);
+        Assert.Equal(game.Facewear, restored.Facewear);
+        Assert.Equal(game.VisorToggled, restored.VisorToggled);
+        Assert.False(store.TryGet(actor.LogicalKey, out _));
+    }
+
+    [Fact]
     public void ActorRestoreExceptionDoesNotRetryOrPreventTheNextActor()
     {
         var first = Snapshot(1);
