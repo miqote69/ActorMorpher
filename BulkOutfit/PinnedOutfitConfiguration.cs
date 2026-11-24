@@ -76,6 +76,13 @@ public sealed class PinnedOutfitConfiguration
         };
 
     public static PinnedOutfitConfiguration Create(ActorEntry actor, AppearanceData appearance)
+    {
+        var pin = CreateAppearanceIdentity(actor);
+        pin.Appearance = appearance;
+        return pin;
+    }
+
+    internal static PinnedOutfitConfiguration CreateAppearanceIdentity(ActorEntry actor)
         => new()
         {
             MinionOwnerContentId = MinionOwner(actor),
@@ -91,7 +98,6 @@ public sealed class PinnedOutfitConfiguration
             ObjectKind = (int)actor.Kind,
             BaseId = actor.BaseId,
             IsLocalPlayer = actor.IsLocalPlayer,
-            Appearance = appearance,
             WeaponClassJob = actor.Kind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc
                 ? actor.Current.ClassJob : null,
         };

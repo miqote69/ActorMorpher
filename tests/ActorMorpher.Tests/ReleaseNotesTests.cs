@@ -14,6 +14,14 @@ public sealed class ReleaseNotesTests
         => Assert.Equal($"Actor Morpher v{typeof(ReleaseNotesContent).Assembly.GetName().Version}", ReleaseNotesContent.Title);
 
     [Theory]
+    [InlineData("- あいう「NPC」を復元しました。\n\n次版", 7, "- あいう\n「NPC」を復\n元しました。\n\n次版")]
+    [InlineData("- 復元しました。", 8, "- 復元しまし\nた。")]
+    [InlineData("- あいうBuddyRiderで表示。", 10, "- あいう\nBuddyRider\nで表示。")]
+    [InlineData("- あいうキャラ", 6, "- あいう\nキャラ")]
+    public void JapaneseNotesKeepBulletMarkersAndUnbreakableTextTogether(string text, int width, string expected)
+        => Assert.Equal(expected, ReleaseNotesContent.WrapJapanese(text, width, static line => line.Length));
+
+    [Theory]
     [InlineData(UiLanguage.Japanese, "リリースノート", "確認が残っている項目")]
     [InlineData(UiLanguage.English, "Release Notes", "Checks still pending")]
     [InlineData(UiLanguage.German, "Versionshinweise", "Noch ausstehende Prüfungen")]

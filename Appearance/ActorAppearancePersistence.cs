@@ -13,7 +13,12 @@ public sealed class ActorAppearancePersistence
         public readonly Dictionary<ulong, LogicalActorKey> LivingActors = new();
         public readonly Dictionary<LogicalActorKey, OutfitData> ColorOutfits = new();
         public readonly Dictionary<(LogicalActorKey Actor, ActorRepresentationKey Representation), CustomizeCopyData> OriginalCustomize = new();
+        public readonly Dictionary<LogicalActorKey, ModifiedActor> ModifiedActors = new();
     }
+
+    private sealed record ModifiedActor(ActorEntry Entry, PinnedOutfitConfiguration Identity,
+        AppearanceData? AppearanceBeforeClearingSharedPins = null);
+
     private sealed record RetainedModel(AppearanceData Appearance, byte? MainhandJob, byte? OffhandJob)
     {
         internal bool AllowsWeapon(bool offhand, byte job)
@@ -83,6 +88,24 @@ public sealed class ActorAppearancePersistence
             BindIdentity(state, identity, actor.LogicalKey);
     }
 
+    private static void RememberModifiedActor(CharacterState state, ActorSnapshot actor)
+    {
+        Register(state, actor);
+        if (state.ModifiedActors.TryGetValue(actor.LogicalKey, out var previous))
+            actor = actor with { CurrentAppearance = actor.CurrentAppearance ?? previous.Entry.Current.CurrentAppearance };
+        var entry = new ActorEntry(actor.LogicalKey, actor.Name, actor.ObjectKind, actor.IsLocalPlayer, [actor], actor.IsOwnMinion);
+        if (previous is null)
+            ForgetModifiedPinTarget(state, entry);
+        state.ModifiedActors[actor.LogicalKey] = new(entry, PinnedOutfitConfiguration.CreateAppearanceIdentity(entry));
+    }
+
+    private static void ForgetModifiedPinTarget(CharacterState state, ActorEntry entry)
+    {
+        foreach (var (key, previous) in state.ModifiedActors)
+            if (previous.Identity.Matches(entry))
+                state.ModifiedActors.Remove(key);
+    }
+
     public void RecordModel(ActorSnapshot actor, AppearanceData appearance)
         => RecordModel(actor, appearance, modelSearchWeaponJob: null);
 
@@ -92,7 +115,7 @@ public sealed class ActorAppearancePersistence
         if (appearance.PinnedWeaponScope is not null || appearance.UsesRetainedPlayerEquipment)
             appearance = appearance with { PinnedWeaponScope = null, UsesRetainedPlayerEquipment = false };
         var state = GetState(getOwner());
-        Register(state, actor);
+        RememberModifiedActor(state, actor with { CurrentAppearance = appearance });
         state.Weapons.Remove(actor.LogicalKey);
         var previous = state.Models.GetValueOrDefault(actor.LogicalKey);
         state.Models[actor.LogicalKey] = RetainModel(previous, appearance,
@@ -132,7 +155,7 @@ public sealed class ActorAppearancePersistence
     public void RecordOutfit(ActorSnapshot actor, OutfitData outfit)
     {
         var state = GetState(getOwner());
-        Register(state, actor);
+        RememberModifiedActor(state, actor);
         if (state.Models.TryGetValue(actor.LogicalKey, out var model))
             state.Models[actor.LogicalKey] = model with { Appearance = WithOutfit(model.Appearance, outfit) };
     }
@@ -202,7 +225,7 @@ public sealed class ActorAppearancePersistence
     internal void RecordWeapon(ActorSnapshot actor, bool offhand, ulong weapon, WeaponDyes? dyes = null)
     {
         var state = GetState(getOwner());
-        Register(state, actor);
+        RememberModifiedActor(state, actor);
         if (state.Models.TryGetValue(actor.LogicalKey, out var model))
         {
             var appearance = model.Appearance;
@@ -308,13 +331,83 @@ public sealed class ActorAppearancePersistence
         return hasOutfit ? WithOutfit(appearance, outfit.Desired) : appearance;
     }
 
-    public void Restore(LogicalActorKey actor)
+    internal IReadOnlyList<ActorEntry> GetAbsentModifiedActors(IReadOnlyList<ActorEntry> present,
+        IReadOnlyList<ActorEntry> modifiedPresent)
+    {
+        var owner = getOwner();
+        var state = GetState(owner);
+        if (state.ModifiedActors.Count == 0)
+            return [];
+        var presentKeys = present.Select(static actor => actor.Key).ToHashSet();
+        return state.ModifiedActors.Values
+            .Where(actor => !presentKeys.Contains(actor.Entry.Key)
+                && HasRetainedEdit(owner, state, actor.Entry)
+                && !modifiedPresent.Any(actor.Identity.Matches))
+            .Select(actor => actor.Entry)
+            .ToArray();
+    }
+
+    private bool HasRetainedEdit(ulong owner, CharacterState state, ActorEntry actor)
+        => state.Models.ContainsKey(actor.Key) || (actor.Current.CurrentAppearance is not null
+            && (state.Weapons.ContainsKey(actor.Key) || HasChangedOutfit(owner, actor.Key)));
+
+    private bool HasChangedOutfit(ulong owner, LogicalActorKey actor)
+        => Outfits.TryGet(owner, actor, out var outfit)
+            && !OutfitDataValueComparer.AreEqual(outfit.Original, outfit.Desired);
+
+    internal AppearanceData? CaptureAbsentPinAppearance(ActorEntry actor)
+    {
+        var owner = getOwner();
+        var state = GetState(owner);
+        return state.ModifiedActors[actor.Key].AppearanceBeforeClearingSharedPins
+            ?? ComposeRetainedPinAppearance(owner, state, actor.Current);
+    }
+
+    internal void RememberSharedAppearanceForBulkPin(PinnedOutfitStore pins)
+    {
+        var owner = getOwner();
+        var state = GetState(owner);
+        foreach (var actor in state.ModifiedActors.Values.ToArray())
+        {
+            var appearance = actor.AppearanceBeforeClearingSharedPins
+                ?? ComposeRetainedPinAppearance(owner, state, actor.Entry.Current);
+            if (appearance is not null && pins.ApplyCurrentNpcSharingToRetainedPin(actor.Entry, appearance) is { } shared)
+                state.ModifiedActors[actor.Entry.Key] = actor with { AppearanceBeforeClearingSharedPins = shared };
+        }
+    }
+
+    private AppearanceData? ComposeRetainedPinAppearance(ulong owner, CharacterState state, ActorSnapshot actor)
+    {
+        if (GetRetainedAppearance(actor) is { } model)
+            return model;
+        var appearance = actor.CurrentAppearance;
+        if (appearance is null)
+            return null;
+        if (Outfits.TryGet(owner, actor.LogicalKey, out var outfit) && appearance.Category == ModelCategory.Human)
+            appearance = WithOutfit(appearance, outfit.Desired);
+        if (state.Weapons.TryGetValue(actor.LogicalKey, out var weapons))
+            appearance = appearance with
+            {
+                Mainhand = weapons.Mainhand ?? appearance.Mainhand,
+                Offhand = weapons.Offhand ?? appearance.Offhand,
+                MainhandDyes = weapons.Mainhand is null ? appearance.MainhandDyes : weapons.MainhandDyes,
+                OffhandDyes = weapons.Offhand is null ? appearance.OffhandDyes : weapons.OffhandDyes,
+            };
+        return appearance;
+    }
+
+    public void Restore(LogicalActorKey actor) => Restore(actor, null);
+
+    internal void Restore(LogicalActorKey actor, ActorEntry? pinTarget)
     {
         var owner = getOwner();
         var state = GetState(owner);
         state.Models.Remove(actor);
         state.Weapons.Remove(actor);
         state.ColorOutfits.Remove(actor);
+        state.ModifiedActors.Remove(actor);
+        if (pinTarget is not null)
+            ForgetModifiedPinTarget(state, pinTarget);
         foreach (var key in state.OriginalCustomize.Keys.Where(key => key.Actor == actor).ToArray())
             state.OriginalCustomize.Remove(key);
         Outfits.CompleteRestore(owner, actor);

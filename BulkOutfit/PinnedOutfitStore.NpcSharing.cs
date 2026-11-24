@@ -125,6 +125,19 @@ public sealed partial class PinnedOutfitStore
             && (HasSharedPin(owner, shared!) || !shared!.Attempted.Contains((actor.Key, actor.Current.RepresentationKey)));
     }
 
+    // A bulk pin of an absent Actor must use the current group components even
+    // if the game already applied them, or the Actor is no longer available.
+    internal AppearanceData? ApplyCurrentNpcSharingToRetainedPin(ActorEntry actor, AppearanceData appearance)
+    {
+        if (!sharedEquipment.TryGetValue(getOwner(), out var groups)
+            || getNpcEquipmentGroup?.Invoke(actor.Kind, actor.BaseId) is not { } group
+            || !groups.TryGetValue(group.Identity, out var shared))
+            return null;
+        if (shared.Equipment is { } equipment) appearance = equipment.ApplyTo(appearance);
+        if (shared.Customize is { } customize) appearance = customize.ApplyTo(appearance);
+        return appearance;
+    }
+
     internal bool WasSharedNpcChangeAttempted(ActorEntry actor)
         => FindSharedEquipment(actor, out _)?.Attempted.Contains((actor.Key, actor.Current.RepresentationKey)) == true;
 

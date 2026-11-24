@@ -1299,7 +1299,8 @@ public sealed partial class Plugin : IDalamudPlugin
             outfitOnly = true;
         }
         actorRegistry.ClearManagedAppearance(actor);
-        appearancePersistence.Restore(actor);
+        actorRegistry.TryGet(actor, out var pinTarget);
+        appearancePersistence.Restore(actor, pinTarget);
         mainWindow.ClearCustomizeDraft(actor);
         UnpinActor(actor);
         if (outfitOnly)
@@ -1381,22 +1382,48 @@ public sealed partial class Plugin : IDalamudPlugin
 
     public int AppearancePinCount => pinnedOutfitStore.Count;
 
-    public IReadOnlyList<ActorEntry> GetModifiedPinActors()
-        => actorRegistry.Entries.Where(actor => IsActorModified(actor.Key)).ToArray();
+    internal int CountModifiedPinActors(Func<LogicalActorKey, bool> isModified)
+    {
+        var current = actorRegistry.Entries;
+        var modified = current.Where(actor => isModified(actor.Key)).ToArray();
+        return modified.Length + appearancePersistence.GetAbsentModifiedActors(current, modified).Count;
+    }
 
     public string PinModifiedActors()
     {
-        var result = pinnedOutfitStore.PinCurrent(GetModifiedPinActors(), CapturePinAppearance);
+        var result = PinModifiedActors(pinnedOutfitStore, appearancePersistence, actorRegistry.Entries,
+            IsActorModified, CapturePinAppearance);
         return Localizer.Get(TextKey.AppearancePinsSaved, result.Pinned, result.Unavailable);
+    }
+
+    internal static (int Pinned, int Unavailable) PinModifiedActors(PinnedOutfitStore pins,
+        ActorAppearancePersistence persistence, IReadOnlyList<ActorEntry> present,
+        Func<LogicalActorKey, bool> isModified, Func<ActorEntry, AppearanceData?> capture)
+    {
+        var modified = present.Where(actor => isModified(actor.Key)).ToArray();
+        var absent = persistence.GetAbsentModifiedActors(present, modified);
+        var retained = absent.ToDictionary(actor => actor.Key, actor =>
+        {
+            var appearance = persistence.CaptureAbsentPinAppearance(actor);
+            return appearance is null ? null : pins.ApplyCurrentNpcSharingToRetainedPin(actor, appearance) ?? appearance;
+        });
+        return pins.PinCurrent(absent.Concat(modified),
+            actor => retained.TryGetValue(actor.Key, out var appearance) ? appearance : capture(actor));
     }
 
     public string UnpinAllActors()
     {
         Log.Information("[PinPersistence] UnpinAllRequested PinCount={PinCount}", pinnedOutfitStore.Count);
-        var removed = pinnedOutfitStore.UnpinAll();
+        var removed = UnpinAllActors(pinnedOutfitStore, appearancePersistence);
         failedPinnedOutfitReapplyStates.Clear();
         failedPinnedAppearanceStates.Clear();
         return Localizer.Get(TextKey.AppearancePinsRemoved, removed);
+    }
+
+    internal static int UnpinAllActors(PinnedOutfitStore pins, ActorAppearancePersistence persistence)
+    {
+        persistence.RememberSharedAppearanceForBulkPin(pins);
+        return pins.UnpinAll();
     }
 
     private AppearanceData? CapturePinAppearance(ActorEntry actor)

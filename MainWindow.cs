@@ -74,6 +74,8 @@ public sealed partial class MainWindow : Window, IDisposable
     private bool equipmentPickerFocusRequested;
     private uint equipmentPickerJob;
     private Dalamud.Game.ClientLanguage equipmentPickerLanguage;
+    private (ImFontPtr Font, float FontSize, float Width) japaneseNotesLayout;
+    private string? wrappedJapaneseNotes;
 
     private static readonly uint[] HumanRaces =
     [
@@ -172,11 +174,7 @@ public sealed partial class MainWindow : Window, IDisposable
             if (ImGui.BeginTabItem($"{T(TextKey.ReleaseNotes)}###release-notes"))
             {
                 if (ImGui.BeginChild("##release-notes-tab-content", Vector2.Zero, false))
-                {
-                    ImGui.TextUnformatted(ReleaseNotesContent.Title);
-                    ImGui.Separator();
-                    ImGui.TextWrapped(ReleaseNotesContent.GetText(plugin.Localizer.EffectiveLanguage));
-                }
+                    DrawReleaseNotes();
                 ImGui.EndChild();
                 ImGui.EndTabItem();
             }
@@ -188,6 +186,30 @@ public sealed partial class MainWindow : Window, IDisposable
             previewProjector.Clear();
         plugin.SetModelPreviewActive(previewActive);
         DrawSelectedActorMarker();
+    }
+
+    private void DrawReleaseNotes()
+    {
+        ImGui.TextUnformatted(ReleaseNotesContent.Title);
+        ImGui.Separator();
+        var language = plugin.Localizer.EffectiveLanguage;
+        var notes = ReleaseNotesContent.GetText(language);
+        if (language != UiLanguage.Japanese)
+        {
+            ImGui.TextWrapped(notes);
+            return;
+        }
+
+        var layout = (Font: ImGui.GetFont(), FontSize: ImGui.GetFontSize(), Width: ImGui.GetContentRegionAvail().X);
+        if (wrappedJapaneseNotes is null || japaneseNotesLayout != layout)
+        {
+            wrappedJapaneseNotes = ReleaseNotesContent.WrapJapanese(notes, layout.Width,
+                static line => ImGui.CalcTextSize(line).X);
+            japaneseNotesLayout = layout;
+        }
+        ImGui.PushTextWrapPos(-1);
+        ImGui.TextUnformatted(wrappedJapaneseNotes);
+        ImGui.PopTextWrapPos();
     }
 
     private void DrawSettingsTab()
@@ -1091,7 +1113,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void DrawActorPinActions()
     {
-        var modifiedCount = plugin.GetVisibleActors().Count(actor => IsActorModifiedForDraw(actor.Key));
+        var modifiedCount = plugin.CountModifiedPinActors(IsActorModifiedForDraw);
         var pinLabel = T(TextKey.PinModifiedActors, modifiedCount);
         var clearLabel = T(TextKey.UnpinAllActors, plugin.AppearancePinCount);
         ImGui.BeginDisabled(modifiedCount == 0);
