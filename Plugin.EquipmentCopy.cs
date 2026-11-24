@@ -42,7 +42,8 @@ public sealed partial class Plugin
             message = "The selected actor's original equipment is not available.";
             return false;
         }
-        if (!appearanceApplyService.TryApply(current, desired, out operationId, out message))
+        if (!appearanceApplyService.TryApplyEquipmentPaste(current, desired,
+                actor => outfitMemory.TryPasteAttachedEquipment(actor, data), out operationId, out message))
             return false;
         equipmentCopyOperations.Add(operationId, (data, original));
         restoreStatus = string.Empty;

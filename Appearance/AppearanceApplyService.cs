@@ -58,8 +58,14 @@ public sealed class AppearanceApplyService : IDisposable
     public bool TryApply(ActorSnapshot target, AppearanceData desired, out Guid operationId, out string message)
         => TryApply(target.LogicalKey, target.RepresentationKey, desired, out operationId, out message);
 
+    internal bool TryApplyEquipmentPaste(ActorSnapshot target, AppearanceData desired,
+        Func<ActorSnapshot, bool?> tryApplyAttachedEquipment, out Guid operationId, out string message)
+        => TryApply(target.LogicalKey, target.RepresentationKey, desired, out operationId, out message,
+            tryApplyAttachedEquipment);
+
     private bool TryApply(LogicalActorKey key, ActorRepresentationKey? targetRepresentation,
-        AppearanceData desired, out Guid operationId, out string message)
+        AppearanceData desired, out Guid operationId, out string message,
+        Func<ActorSnapshot, bool?>? tryApplyAttachedEquipment = null)
     {
         operationId = Guid.Empty;
         if (disposed)
@@ -98,6 +104,8 @@ public sealed class AppearanceApplyService : IDisposable
             desired,
             revision,
             context.TerritoryId);
+        if (tryApplyAttachedEquipment is not null)
+            operation = operation with { TryApplyAttachedEquipment = tryApplyAttachedEquipment };
         pending[operation.OperationId] = new PendingChange(key);
         if (!redraw.Enqueue(operation))
         {

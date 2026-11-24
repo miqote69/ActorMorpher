@@ -139,10 +139,15 @@ public sealed class RedrawCoordinator : IDisposable
 
         var previousStage = operation.Stage;
         bool? backendSucceeded = null;
+        bool? equipmentApplied = null;
         try
         {
             if (operation.Stage == RedrawStage.Disable)
-                backendSucceeded = redrawBackend.TryDisable(actor);
+            {
+                equipmentApplied = operation.TryApplyAttachedEquipment?.Invoke(actor);
+                if (equipmentApplied is null)
+                    backendSucceeded = redrawBackend.TryDisable(actor);
+            }
             else if (operation.Stage == RedrawStage.Enable)
                 backendSucceeded = redrawBackend.TryEnable(actor, operation.Desired, operation.OperationId);
         }
@@ -162,6 +167,9 @@ public sealed class RedrawCoordinator : IDisposable
         current = operation.Stage switch
         {
             RedrawStage.Pending => operation with { Stage = RedrawStage.Disable },
+            RedrawStage.Disable when equipmentApplied is true => Complete(operation),
+            RedrawStage.Disable when equipmentApplied is false
+                => FailWithoutRollback(operation, "Equipment paste failed."),
             RedrawStage.Disable when backendSucceeded is true
                 => operation with { Stage = RedrawStage.Enable },
             RedrawStage.Enable when backendSucceeded is true

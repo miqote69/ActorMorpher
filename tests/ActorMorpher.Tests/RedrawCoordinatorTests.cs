@@ -4,6 +4,7 @@ using System.Linq;
 using ActorMorpher;
 using ActorMorpher.Actors;
 using ActorMorpher.Appearance;
+using ActorMorpher.Diagnostics;
 using ActorMorpher.Interop;
 using ActorMorpher.Redraw;
 using Dalamud.Game.ClientState.Objects.Enums;
@@ -27,6 +28,49 @@ public sealed class RedrawCoordinatorTests
         Assert.Equal(1, fixture.Backend.DisableCount);
         Assert.Equal(1, fixture.Backend.EnableCount);
         Assert.Equal(2, coordinator.LastResult?.FrameCount);
+    }
+
+    [Theory]
+    [InlineData(true, true, 0)]
+    [InlineData(false, false, 0)]
+    [InlineData(null, true, 1)]
+    public void EquipmentPasteUsesSlotWritesForAnAttachedActorAndRedrawForAnUnattachedActor(
+        bool? slotWriteResult, bool succeeded, int redrawCount)
+    {
+        var fixture = new Fixture();
+        var snapshot = fixture.Resolver.Snapshot;
+        var target = snapshot with
+        {
+            ObjectKind = ObjectKind.EventNpc,
+            RepresentationKey = snapshot.RepresentationKey with { TerritoryId = fixture.Context.TerritoryId },
+        };
+        fixture.Resolver.Snapshot = target;
+        using var coordinator = fixture.CreateCoordinator();
+        using var service = new AppearanceApplyService(
+            fixture.Resolver, fixture.Context, coordinator, NullDiagnosticLog.Instance);
+        var completions = new List<(Guid Operation, ActorRepresentationKey Target, AppearanceData Appearance, bool Succeeded)>();
+        var appliedTargets = new List<ActorSnapshot>();
+        service.OperationCompleted += (id, _, representation, applied, result)
+            => completions.Add((id, representation, applied, result));
+
+        var desired = Appearance(0, 2);
+        Assert.True(service.TryApplyEquipmentPaste(target, desired, actor =>
+        {
+            appliedTargets.Add(actor);
+            return slotWriteResult;
+        }, out var operationId, out _));
+        Assert.True(service.IsPending(target.LogicalKey));
+        Assert.Empty(appliedTargets);
+        Assert.Empty(completions);
+
+        for (var frame = 0; frame < 3; ++frame)
+            coordinator.ProcessNextFrame();
+
+        Assert.Equal(target, Assert.Single(appliedTargets));
+        Assert.Equal(redrawCount, fixture.Backend.DisableCount);
+        Assert.Equal(redrawCount, fixture.Backend.EnableCount);
+        Assert.Equal((operationId, target.RepresentationKey, desired, succeeded), Assert.Single(completions));
+        Assert.False(service.IsPending(target.LogicalKey));
     }
 
     [Fact]

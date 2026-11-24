@@ -120,7 +120,8 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
         return outfit;
     }
 
-    internal bool TryApplyWeapon(ActorSnapshot actor, bool offhand, ulong weapon, WeaponDyes dyes = default)
+    internal bool TryApplyWeapon(ActorSnapshot actor, bool offhand, ulong weapon, WeaponDyes dyes = default,
+        bool clearColors = false)
     {
         if (!TryResolve(actor, out var character))
             return false;
@@ -130,7 +131,7 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
         // Refresh resident weapon motions from both rendered hands without recreating the body or restarting its timeline.
         updateWeaponAnimation(&character->Timeline);
         ApplyWeaponColors(character->DrawData.Weapon(offhand ? DrawDataContainer.WeaponSlot.OffHand
-            : DrawDataContainer.WeaponSlot.MainHand).Weapon, weapon, dyes);
+            : DrawDataContainer.WeaponSlot.MainHand).Weapon, weapon, dyes, clearColors);
         return true;
     }
 
@@ -177,9 +178,9 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
         WeaponDyes dyes, bool clear = false, int? reportChannel = null)
     {
         var result = new NativeEquipmentColors.ColorApplyResult();
-        if (weapon is null)
-            return result;
         var model = (CharacterBase*)weapon;
+        if (model is null || model->Materials is null || model->ColorTableTextures is null)
+            return result;
         for (var slot = 0; slot < model->SlotCount; ++slot)
             result += NativeEquipmentColors.ApplySlot(model, slot, dyes.AsArmor(packed), clear, reportChannel);
         return result;
@@ -219,14 +220,40 @@ public sealed unsafe class NativeOutfitMemory : IOutfitMemory
         }
     }
 
+    internal bool? TryPasteAttachedEquipment(ActorSnapshot actor, EquipmentCopyData copy)
+    {
+        if (!TryResolve(actor, out var character))
+            return false;
+        var draw = NativeNpcAttachment.GetAttachedDraw(character);
+        if (draw == null)
+            return null;
+
+        // Recreating the body discards the rider's current attachment.
+        if (!TryApplyToDraw(actor, character, draw, copy.Outfit))
+            return false;
+        if (!copy.IncludesWeapons)
+            return true;
+
+        if (copy.Mainhand is { } mainhand
+            && !TryApplyWeapon(actor, false, mainhand, copy.MainhandDyes, clearColors: true))
+            return false;
+        return copy.Offhand is not { } offhand
+            || TryApplyWeapon(actor, true, offhand, copy.OffhandDyes, clearColors: true);
+    }
+
     public bool TryApply(ActorSnapshot actor, OutfitData outfit)
     {
-        if (!TryResolveHuman(actor, out var character)
-            || outfit.Equipment.Length != character->DrawData.EquipmentModelIds.Length)
+        if (!TryResolveHuman(actor, out var character))
             return false;
 
-        var characterBase = ((GameObject*)character)->GetCharacterBase();
-        if (characterBase is null || characterBase->GetModelType() != CharacterBase.ModelType.Human)
+        return TryApplyToDraw(actor, character, ((GameObject*)character)->GetCharacterBase(), outfit);
+    }
+
+    private bool TryApplyToDraw(ActorSnapshot actor, Character* character, CharacterBase* characterBase,
+        OutfitData outfit)
+    {
+        if (outfit.Equipment.Length != character->DrawData.EquipmentModelIds.Length
+            || characterBase is null || characterBase->GetModelType() != CharacterBase.ModelType.Human)
             return false;
         var human = (Human*)characterBase;
 

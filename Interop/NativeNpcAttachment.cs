@@ -71,13 +71,18 @@ internal static unsafe class NativeNpcAttachment
             : null;
     }
 
-    internal static NpcAttachmentKey? Read(Character* npc, IReadOnlyList<AttachmentOwner> owners)
+    internal static CharacterBase* GetAttachedDraw(Character* npc)
     {
         if (npc == null || (ObjectKind)npc->ObjectKind is not (ObjectKind.EventNpc or ObjectKind.BattleNpc))
             return null;
         var draw = (CharacterBase*)npc->DrawObject;
-        if (draw == null || draw->Attach.ExecuteType != 3 || draw->Attach.OwnerCharacter == null
-            || draw->Attach.AttachmentCount <= 0 || draw->Attach.SkeletonBoneAttachments == null)
+        return draw != null && draw->Attach.ExecuteType == 3 && draw->Attach.OwnerCharacter != null ? draw : null;
+    }
+
+    internal static NpcAttachmentKey? Read(Character* npc, IReadOnlyList<AttachmentOwner> owners)
+    {
+        var draw = GetAttachedDraw(npc);
+        if (draw == null || draw->Attach.AttachmentCount <= 0 || draw->Attach.SkeletonBoneAttachments == null)
             return null;
         AttachmentOwner? owner = null;
         foreach (var candidate in owners)

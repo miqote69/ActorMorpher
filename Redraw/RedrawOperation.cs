@@ -11,6 +11,9 @@ public sealed record RedrawOperation(
     int FrameCount,
     string? Error)
 {
+    // Null result means the target is unattached and uses the ordinary redraw.
+    internal Func<ActorSnapshot, bool?>? TryApplyAttachedEquipment { get; init; }
+
     public static RedrawOperation Create(
         LogicalActorKey actor,
         ActorRepresentationKey targetRepresentation,

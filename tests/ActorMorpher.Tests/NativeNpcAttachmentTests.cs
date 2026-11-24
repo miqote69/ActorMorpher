@@ -78,6 +78,8 @@ public sealed unsafe class NativeNpcAttachmentTests
         riderDraw.Attach.SkeletonBoneAttachments = (Attach.Attachment*)record;
         var owner = NativeNpcAttachment.ReadOwnedParent(&buddy, [new(123, 777)]);
         Assert.NotNull(owner);
+        Assert.Equal((nint)(&riderDraw), (nint)NativeNpcAttachment.GetAttachedDraw(&rider));
+        Assert.Null(NativeNpcAttachment.Read(&rider, []));
         var first = NativeNpcAttachment.Read(&rider, [owner.Value]);
         Assert.Equal(ObjectKind.BattleNpc, first!.Value.ParentKind);
         Assert.Equal(952u, first.Value.ParentBaseId);

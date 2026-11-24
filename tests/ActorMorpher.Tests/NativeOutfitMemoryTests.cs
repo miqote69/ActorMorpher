@@ -1,16 +1,99 @@
 using System;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.InteropServices;
+using ActorMorpher.Actors;
+using ActorMorpher.Appearance;
 using ActorMorpher.BulkOutfit;
+using ActorMorpher.Diagnostics;
 using ActorMorpher.Interop;
+using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using Xunit;
+using ObjectKind = Dalamud.Game.ClientState.Objects.Enums.ObjectKind;
 
 namespace ActorMorpher.Tests;
 
 public sealed unsafe class NativeOutfitMemoryTests
 {
+    [Theory]
+    [InlineData(CharacterBase.ModelType.Human, true)]
+    [InlineData(CharacterBase.ModelType.DemiHuman, false)]
+    public void AttachedPasteUsesTheRenderedBodyEvenWhenTheBackingModelIsNotHuman(
+        CharacterBase.ModelType renderedType, bool expected)
+    {
+        Character rider = default;
+        Human rendered = default;
+        CharacterBase parent = default;
+        var draw = (CharacterBase*)&rendered;
+        var table = stackalloc nint[72];
+        new Span<nint>(table, 72).Clear();
+        table[50] = (nint)(delegate* unmanaged<CharacterBase*, CharacterBase.ModelType>)&ReadTestModelType;
+        table[69] = (nint)(delegate* unmanaged<CharacterBase*, uint, EquipmentModelId*, byte>)&QueueEquipment;
+        *(nint**)&rendered = table;
+        draw->TargetStatus = (int)renderedType;
+        draw->Attach.ExecuteType = 3;
+        draw->Attach.OwnerCharacter = &parent;
+        var pending = stackalloc byte[10 * 32];
+        new Span<byte>(pending, 10 * 32).Clear();
+        rendered.ChangedEquipData = pending;
+        rider.DrawObject = (DrawObject*)draw;
+        rider.ObjectKind = FFXIVClientStructs.FFXIV.Client.Game.Object.ObjectKind.EventNpc;
+        rider.ModelContainer.ModelCharaId = 99;
+
+        var address = (nint)(&rider);
+        var obj = PasteStub.Create<IGameObject>(name => name switch
+        {
+            "get_Address" => address,
+            "get_GameObjectId" => 123ul,
+            "get_EntityId" => 456u,
+            _ => throw new InvalidOperationException(name),
+        });
+        var target = new ActorSnapshot(new(200, 123, 456, 1, ObjectKind.EventNpc, 30),
+            new(200, 123, 456, false, 30), "Rider", ObjectKind.EventNpc, 1, 0, 1, 0, 1, 0, 1, false);
+        var memory = new NativeOutfitMemory(PasteStub.Create<IObjectTable>(_ => obj),
+            PasteStub.Create<IHumanModelClassifier>(_ => false), NullDiagnosticLog.Instance,
+            PasteStub.Create<ISigScanner>(_ => nint.Zero));
+        var body = new ArmorAppearance(51, 2, 7, 8);
+        var outfit = OutfitData.Create(Enumerable.Range(0, 10).Select(slot => slot == 1 ? body : default),
+            FacewearAppearance.Unavailable, true, false);
+
+        Assert.Equal(expected, memory.TryPasteAttachedEquipment(target, EquipmentCopyData.FromOutfit(outfit)));
+        Assert.Equal(expected ? Model(body).Value : 0UL, *(ulong*)(pending + 32));
+        Assert.Equal((nint)draw, (nint)rider.DrawObject);
+        Assert.Equal((nint)(&parent), (nint)draw->Attach.OwnerCharacter);
+        Assert.Equal(99, rider.ModelContainer.ModelCharaId);
+    }
+
+    [UnmanagedCallersOnly]
+    private static CharacterBase.ModelType ReadTestModelType(CharacterBase* draw)
+        => (CharacterBase.ModelType)draw->TargetStatus;
+
+    public class PasteStub : DispatchProxy
+    {
+        private Func<string, object?> member = null!;
+
+        public static T Create<T>(Func<string, object?> member) where T : class
+        {
+            var stub = Create<T, PasteStub>();
+            ((PasteStub)(object)stub).member = member;
+            return stub;
+        }
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args) => member(targetMethod!.Name);
+    }
+
+    [Fact]
+    public void WeaponPasteDoesNotClearColorsBeforeMaterialBuffersExist()
+    {
+        Weapon weapon = default;
+        ((CharacterBase*)(&weapon))->SlotCount = 1;
+
+        Assert.False(NativeOutfitMemory.ApplyWeaponColors(&weapon, 0, default, clear: true).Applied);
+    }
+
     [Fact]
     public void HiddenHeadKeepsEquipmentAndDyesThroughCaptureEditAndShow()
     {
