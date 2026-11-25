@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using ActorMorpher;
 using ActorMorpher.Actors;
@@ -64,6 +65,68 @@ public sealed unsafe class MinionPinRestartTests
         pin.Session = Guid.NewGuid();
         Assert.False(pin.Matches(Minion(1234, 248, 1)));
         Assert.False(pin.Matches(old));
+    }
+
+    [Fact]
+    public void SwitchDefersDestinationPinUntilTheGameStartsItsModel()
+    {
+        var native = new NativeActorContinuity(null, new Dictionary<uint, uint> { [248] = 1639, [145] = 1165 });
+        var lyse = Minion(1234, 248, 1);
+        var ysayle = Minion(1234, 145, 1);
+        var store = new PinnedOutfitStore(new Configuration(), () => { }, () => 1);
+        var pin = Appearance();
+        Assert.Equal((1, 0), store.PinCurrent([ysayle], _ => pin));
+        var discovery = new PinnedActorDiscovery();
+        long nextScan = 0;
+
+        var old = Observe(lyse, 0, CompanionSpawnState.Active);
+        Assert.False(old.Current.MinionSwitchPending);
+        var early = Observe(ysayle, 0, CompanionSpawnState.Active);
+        Assert.NotEqual(old.Key.Lifetime, early.Key.Lifetime);
+        Assert.True(store.IsPinned(early));
+        Assert.True(early.Current.MinionSwitchPending);
+        // Even an ordinary scan must not apply the destination pin to the old draw object.
+        Assert.Empty(discovery.GetCandidates([early], store.IsPinned, 0, ref nextScan));
+        Assert.True(Observe(ysayle, 0, CompanionSpawnState.Despawning).Current.MinionSwitchPending);
+        Assert.Equal(500, nextScan);
+
+        var replacement = Observe(ysayle, 1165, CompanionSpawnState.Spawning);
+        Assert.Equal(early.Key.Lifetime, replacement.Key.Lifetime);
+        Assert.False(replacement.Current.MinionSwitchPending);
+        Assert.Same(replacement, Assert.Single(discovery.GetCandidates([replacement], store.IsPinned, 1, ref nextScan)));
+        Assert.True(store.TryGetAppearance(replacement, out var selected));
+        Assert.Same(pin, selected);
+        Assert.False(Observe(ysayle, 0, CompanionSpawnState.Spawning).Current.MinionSwitchPending);
+
+        ActorEntry Observe(ActorEntry actor, int nativeModel, CompanionSpawnState state)
+        {
+            var identity = actor.Key.Continuity!.Value;
+            var sample = new NativeActorContinuity.MinionObservation(1, 1188, nativeModel, state);
+            var (_, lifetime) = native.Observe(123, identity, null, sample, out var pending);
+            var key = actor.Key with { Lifetime = lifetime };
+            return actor with
+            {
+                Key = key,
+                Representations = [actor.Current with { LogicalKey = key, MinionSwitchPending = pending }],
+            };
+        }
+    }
+
+    [Fact]
+    public void ASharedNativeModelDoesNotProveTheNewMinionHasSpawned()
+    {
+        var native = new NativeActorContinuity(null, new Dictionary<uint, uint> { [10] = 870, [11] = 870 });
+        var outgoing = Minion(1234, 10, 1).Key.Continuity!.Value;
+        var incoming = Minion(1234, 11, 1).Key.Continuity!.Value;
+        var sample = new NativeActorContinuity.MinionObservation(1, 1188, 0, CompanionSpawnState.Active);
+        native.Observe(123, outgoing, null, sample, out _);
+        sample = sample with { Model = 870 };
+        native.Observe(123, incoming, null, sample, out var pending);
+        Assert.True(pending);
+        native.Observe(123, incoming, null, sample with { State = CompanionSpawnState.Despawning }, out pending);
+        Assert.True(pending);
+        native.Observe(123, incoming, null, sample with { State = CompanionSpawnState.Spawning }, out pending);
+        Assert.False(pending);
     }
 
     [Fact]

@@ -166,7 +166,13 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
             return;
         }
 
-        var actor = ResolveActor((nint)gameObject);
+        var actor = ResolveActor((nint)gameObject, out var minionSwitchPending);
+        if (minionSwitchPending)
+        {
+            drawHook.Original(gameObject);
+            return;
+        }
+
         var appearance = transitionState.GetCreateAppearance(
             DescribeWeaponActor(objectTable, actor, (nint)gameObject, clientState.TerritoryType),
             (uint)((Character*)gameObject)->ModelContainer.ModelCharaId, out var outfitOnly);
@@ -200,14 +206,18 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
     }
 
     internal LogicalActorKey ResolveActor(nint address)
+        => ResolveActor(address, out _);
+
+    private LogicalActorKey ResolveActor(nint address, out bool minionSwitchPending)
     {
+        minionSwitchPending = false;
         var obj = (GameObject*)address;
         if (cutsceneActors.GetSource(obj) is { } source)
             return source;
         var current = new LogicalActorKey(obj->ObjectIndex, obj->GetGameObjectId().Id,
             obj->EntityId, obj->BaseId,
             (Dalamud.Game.ClientState.Objects.Enums.ObjectKind)obj->ObjectKind, clientState.TerritoryType);
-        var identity = continuity.Read(obj, clientState.TerritoryType);
+        var identity = continuity.Read(obj, clientState.TerritoryType, out minionSwitchPending);
         current = current with { Continuity = identity.Key, Lifetime = identity.Lifetime };
         return transitionState.Resolve(identity.Key, current);
     }
@@ -274,12 +284,7 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
                 ? transitionState.ResolveCustomizeEquipment(current, appearance)
                 : appearance.ForWeaponJob(current.ClassJob);
         }
-        if (appearance.UsesGameHeadSettings)
-        {
-            appearance = appearance with { HatVisible = null, FacewearModelId = null, VisorToggled = null };
-            if (character->DrawData.IsHatHidden && !appearance.Equipment.IsDefaultOrEmpty)
-                appearance = appearance with { Equipment = appearance.Equipment.SetItem(0, 0) };
-        }
+        appearance = PrepareHeadForDraw(appearance, character->DrawData.IsHatHidden);
         context.Appearance = appearance;
         var originalModelCharaId = character->ModelContainer.ModelCharaId;
         var originalCustomize = character->DrawData.CustomizeData.Data.ToArray();
@@ -349,6 +354,22 @@ public sealed unsafe class NativeDrawObjectInjector : IDisposable
             character->ModelScale = originalScale;
             TryWritePostRestoreObservation(context, character);
         }
+    }
+
+    internal static AppearanceData PrepareHeadForDraw(AppearanceData appearance, bool gameHatHidden)
+    {
+        var hideHead = appearance is { Category: ModelCategory.Human, HatVisible: false };
+        if (appearance.UsesGameHeadSettings)
+        {
+            hideHead = gameHatHidden;
+            appearance = appearance with { HatVisible = null, FacewearModelId = null, VisorToggled = null };
+        }
+
+        // Create and Human setup both need an empty head slot while hidden.
+        // The selected equipment stays in the logical appearance.
+        return hideHead && !appearance.Equipment.IsDefaultOrEmpty && appearance.Equipment[0] != 0
+            ? appearance with { Equipment = appearance.Equipment.SetItem(0, 0) }
+            : appearance;
     }
 
     internal static bool IsRequestedCreateSuccessful(bool createCallObserved, bool createCallSucceeded)

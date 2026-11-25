@@ -78,7 +78,7 @@ public sealed partial class Plugin : IDalamudPlugin
     private readonly LuminaModelGeometrySource modelPreviewGeometrySource;
     private readonly ModelPreviewTextureCache modelPreviewTextureCache;
     private readonly ActorAppearancePersistence appearancePersistence;
-    private readonly NativeActorContinuity actorContinuity = new();
+    private readonly NativeActorContinuity actorContinuity;
     private readonly CommandRegistrationLease primaryCommandRegistration;
     private readonly CommandRegistrationLease aliasCommandRegistration;
     private readonly BulkOutfitTargetResolver bulkOutfitTargetResolver = new();
@@ -172,6 +172,9 @@ public sealed partial class Plugin : IDalamudPlugin
         modelPreviewTextureCache = new ModelPreviewTextureCache(
             TextureProvider,
             new ModelPreviewTextureSource(DataManager));
+        var minionModels = DataManager.GetExcelSheet<Lumina.Excel.Sheets.Companion>()
+            .ToDictionary(static row => row.RowId, static row => row.Model.RowId);
+        actorContinuity = new NativeActorContinuity(new NpcFollowerIpc(PluginInterface, Framework), minionModels);
         actorRegistry = new ActorRegistry(
             ObjectTable,
             ClientState,

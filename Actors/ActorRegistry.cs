@@ -84,6 +84,10 @@ public sealed unsafe class ActorRegistry : IDisposable
     internal Func<ActorSnapshot, bool, ulong?, WeaponDyes>? GetWeaponDyes { get; set; }
     internal Func<ushort, byte, FacewearAppearance>? ResolveFacewear { get; set; }
 
+    internal bool CanResolvePublished(ActorSnapshot snapshot)
+        => snapshot.NpcFollower is not { } follower || !framework.IsInFrameworkUpdateThread
+            || continuity.ReadNpcFollower() == follower;
+
     internal AppearanceData? CaptureCurrentAppearance(ActorSnapshot expected)
         => CaptureCurrentAppearance(expected, false);
 
@@ -96,7 +100,7 @@ public sealed unsafe class ActorRegistry : IDisposable
         var obj = objectTable[key.ObjectIndex];
         if (obj is null || obj.GameObjectId != key.GameObjectId || obj.EntityId != key.EntityId)
             return null;
-        var fresh = CreateSnapshot(obj, clientState.TerritoryType, null, nint.Zero);
+        var fresh = CreateSnapshot(obj, clientState.TerritoryType, null, nint.Zero, expected.NpcFollower);
         var appearance = DescribeRenderedAppearance(expected, fresh);
         if (forCustomize && appearance is { Category: ModelCategory.Human })
             appearance = CaptureCustomizeEquipment(appearance,
@@ -315,6 +319,7 @@ public sealed unsafe class ActorRegistry : IDisposable
             : (nint)(((Character*)localPlayer.Address)->ChildObject);
         var npcAttachments = NativeNpcAttachment.Read(objectTable);
         var minionOwners = NativeMinionOwner.Read(objectTable);
+        var (roles, follower) = continuity.ReadActorRoles();
         var snapshots = objectTable
             .Where(static obj => obj is not null
                 && obj.Address != nint.Zero
@@ -322,7 +327,19 @@ public sealed unsafe class ActorRegistry : IDisposable
                 && IsSupportedObjectKind(obj.ObjectKind))
             .Select(obj =>
             {
-                var snapshot = CreateSnapshot(obj, territoryId, localPlayerId, localPlayerChildObjectAddress);
+                var role = ActorRoleAssignment.FindMatch(roles, obj);
+                if (role is { BlocksEditing: true } internalActor)
+                {
+                    if (internalActor.Role == ActorRole.Support && persistence is not null)
+                    {
+                        var life = continuity.Read((NativeGameObject*)obj.Address, territoryId, null).Lifetime;
+                        persistence.ConfirmSupportActor(new(internalActor.Object, life, obj.EntityId));
+                    }
+                    return null;
+                }
+
+                var snapshot = CreateSnapshot(obj, territoryId, localPlayerId, localPlayerChildObjectAddress,
+                    follower, role?.DisplayName);
                 if (snapshot is { ObjectKind: ObjectKind.Companion }
                     && minionOwners.TryGetValue(obj.Address, out var ownerContentId))
                     snapshot = snapshot with { MinionOwnerContentId = ownerContentId };
@@ -394,7 +411,9 @@ public sealed unsafe class ActorRegistry : IDisposable
         IGameObject obj,
         uint territoryId,
         ulong? localPlayerId,
-        nint localPlayerChildObjectAddress)
+        nint localPlayerChildObjectAddress,
+        NpcFollowerIdentity? currentFollower = null,
+        string? displayName = null)
     {
         if (obj.Address == nint.Zero)
             return null;
@@ -403,7 +422,7 @@ public sealed unsafe class ActorRegistry : IDisposable
         var objectIndex = checked((ushort)obj.ObjectIndex);
         var modelCharaId = checked((uint)native->ModelContainer.ModelCharaId);
         var isHuman = humanModelClassifier.IsHuman(modelCharaId);
-        var name = obj.Name.ToString();
+        var name = string.IsNullOrWhiteSpace(displayName) ? obj.Name.ToString() : displayName;
         if (string.IsNullOrWhiteSpace(name))
             name = $"{obj.ObjectKind} {obj.BaseId}";
 
@@ -421,10 +440,14 @@ public sealed unsafe class ActorRegistry : IDisposable
             obj.ObjectKind,
             territoryId);
 
-        var observedIdentity = continuity.Read((NativeGameObject*)native, territoryId);
+        var follower = currentFollower is { } candidate
+            && candidate.Matches(obj.ObjectKind, objectIndex, obj.GameObjectId, obj.Address)
+            ? currentFollower : null;
+        var observedIdentity = continuity.Read((NativeGameObject*)native, territoryId, follower?.SpawnId,
+            out var minionSwitchPending);
         var identity = observedIdentity.Key;
         logical = logical with { Continuity = identity, Lifetime = observedIdentity.Lifetime };
-        var copyActor = ResolveCopyActor?.Invoke(obj.Address);
+        var copyActor = follower is null ? ResolveCopyActor?.Invoke(obj.Address) : null;
         logical = copyActor ?? persistence?.Resolve(identity, logical) ?? logical;
         var snapshot = new ActorSnapshot(
             logical,
@@ -443,6 +466,10 @@ public sealed unsafe class ActorRegistry : IDisposable
         {
             Position = obj.Position,
             ContinuityKey = copyActor is null ? identity : null,
+            NpcFollower = follower,
+            MinionSwitchPending = minionSwitchPending,
+            Instance = new(new(objectIndex, representation.GameObjectId, unchecked((ulong)native)),
+                observedIdentity.Lifetime, representation.EntityId),
             EquipmentLoadRevision = obj.ObjectKind is ObjectKind.Companion or ObjectKind.EventNpc or ObjectKind.BattleNpc
                 ? GetEquipmentLoadRevision?.Invoke(obj.Address, objectIndex) ?? 0 : 0,
         };

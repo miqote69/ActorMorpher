@@ -21,7 +21,7 @@ internal sealed class PinnedActorDiscovery
 
         nextScanTick = now + ScanIntervalMilliseconds;
         regularScan++;
-        return actors;
+        return actors.Where(static actor => !actor.Current.MinionSwitchPending).ToArray();
     }
 
     internal ActorEntry? FindNext(IReadOnlyList<ActorEntry> actors, Func<ActorEntry, bool> isPinned)
@@ -31,6 +31,8 @@ internal sealed class PinnedActorDiscovery
         foreach (var actor in actors)
         {
             var snapshot = actor.Current;
+            if (snapshot.MinionSwitchPending)
+                continue;
             var minion = snapshot.ObjectKind == ObjectKind.Companion;
             var npc = snapshot.ObjectKind is ObjectKind.EventNpc or ObjectKind.BattleNpc;
             var availability = new Availability(actor.Key, snapshot.RepresentationKey,

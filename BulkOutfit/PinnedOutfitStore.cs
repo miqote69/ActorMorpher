@@ -48,6 +48,12 @@ public sealed partial class PinnedOutfitStore
         foreach (var actor in actors)
         {
             bool Matches(ulong? id) => candidates[id].Any(pin => pin.Matches(actor));
+            if (actor.Current.NpcFollower is { } follower)
+            {
+                if (Matches(PinnedOutfitConfiguration.FollowerDisplayLookupId(follower.AppearanceId)))
+                    pinned.Add(actor.Key);
+                continue;
+            }
             if (Matches(null)
                 || Matches(actor.Key.GameObjectId)
                 || Matches(actor.Key.BaseId)

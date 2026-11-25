@@ -25,7 +25,10 @@ public sealed record ActorSnapshot(
     public ActorContinuityKey? ContinuityKey { get; init; }
     public NpcAttachmentKey? NpcAttachment { get; init; }
     public ulong MinionOwnerContentId { get; init; }
+    internal NpcFollowerIdentity? NpcFollower { get; init; }
+    internal ActorInstance? Instance { get; init; }
     internal long EquipmentLoadRevision { get; init; }
+    internal bool MinionSwitchPending { get; init; }
 
     public ActorSnapshot WithVisibleHumanCustomize(byte race, byte gender, byte bodyType)
         => this with { Race = race, Gender = gender, BodyType = bodyType };

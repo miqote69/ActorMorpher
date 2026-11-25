@@ -114,6 +114,44 @@ public sealed unsafe class HumanHeadInputOverrideTests
         Assert.Equal(1, calls);
     }
 
+    [Theory]
+    [InlineData(false, false, true, 0UL)]
+    [InlineData(false, false, false, 0UL)]
+    [InlineData(true, false, true, 131987UL)]
+    [InlineData(null, false, false, 131987UL)]
+    [InlineData(true, true, true, 0UL)]
+    [InlineData(false, true, false, 131987UL)]
+    public void HumanRecreationPassesHeadVisibilityToCreateAndPendingSlot(
+        bool? selectedVisible, bool usesGameHeadSettings, bool gameHatHidden, ulong expectedHead)
+    {
+        using var f = new NativeInputs();
+        var selected = Payload(131987) with { HatVisible = selectedVisible, UsesGameHeadSettings = usesGameHeadSettings };
+        var drawAppearance = NativeDrawObjectInjector.PrepareHeadForDraw(selected, gameHatHidden);
+        var equipment = stackalloc ulong[10];
+        var slots = new Span<ulong>(equipment, 10);
+        slots.Fill(42);
+
+        NativeDrawObjectInjector.InvokeWithTemporaryCreateBuffers(
+            drawAppearance, f.Data, (nint)equipment, (_, address) =>
+            {
+                Assert.Equal(expectedHead, ((ulong*)address)[0]);
+                Assert.Equal(selected.Equipment[1], ((ulong*)address)[1]);
+                return HumanHeadInputOverride.Invoke(drawAppearance, () =>
+                    HumanHeadInputOverride.Dispatch(f.Human, f.Data, (_, _) =>
+                    {
+                        f.PendingHead = 66202;
+                        return 1;
+                    }));
+            });
+
+        Assert.Equal(expectedHead, f.PendingHead);
+        Assert.Equal(0xA1u, f.Flags);
+        Assert.Equal(Enumerable.Repeat(42UL, slots.Length), slots.ToArray());
+        Assert.Equal(131987UL, selected.Equipment[0]);
+        Assert.Equal(selectedVisible, selected.HatVisible);
+        Assert.Equal(usesGameHeadSettings ? null : selectedVisible, drawAppearance.HatVisible);
+    }
+
     [Fact]
     public void NestedUnrelatedCreateAndRepeatedSetupDoNotAcquireTheHeadOverride()
     {

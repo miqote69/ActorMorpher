@@ -17,7 +17,7 @@ public sealed class ActorAppearancePersistence
     }
 
     private sealed record ModifiedActor(ActorEntry Entry, PinnedOutfitConfiguration Identity,
-        AppearanceData? AppearanceBeforeClearingSharedPins = null);
+        AppearanceData? AppearanceBeforeClearingSharedPins = null, bool IsSupportActor = false);
 
     private sealed record RetainedModel(AppearanceData Appearance, byte? MainhandJob, byte? OffhandJob)
     {
@@ -96,7 +96,8 @@ public sealed class ActorAppearancePersistence
         var entry = new ActorEntry(actor.LogicalKey, actor.Name, actor.ObjectKind, actor.IsLocalPlayer, [actor], actor.IsOwnMinion);
         if (previous is null)
             ForgetModifiedPinTarget(state, entry);
-        state.ModifiedActors[actor.LogicalKey] = new(entry, PinnedOutfitConfiguration.CreateAppearanceIdentity(entry));
+        state.ModifiedActors[actor.LogicalKey] = new(entry, PinnedOutfitConfiguration.CreateAppearanceIdentity(entry),
+            IsSupportActor: previous is { IsSupportActor: true } && previous.Entry.Current.Instance == actor.Instance);
     }
 
     private static void ForgetModifiedPinTarget(CharacterState state, ActorEntry entry)
@@ -331,6 +332,17 @@ public sealed class ActorAppearancePersistence
         return hasOutfit ? WithOutfit(appearance, outfit.Desired) : appearance;
     }
 
+    internal void ConfirmSupportActor(ActorInstance support)
+    {
+        if (!characters.TryGetValue(getOwner(), out var state)
+            || !state.LivingActors.TryGetValue(support.Lifetime, out var key)
+            || !state.ModifiedActors.TryGetValue(key, out var modified)
+            || modified.IsSupportActor || modified.Entry.Current.Instance != support)
+            return;
+
+        state.ModifiedActors[key] = modified with { IsSupportActor = true };
+    }
+
     internal IReadOnlyList<ActorEntry> GetAbsentModifiedActors(IReadOnlyList<ActorEntry> present,
         IReadOnlyList<ActorEntry> modifiedPresent)
     {
@@ -340,7 +352,7 @@ public sealed class ActorAppearancePersistence
             return [];
         var presentKeys = present.Select(static actor => actor.Key).ToHashSet();
         return state.ModifiedActors.Values
-            .Where(actor => !presentKeys.Contains(actor.Entry.Key)
+            .Where(actor => !actor.IsSupportActor && !presentKeys.Contains(actor.Entry.Key)
                 && HasRetainedEdit(owner, state, actor.Entry)
                 && !modifiedPresent.Any(actor.Identity.Matches))
             .Select(actor => actor.Entry)

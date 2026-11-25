@@ -7,7 +7,7 @@ public sealed class RegistryActorResolver(ActorRegistry registry, IClientContext
         if (registry.TryGet(key, out var actor))
         {
             snapshot = actor.Representations.FirstOrDefault(item => item.RepresentationKey == representation)!;
-            if (snapshot is not null)
+            if (snapshot is not null && registry.CanResolvePublished(snapshot))
                 return true;
             if (representation.IsGPoseRepresentation && actor.IsLocalPlayer
                 && registry.TryGetGPoseLocalPlayer(key, out snapshot)
@@ -36,7 +36,8 @@ public sealed class RegistryActorResolver(ActorRegistry registry, IClientContext
                 && registry.TryGetGPoseLocalPlayer(key, out var resolvedGPose))
                 directGPose = resolvedGPose;
             snapshot = SelectRepresentation(actor, context?.IsGPosing == true, directGPose)!;
-            return snapshot is not null;
+            if (snapshot is not null && registry.CanResolvePublished(snapshot))
+                return true;
         }
 
         snapshot = null!;

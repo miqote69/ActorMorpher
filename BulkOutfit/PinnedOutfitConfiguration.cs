@@ -9,6 +9,7 @@ public sealed class PinnedOutfitConfiguration
     public NpcAttachmentKey? NpcAttachment { get; set; }
     public bool PersistAttachmentAcrossSessions { get; set; }
     public ulong? MinionOwnerContentId { get; set; }
+    public Guid? NpcFollowerAppearanceId { get; set; }
     public Guid? Session { get; set; }
     public string ActorName { get; set; } = string.Empty;
     public int ObjectKind { get; set; }
@@ -54,6 +55,7 @@ public sealed class PinnedOutfitConfiguration
     public static PinnedOutfitConfiguration Create(ActorEntry actor, OutfitData outfit)
         => new()
         {
+            NpcFollowerAppearanceId = actor.Current.NpcFollower?.AppearanceId,
             MinionOwnerContentId = MinionOwner(actor),
             ActorName = actor.Name.Trim(),
             ObjectKind = (int)actor.Kind,
@@ -83,11 +85,14 @@ public sealed class PinnedOutfitConfiguration
     }
 
     internal static PinnedOutfitConfiguration CreateAppearanceIdentity(ActorEntry actor)
-        => new()
+    {
+        var followerId = actor.Current.NpcFollower?.AppearanceId;
+        return new()
         {
+            NpcFollowerAppearanceId = followerId,
             MinionOwnerContentId = MinionOwner(actor),
-            ActorKey = CreateActorKey(actor),
-            Session = CurrentSession,
+            ActorKey = followerId is null ? CreateActorKey(actor) : null,
+            Session = followerId is null ? CurrentSession : null,
             PersistAttachmentAcrossSessions = UsesNpcSlotIdentity(actor.Key)
                 && actor.Current.ContinuityKey is null or { Source: 5 }
                 && actor.Current.NpcAttachment is not null,
@@ -101,9 +106,13 @@ public sealed class PinnedOutfitConfiguration
             WeaponClassJob = actor.Kind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc
                 ? actor.Current.ClassJob : null,
         };
+    }
 
     public bool Matches(ActorEntry actor)
     {
+        var followerId = actor.Current.NpcFollower?.AppearanceId;
+        if (NpcFollowerAppearanceId is not null || followerId is not null)
+            return NpcFollowerAppearanceId is not null && NpcFollowerAppearanceId == followerId;
         if (MinionOwnerContentId is { } owner)
             return ObjectKind == (int)Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Companion
                 && actor.Kind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Companion
@@ -133,7 +142,8 @@ public sealed class PinnedOutfitConfiguration
     // A necessary numeric component of Matches, used only to shortlist UI lookups.
     // Collisions are allowed: Matches remains the final identity decision.
     internal ulong? DisplayLookupId
-        => MinionOwnerContentId is not null ? BaseId
+        => NpcFollowerAppearanceId is { } followerId ? FollowerDisplayLookupId(followerId)
+            : MinionOwnerContentId is not null ? BaseId
             : UsesAttachmentIdentity && NpcAttachment is { } attachment ? attachment.OwnerContentId
             : ActorKey is { } key
                 ? UsesNpcSlotIdentity(key) || (UsesNpcEntityIdentity(key) && Session != CurrentSession) ? key.BaseId
@@ -141,8 +151,12 @@ public sealed class PinnedOutfitConfiguration
                     : key.GameObjectId
                 : null;
 
+    internal static ulong FollowerDisplayLookupId(Guid appearanceId) => unchecked((uint)appearanceId.GetHashCode());
+
     public string IdentityKey()
-        => MinionOwnerContentId is { } owner
+        => NpcFollowerAppearanceId is { } followerId
+            ? $"NpcFollower:{followerId:D}"
+            : MinionOwnerContentId is { } owner
             ? $"Minion:{owner}:{BaseId}"
             : UsesAttachmentIdentity && NpcAttachment is { } attachment
             ? PersistAttachmentAcrossSessions
