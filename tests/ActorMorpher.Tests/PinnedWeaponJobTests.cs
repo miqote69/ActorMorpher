@@ -17,6 +17,7 @@ public sealed class PinnedWeaponJobTests
 {
     private const byte Pictomancer = 42;
     private const byte Paladin = 19;
+    private const byte WhiteMage = 24;
 
     [Theory]
     [InlineData(Pictomancer, true)]
@@ -154,6 +155,139 @@ public sealed class PinnedWeaponJobTests
         Assert.Equal(legacy ? null : saved.Mainhand, sameJob.Mainhand);
         Assert.Equal(legacy ? default : saved.MainhandDyes,
             state.GetWeaponDyes(source.Current, false, saved.Mainhand));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public unsafe void UnpinningBeforeAJobChangeDoesNotBringBackOldWeaponsOnTerritoryChange(bool unpinAll)
+    {
+        var store = Store(new Configuration());
+        var state = new ActorAppearancePersistence(() => 1, store.GetWeaponPinScope);
+        var saved = Appearance(11, 0) with
+        {
+            Equipment = Enumerable.Repeat(0x100025UL, 10).ToImmutableArray(),
+            OffhandDyes = new(null, new DyeColor(0, 1, 0)),
+            HatVisible = false,
+        };
+        var whiteMage = Actor(WhiteMage, saved);
+        state.RecordOutfit(whiteMage.Current, EquipmentDisplayFormatting.CreateHumanOutfit(saved)!);
+        Assert.Equal((1, 0), store.PinCurrent([whiteMage], actor =>
+        {
+            state.RecordPinAppearance(actor.Current, saved);
+            return saved;
+        }));
+        if (unpinAll)
+            Assert.Equal(1, store.UnpinAll());
+        else
+            Assert.True(store.Unpin(whiteMage));
+        Assert.False(store.IsPinned(whiteMage));
+        Assert.Equal(saved.Mainhand, state.GetCreateAppearance(whiteMage.Current, 0, out _)!.Mainhand);
+        Assert.False(state.HasLocalModelSearchAppearance(whiteMage.Key));
+
+        var gameWeapons = Appearance(22, 33);
+        var original = Actor(Pictomancer, gameWeapons).Current;
+        var movedKey = original.LogicalKey with { OriginalObjectIndex = 4, TerritoryId = 145, Lifetime = 2 };
+        var moved = original with
+        {
+            LogicalKey = state.Resolve(original.ContinuityKey!.Value, movedKey),
+            RepresentationKey = original.RepresentationKey with { ObjectIndex = 4, TerritoryId = 145 },
+        };
+        Assert.Equal(whiteMage.Key, moved.LogicalKey);
+        var create = state.GetCreateAppearance(moved, 0, out var outfitOnly)!;
+        Assert.False(outfitOnly);
+        Assert.Null(create.Mainhand);
+        Assert.Null(create.Offhand);
+        Assert.Equal(default, create.MainhandDyes);
+        Assert.Equal(default, create.OffhandDyes);
+        Assert.Equal(default, state.GetWeaponDyes(moved, false, saved.Mainhand));
+        Assert.Equal(default, state.GetWeaponDyes(moved, true, saved.Offhand));
+        Assert.Equal(saved.Equipment, create.Equipment);
+        Assert.Equal(saved.Customize, create.Customize);
+        Assert.False(create.HatVisible);
+
+        Character native = default;
+        native.CharacterData.ClassJob = Pictomancer;
+        native.DrawData.Weapon(DrawDataContainer.WeaponSlot.MainHand).ModelId.Value = 22;
+        native.DrawData.Weapon(DrawDataContainer.WeaponSlot.OffHand).ModelId.Value = 33;
+        NativeDrawObjectInjector.SubstituteBacking(&native, create);
+        Assert.Equal(22UL, native.DrawData.Weapon(DrawDataContainer.WeaponSlot.MainHand).ModelId.Value);
+        Assert.Equal(33UL, native.DrawData.Weapon(DrawDataContainer.WeaponSlot.OffHand).ModelId.Value);
+    }
+
+    [Theory]
+    [InlineData(WhiteMage)]
+    [InlineData(Pictomancer)]
+    public void AReappliedPinDoesNotRetainTheOtherJobsWeaponsAfterUnpinning(byte jobDuringReapply)
+    {
+        var store = Store(new Configuration());
+        var saved = Appearance(11, 0);
+        store.PinCurrent([Actor(WhiteMage, saved)], _ => saved);
+        var current = Actor(jobDuringReapply, Appearance(22, 33));
+        Assert.True(store.TryGetAppearanceForCurrentJob(current, out var reapplied));
+        var state = new ActorAppearancePersistence(() => 1, store.GetWeaponPinScope);
+        state.RecordModel(current.Current, reapplied);
+        Assert.True(store.Unpin(current));
+
+        var other = state.GetCreateAppearance(Actor(Paladin, Appearance(55, 66)).Current, 0, out _)!;
+        Assert.Null(other.Mainhand);
+        Assert.Null(other.Offhand);
+        Assert.Equal(saved.Equipment, other.Equipment);
+        var original = state.GetCreateAppearance(Actor(WhiteMage, saved).Current, 0, out _)!;
+        Assert.Equal(jobDuringReapply == WhiteMage ? saved.Mainhand : null, original.Mainhand);
+        Assert.Equal(jobDuringReapply == WhiteMage ? saved.Offhand : null, original.Offhand);
+    }
+
+    [Fact]
+    public void ArmorEditsKeepTheCapturedWeaponJobsAndAWeaponEditOnlyChangesItsOwnHand()
+    {
+        var state = new ActorAppearancePersistence();
+        var saved = Appearance(11, 12);
+        var whiteMage = Actor(WhiteMage, saved).Current;
+        var pictomancer = Actor(Pictomancer, Appearance(22, 33)).Current;
+        state.RecordPinAppearance(whiteMage, saved);
+
+        var armor = EquipmentDisplayFormatting.CreateHumanOutfit(saved with
+        {
+            Equipment = Enumerable.Repeat(0x100025UL, 10).ToImmutableArray(),
+        })!;
+        Plugin.RecordEquipmentCopy(state, pictomancer, EquipmentCopyData.FromOutfit(armor), null);
+        Assert.Null(state.GetCreateAppearance(pictomancer, 0, out _)!.Mainhand);
+        Assert.Equal(saved.Mainhand, state.GetCreateAppearance(whiteMage, 0, out _)!.Mainhand);
+
+        state.RecordWeapon(pictomancer, false, 44);
+        var differentJob = state.GetCreateAppearance(pictomancer, 0, out _)!;
+        Assert.Equal(44UL, differentJob.Mainhand);
+        Assert.Null(differentJob.Offhand);
+        Assert.Equal(0x100025UL, differentJob.Equipment[0]);
+        var originalJob = state.GetCreateAppearance(whiteMage, 0, out _)!;
+        Assert.Null(originalJob.Mainhand);
+        Assert.Equal(saved.Offhand, originalJob.Offhand);
+    }
+
+    [Fact]
+    public void CapturingACustomizeEditUsesTheCurrentlyEquippedWeaponsAfterUnpinning()
+    {
+        var store = Store(new Configuration());
+        var state = new ActorAppearancePersistence(() => 1, store.GetWeaponPinScope);
+        var saved = Appearance(11, 0);
+        var whiteMage = Actor(WhiteMage, saved);
+        store.PinCurrent([whiteMage], actor =>
+        {
+            state.RecordPinAppearance(actor.Current, saved);
+            return saved;
+        });
+        Assert.True(store.Unpin(whiteMage));
+        var changed = Appearance(44, 0) with { Customize = saved.Customize.SetItem(3, 50) };
+        state.RecordModel(Actor(WhiteMage, changed).Current, changed);
+
+        var same = state.GetCreateAppearance(whiteMage.Current, 0, out _)!;
+        Assert.Equal(44UL, same.Mainhand);
+        Assert.Equal(changed.Customize, same.Customize);
+        var other = state.GetCreateAppearance(Actor(Pictomancer, Appearance(22, 33)).Current, 0, out _)!;
+        Assert.Null(other.Mainhand);
+        Assert.Null(other.Offhand);
+        Assert.Equal(changed.Customize, other.Customize);
     }
 
     [Theory]

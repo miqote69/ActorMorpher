@@ -19,7 +19,8 @@ public sealed class ActorAppearancePersistence
     private sealed record ModifiedActor(ActorEntry Entry, PinnedOutfitConfiguration Identity,
         AppearanceData? AppearanceBeforeClearingSharedPins = null, bool IsSupportActor = false);
 
-    private sealed record RetainedModel(AppearanceData Appearance, byte? MainhandJob, byte? OffhandJob)
+    private sealed record RetainedModel(AppearanceData Appearance, byte? MainhandJob, byte? OffhandJob,
+        bool IsLocalModelSearch = false)
     {
         internal bool AllowsWeapon(bool offhand, byte job)
             => (offhand ? OffhandJob : MainhandJob) is not { } weaponJob || weaponJob == job;
@@ -110,18 +111,35 @@ public sealed class ActorAppearancePersistence
     public void RecordModel(ActorSnapshot actor, AppearanceData appearance)
         => RecordModel(actor, appearance, modelSearchWeaponJob: null);
 
+    internal void RecordPinAppearance(ActorSnapshot actor, AppearanceData appearance)
+        => RecordModel(actor, appearance, modelSearchWeaponJob: null, equipmentEdited: true,
+            pinWeaponJob: actor.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc ? actor.ClassJob : null);
+
     internal void RecordModel(ActorSnapshot actor, AppearanceData appearance, byte? modelSearchWeaponJob,
-        bool equipmentEdited = false, bool weaponsEdited = false)
+        bool equipmentEdited = false, bool weaponsEdited = false, byte? pinWeaponJob = null)
     {
+        var state = GetState(getOwner());
+        var previous = state.Models.GetValueOrDefault(actor.LogicalKey);
+        var isLocalModelSearch = modelSearchWeaponJob.HasValue || previous is { IsLocalModelSearch: true };
+        var pin = appearance.PinnedWeaponScope;
+        if (!isLocalModelSearch && pin is not null)
+        {
+            // A reapplied pin can carry the live weapons of a different job in its request.
+            appearance = appearance.ForWeaponJob(actor.ClassJob);
+            if (pin.AppliesTo(actor.ClassJob))
+                pinWeaponJob = pin.ClassJob;
+        }
         if (appearance.PinnedWeaponScope is not null || appearance.UsesRetainedPlayerEquipment)
             appearance = appearance with { PinnedWeaponScope = null, UsesRetainedPlayerEquipment = false };
-        var state = GetState(getOwner());
         RememberModifiedActor(state, actor with { CurrentAppearance = appearance });
         state.Weapons.Remove(actor.LogicalKey);
-        var previous = state.Models.GetValueOrDefault(actor.LogicalKey);
-        state.Models[actor.LogicalKey] = RetainModel(previous, appearance,
-            weaponsEdited && previous?.MainhandJob is not null ? actor.ClassJob : modelSearchWeaponJob,
-            equipmentEdited);
+        var weaponJob = modelSearchWeaponJob ?? (isLocalModelSearch ? null : pinWeaponJob);
+        // Armor-only paste composes the prior weapons. A fresh capture of the
+        // current appearance can contain newly equipped weapons.
+        var freshPlayerCapture = !isLocalModelSearch && !equipmentEdited && pin is null;
+        if (previous?.MainhandJob is not null && (weaponsEdited || freshPlayerCapture))
+            weaponJob = actor.ClassJob;
+        state.Models[actor.LogicalKey] = RetainModel(previous, appearance, weaponJob, isLocalModelSearch, equipmentEdited);
         if (EquipmentDisplayFormatting.CreateHumanOutfit(appearance) is { } outfit)
             state.ColorOutfits[actor.LogicalKey] = outfit;
         else
@@ -129,16 +147,17 @@ public sealed class ActorAppearancePersistence
     }
 
     private static RetainedModel RetainModel(RetainedModel? previous, AppearanceData appearance, byte? weaponJob,
-        bool equipmentEdited)
+        bool isLocalModelSearch, bool equipmentEdited)
     {
         if (appearance.Category != ModelCategory.Human)
             return new(appearance, null, null);
         if (weaponJob is { } job)
-            return new(appearance with { UsesGameHeadSettings = false }, job, job);
+            return new(isLocalModelSearch ? appearance with { UsesGameHeadSettings = false } : appearance,
+                job, job, isLocalModelSearch);
         if (previous?.MainhandJob is null)
             return new(appearance, null, null);
 
-        // Publishing a body/customize edit must not adopt another job's rendered weapons.
+        // The previous model still owns the weapons when the operation carries its equipment forward.
         var saved = previous.Appearance;
         return previous with
         {
@@ -148,7 +167,8 @@ public sealed class ActorAppearancePersistence
                 Offhand = saved.Offhand,
                 MainhandDyes = saved.MainhandDyes,
                 OffhandDyes = saved.OffhandDyes,
-                UsesGameHeadSettings = !equipmentEdited && saved.UsesGameHeadSettings,
+                UsesGameHeadSettings = isLocalModelSearch
+                    ? !equipmentEdited && saved.UsesGameHeadSettings : appearance.UsesGameHeadSettings,
             },
         };
     }
@@ -181,13 +201,13 @@ public sealed class ActorAppearancePersistence
     }
 
     internal bool HasLocalModelSearchAppearance(LogicalActorKey actor)
-        => GetState(getOwner()).Models.GetValueOrDefault(actor)?.MainhandJob is not null;
+        => GetState(getOwner()).Models.GetValueOrDefault(actor) is { IsLocalModelSearch: true };
 
     internal bool ReleaseModelSearchHeadSettings(LogicalActorKey actor, out AppearanceData appearance)
     {
         appearance = null!;
         var models = GetState(getOwner()).Models;
-        if (!models.TryGetValue(actor, out var model) || model.MainhandJob is null
+        if (!models.TryGetValue(actor, out var model) || !model.IsLocalModelSearch
             || model.Appearance.UsesGameHeadSettings)
             return false;
 
@@ -199,7 +219,7 @@ public sealed class ActorAppearancePersistence
     internal AppearanceData ResolveCustomizeEquipment(ActorSnapshot actor, AppearanceData desired)
     {
         if (!desired.UsesRetainedPlayerEquipment
-            || GetState(getOwner()).Models.GetValueOrDefault(actor.LogicalKey) is not { MainhandJob: not null } model)
+            || GetState(getOwner()).Models.GetValueOrDefault(actor.LogicalKey) is not { IsLocalModelSearch: true } model)
             return desired;
 
         var equipment = ForCurrentWeaponJob(actor, model.Appearance);

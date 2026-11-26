@@ -1436,7 +1436,7 @@ public sealed partial class Plugin : IDalamudPlugin
         var appearance = actorRegistry.CaptureCurrentAppearance(current);
         if (appearance is not null)
         {
-            appearancePersistence.RecordModel(current, appearance, modelSearchWeaponJob: null, equipmentEdited: true);
+            appearancePersistence.RecordPinAppearance(current, appearance);
             drawObjectInjector.EnablePersistentAppearance(current);
             failedPinnedOutfitReapplyStates.Remove(actor.Key);
             failedPinnedAppearanceStates.Remove(actor.Key);
